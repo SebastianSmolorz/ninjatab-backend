@@ -55,6 +55,28 @@ def delete_tab(request, tab_id: int):
     return {"success": True}
 
 
+@tab_router.post("/{tab_id}/close", response=TabSchema)
+@transaction.atomic
+def close_tab(request, tab_id: int):
+    """Close a tab (prevents adding new bills or splits) and close all bills"""
+    tab = get_object_or_404(Tab.objects.prefetch_related('people__user'), id=tab_id)
+    tab.is_settled = True
+    tab.save()
+
+    # Close all bills in this tab and their line items
+    bills = tab.bills.all()
+    for bill in bills:
+        bill.is_closed = True
+        bill.save()
+        # Close all line items in each bill
+        bill.line_items.all().update(is_closed=True)
+
+    # Refresh to get updated data
+    tab.refresh_from_db()
+
+    return tab
+
+
 # Bill Endpoints
 @bill_router.post("/", response=BillSchema)
 @transaction.atomic
@@ -178,5 +200,31 @@ def retrieve_bill(request, bill_id: int):
         ),
         id=bill_id
     )
+    return bill
+
+
+@bill_router.post("/{bill_id}/close", response=BillSchema)
+@transaction.atomic
+def close_bill(request, bill_id: int):
+    """Close a bill and all its line items"""
+    bill = get_object_or_404(
+        Bill.objects.prefetch_related(
+            'line_items__person_claims__person__user',
+            'creator__user',
+            'paid_by__user'
+        ),
+        id=bill_id
+    )
+
+    # Close the bill
+    bill.is_closed = True
+    bill.save()
+
+    # Close all line items
+    bill.line_items.all().update(is_closed=True)
+
+    # Refresh to get updated data
+    bill.refresh_from_db()
+
     return bill
 

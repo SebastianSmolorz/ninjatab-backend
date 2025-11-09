@@ -73,6 +73,23 @@ class PersonLineItemClaimSchema(BaseModel):
     class Config:
         from_attributes = True
 
+    @model_validator(mode='before')
+    @classmethod
+    def extract_person_data(cls, data: Any) -> Any:
+        # If data is a Django model instance, extract person_id and person_name
+        if hasattr(data, 'person'):
+            return {
+                'id': data.id,
+                'person_id': data.person.id,
+                'person_name': data.person.name,
+                'split_value': data.split_value,
+                'calculated_amount': data.calculated_amount,
+                'has_claimed': data.has_claimed,
+                'created_at': data.created_at,
+                'updated_at': data.updated_at,
+            }
+        return data
+
 
 class LineItemSchema(BaseModel):
     id: int
@@ -86,6 +103,27 @@ class LineItemSchema(BaseModel):
 
     class Config:
         from_attributes = True
+
+    @model_validator(mode='before')
+    @classmethod
+    def extract_person_claims(cls, data: Any) -> Any:
+        # If data is a Django model instance, convert person_claims relationship to list
+        if hasattr(data, 'person_claims'):
+            if hasattr(data.person_claims, 'all'):
+                # It's a related manager, evaluate it
+                person_claims_list = list(data.person_claims.all())
+                # Create a dict with all fields
+                return {
+                    'id': data.id,
+                    'description': data.description,
+                    'value': data.value,
+                    'split_type': data.split_type,
+                    'is_closed': data.is_closed,
+                    'person_claims': person_claims_list,
+                    'created_at': data.created_at,
+                    'updated_at': data.updated_at,
+                }
+        return data
 
 
 class PersonSplitCreateSchema(BaseModel):
@@ -134,6 +172,31 @@ class BillSchema(BaseModel):
 
     class Config:
         from_attributes = True
+
+    @model_validator(mode='before')
+    @classmethod
+    def extract_line_items(cls, data: Any) -> Any:
+        # If data is a Django model instance, convert line_items relationship to list
+        if hasattr(data, 'line_items'):
+            if hasattr(data.line_items, 'all'):
+                # It's a related manager, evaluate it
+                line_items_list = list(data.line_items.all())
+                # Create a dict with all fields
+                return {
+                    'id': data.id,
+                    'description': data.description,
+                    'currency': data.currency,
+                    'status': data.status,
+                    'creator': data.creator,
+                    'paid_by': data.paid_by,
+                    'date': data.date,
+                    'is_closed': data.is_closed,
+                    'line_items': line_items_list,
+                    'total_amount': data.total_amount,
+                    'created_at': data.created_at,
+                    'updated_at': data.updated_at,
+                }
+        return data
 
 
 class BillCreateSchema(BaseModel):
