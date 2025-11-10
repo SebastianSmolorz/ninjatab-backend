@@ -248,6 +248,7 @@ class TabSchema(BaseModel):
     is_settled: bool
     bill_count: int
     people: List[TabPersonSchema]
+    settlements: List['SettlementSchema']
     created_at: datetime
     updated_at: datetime
 
@@ -262,6 +263,7 @@ class TabSchema(BaseModel):
             if hasattr(data.people, 'all'):
                 # It's a related manager, evaluate it
                 people_list = list(data.people.all())
+                settlements_list = list(data.settlements.all()) if hasattr(data, 'settlements') else []
                 # Create a dict with all fields
                 return {
                     'id': data.id,
@@ -271,6 +273,7 @@ class TabSchema(BaseModel):
                     'is_settled': data.is_settled,
                     'bill_count': data.bill_count,
                     'people': people_list,
+                    'settlements': settlements_list,
                     'created_at': data.created_at,
                     'updated_at': data.updated_at,
                 }
@@ -296,3 +299,21 @@ class TabCreateSchema(BaseModel):
     description: str = ""
     default_currency: CurrencyEnum = CurrencyEnum.GBP
     people: List[TabPersonCreateSchema] = Field(min_length=1)
+
+
+class SettlementSchema(BaseModel):
+    id: int
+    from_person: TabPersonSchema
+    to_person: TabPersonSchema
+    amount: Decimal
+    currency: CurrencyEnum
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class SimplifyResultSchema(BaseModel):
+    settlements: List[SettlementSchema]
+    message: str

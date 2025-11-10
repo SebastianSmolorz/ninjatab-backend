@@ -199,3 +199,33 @@ class PersonLineItemClaim(BaseModel):
 
     def __str__(self):
         return f"{self.person.name} - {self.line_item.description}"
+
+
+class Settlement(BaseModel):
+    """Simplified settlement transaction showing who owes whom"""
+    tab = models.ForeignKey(
+        Tab,
+        on_delete=models.CASCADE,
+        related_name='settlements'
+    )
+    from_person = models.ForeignKey(
+        TabPerson,
+        on_delete=models.CASCADE,
+        related_name='settlements_as_payer'
+    )
+    to_person = models.ForeignKey(
+        TabPerson,
+        on_delete=models.CASCADE,
+        related_name='settlements_as_payee'
+    )
+    amount = models.DecimalField(max_digits=10, decimal_places=2)
+    currency = models.CharField(
+        max_length=3,
+        choices=Currency.choices
+    )
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"{self.from_person.name} pays {self.to_person.name} {self.amount} {self.currency}"

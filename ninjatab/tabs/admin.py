@@ -1,10 +1,6 @@
 from django.contrib import admin
 from django.utils.html import format_html
-from .models import Tab, TabPerson, Bill, LineItem, PersonLineItemClaim
-
-from django.contrib import admin
-from django.utils.html import format_html
-from .models import Tab, TabPerson, Bill, LineItem, PersonLineItemClaim
+from .models import Tab, TabPerson, Bill, LineItem, PersonLineItemClaim, Settlement
 
 
 class TabPersonInline(admin.TabularInline):
@@ -213,3 +209,26 @@ class PersonLineItemClaimAdmin(admin.ModelAdmin):
             'line_item__bill',
             'line_item__bill__tab'
         )
+
+
+@admin.register(Settlement)
+class SettlementAdmin(admin.ModelAdmin):
+    list_display = ['tab', 'from_person', 'to_person', 'amount', 'currency', 'created_at']
+    list_filter = ['currency', 'tab', 'created_at']
+    search_fields = ['tab__name', 'from_person__name', 'to_person__name']
+    readonly_fields = ['created_at', 'updated_at']
+    autocomplete_fields = ['tab', 'from_person', 'to_person']
+
+    fieldsets = (
+        ('Settlement Information', {
+            'fields': ('tab', 'from_person', 'to_person', 'amount', 'currency')
+        }),
+        ('Timestamps', {
+            'fields': ('created_at', 'updated_at'),
+            'classes': ('collapse',)
+        }),
+    )
+
+    def get_queryset(self, request):
+        qs = super().get_queryset(request)
+        return qs.select_related('tab', 'from_person', 'to_person')

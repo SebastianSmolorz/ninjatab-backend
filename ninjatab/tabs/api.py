@@ -4,6 +4,7 @@ from django.db import transaction
 
 from ninjatab.tabs.models import *
 from ninjatab.tabs.schemas import *
+from ninjatab.tabs.simp import simp_tab
 
 tab_router = Router(tags=["tabs"])
 bill_router = Router(tags=["bills"])
@@ -28,7 +29,11 @@ def create_tab(request, payload: TabCreateSchema):
 
     # Refresh to get related people
     tab.refresh_from_db()
-    tab = Tab.objects.prefetch_related('people__user').get(id=tab.id)
+    tab = Tab.objects.prefetch_related(
+        'people__user',
+        'settlements__from_person__user',
+        'settlements__to_person__user'
+    ).get(id=tab.id)
 
     return tab
 
@@ -43,7 +48,14 @@ def list_tabs(request):
 @tab_router.get("/{tab_id}", response=TabSchema)
 def retrieve_tab(request, tab_id: int):
     """Retrieve a tab with all its people"""
-    tab = get_object_or_404(Tab.objects.prefetch_related('people__user'), id=tab_id)
+    tab = get_object_or_404(
+        Tab.objects.prefetch_related(
+            'people__user',
+            'settlements__from_person__user',
+            'settlements__to_person__user'
+        ),
+        id=tab_id
+    )
     return tab
 
 
@@ -59,7 +71,14 @@ def delete_tab(request, tab_id: int):
 @transaction.atomic
 def close_tab(request, tab_id: int):
     """Close a tab (prevents adding new bills or splits) and close all bills"""
-    tab = get_object_or_404(Tab.objects.prefetch_related('people__user'), id=tab_id)
+    tab = get_object_or_404(
+        Tab.objects.prefetch_related(
+            'people__user',
+            'settlements__from_person__user',
+            'settlements__to_person__user'
+        ),
+        id=tab_id
+    )
     tab.is_settled = True
     tab.save()
 
@@ -73,8 +92,65 @@ def close_tab(request, tab_id: int):
 
     # Refresh to get updated data
     tab.refresh_from_db()
+    tab = Tab.objects.prefetch_related(
+        'people__user',
+        'settlements__from_person__user',
+        'settlements__to_person__user'
+    ).get(id=tab.id)
 
     return tab
+
+
+@tab_router.post("/{tab_id}/simplify", response=SimplifyResultSchema)
+@transaction.atomic
+def simplify_tab(request, tab_id: int):
+    """Calculate and save simplified settlements for a tab"""
+    tab = get_object_or_404(
+        Tab.objects.prefetch_related('people__user', 'bills__line_items__person_claims__person'),
+        id=tab_id
+    )
+
+    # Validate all non-archived bills use the same currency
+    bills = tab.bills.exclude(status=BillStatus.ARCHIVED)
+    currencies = set(bill.currency for bill in bills)
+
+    if len(currencies) > 1:
+        return {"error": f"Tab has bills with multiple currencies: {', '.join(currencies)}. All bills must use the same currency."}, 400
+
+    if not bills.exists():
+        return {"error": "Tab has no bills to simplify"}, 400
+
+    # Get the currency (use tab's default if no bills)
+    currency = list(currencies)[0] if currencies else tab.default_currency
+
+    # Delete existing settlements for this tab
+    Settlement.objects.filter(tab=tab).delete()
+
+    # Calculate simplified transactions
+    transactions = simp_tab(tab)
+
+    # Create Settlement records
+    settlements = []
+    for txn in transactions:
+        from_person = get_object_or_404(TabPerson, id=txn.payer_id, tab=tab)
+        to_person = get_object_or_404(TabPerson, id=txn.payee_id, tab=tab)
+
+        settlement = Settlement.objects.create(
+            tab=tab,
+            from_person=from_person,
+            to_person=to_person,
+            amount=txn.amount,
+            currency=currency
+        )
+        settlements.append(settlement)
+
+    # Prefetch related data for response
+    settlements = Settlement.objects.filter(tab=tab).select_related('from_person__user', 'to_person__user')
+
+    return {
+        "settlements": list(settlements),
+        "message": f"Created {len(settlements)} simplified settlement(s)"
+    }
 
 
 # Bill Endpoints
