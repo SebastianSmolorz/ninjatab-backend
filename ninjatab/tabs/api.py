@@ -279,6 +279,38 @@ def retrieve_bill(request, bill_id: int):
     return bill
 
 
+@bill_router.patch("/{bill_id}", response=BillSchema)
+@transaction.atomic
+def update_bill(request, bill_id: int, payload: BillUpdateSchema):
+    """Update bill fields (description, currency, paid_by)"""
+    bill = get_object_or_404(
+        Bill.objects.prefetch_related(
+            'line_items__person_claims__person__user',
+            'creator__user',
+            'paid_by__user'
+        ),
+        id=bill_id
+    )
+
+    # Update fields if provided
+    if payload.description is not None:
+        bill.description = payload.description
+
+    if payload.currency is not None:
+        bill.currency = payload.currency
+
+    if payload.paid_by_id is not None:
+        paid_by = get_object_or_404(TabPerson, id=payload.paid_by_id, tab=bill.tab)
+        bill.paid_by = paid_by
+
+    bill.save()
+
+    # Refresh to get updated data
+    bill.refresh_from_db()
+
+    return bill
+
+
 @bill_router.post("/{bill_id}/close", response=BillSchema)
 @transaction.atomic
 def close_bill(request, bill_id: int):

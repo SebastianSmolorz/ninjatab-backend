@@ -209,6 +209,13 @@ class BillCreateSchema(BaseModel):
     line_items: List[LineItemCreateSchema] = []
 
 
+class BillUpdateSchema(BaseModel):
+    """Schema for updating bill fields"""
+    description: Optional[str] = None
+    currency: Optional[CurrencyEnum] = None
+    paid_by_id: Optional[int] = None
+
+
 class BillSplitSubmitSchema(BaseModel):
     """Schema for submitting splits from the UI"""
     bill_id: int
