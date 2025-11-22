@@ -241,6 +241,7 @@ class BillListSchema(BaseModel):
     date: date
     is_closed: bool
     total_amount: Decimal
+    paid_by: Optional[TabPersonSchema] = None
     created_at: datetime
 
     class Config:

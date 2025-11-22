@@ -261,7 +261,7 @@ def list_bills(request, tab_id: int = None):
     bills = Bill.objects.all()
     if tab_id:
         bills = bills.filter(tab_id=tab_id)
-    bills = bills.prefetch_related('line_items')
+    bills = bills.select_related('paid_by__user').prefetch_related('line_items')
     return bills
 
 
