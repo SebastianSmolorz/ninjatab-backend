@@ -1,10 +1,12 @@
 from ninja import Router
+from ninja.errors import HttpError
 from django.shortcuts import get_object_or_404
 from django.db import transaction
 
 from ninjatab.tabs.models import *
 from ninjatab.tabs.schemas import *
 from ninjatab.tabs.simp import simp_tab
+from ninjatab.tabs.exchange import ExchangeRateNotFoundError
 
 tab_router = Router(tags=["tabs"])
 bill_router = Router(tags=["bills"])
@@ -80,6 +82,7 @@ def close_tab(request, tab_id: int):
         id=tab_id
     )
     tab.is_settled = True
+    tab.settlement_currency = 'GBP'  # Force GBP for settlements
     tab.save()
 
     # Close all bills in this tab and their line items
@@ -104,30 +107,32 @@ def close_tab(request, tab_id: int):
 @tab_router.post("/{tab_id}/simplify", response=SimplifyResultSchema)
 @transaction.atomic
 def simplify_tab(request, tab_id: int):
-    """Calculate and save simplified settlements for a tab"""
+    """
+    Calculate and save simplified settlements for a tab.
+    Settlements are calculated in the tab's settlement_currency, converting bills as needed.
+    Tab remains open and settlements can be regenerated.
+    """
     tab = get_object_or_404(
         Tab.objects.prefetch_related('people__user', 'bills__line_items__person_claims__person'),
         id=tab_id
     )
 
-    # Validate all non-archived bills use the same currency
+    # Check if there are any non-archived bills
     bills = tab.bills.exclude(status=BillStatus.ARCHIVED)
-    currencies = set(bill.currency for bill in bills)
-
-    if len(currencies) > 1:
-        return {"error": f"Tab has bills with multiple currencies: {', '.join(currencies)}. All bills must use the same currency."}, 400
-
     if not bills.exists():
-        return {"error": "Tab has no bills to simplify"}, 400
+        raise HttpError(400, "Tab has no bills to simplify")
 
-    # Get the currency (use tab's default if no bills)
-    currency = list(currencies)[0] if currencies else tab.default_currency
+    # Use tab's settlement_currency for settlements
+    settlement_currency = tab.settlement_currency
 
-    # Delete existing settlements for this tab
+    # Delete existing settlements for this tab (replace existing behavior)
     Settlement.objects.filter(tab=tab).delete()
 
-    # Calculate simplified transactions
-    transactions = simp_tab(tab)
+    try:
+        # Calculate simplified transactions with currency conversion
+        transactions = simp_tab(tab, settlement_currency=settlement_currency)
+    except ExchangeRateNotFoundError as e:
+        raise HttpError(400, f"Currency conversion failed: {str(e)}")
 
     # Create Settlement records
     settlements = []
@@ -140,7 +145,7 @@ def simplify_tab(request, tab_id: int):
             from_person=from_person,
             to_person=to_person,
             amount=txn.amount,
-            currency=currency
+            currency=settlement_currency
         )
         settlements.append(settlement)
 
@@ -149,7 +154,7 @@ def simplify_tab(request, tab_id: int):
 
     return {
         "settlements": list(settlements),
-        "message": f"Created {len(settlements)} simplified settlement(s)"
+        "message": f"Created {len(settlements)} simplified settlement(s) in {settlement_currency}"
     }
 
 

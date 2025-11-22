@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 from typing import List
 from decimal import Decimal
+from .exchange import convert_amount, ExchangeRateNotFoundError
 
 
 @dataclass
@@ -18,10 +19,21 @@ class Transaction:
     amount: Decimal
 
 
-def calculate_tab_balances(tab) -> List[Balance]:
+def calculate_tab_balances(tab, settlement_currency: str = None) -> List[Balance]:
     """
     Calculate net balances for all people in a tab based on bills.
+    Converts all amounts to settlement_currency if provided.
     Excludes archived bills.
+
+    Args:
+        tab: Tab instance
+        settlement_currency: Currency to convert all balances to. If None, uses original currencies.
+
+    Returns:
+        List of Balance objects representing net balances for each person
+
+    Raises:
+        ExchangeRateNotFoundError: If currency conversion is needed but no rate is found
     """
     balances_by_person = {}
 
@@ -34,6 +46,7 @@ def calculate_tab_balances(tab) -> List[Balance]:
 
         payer_id = bill.paid_by.id
         payer_total = Decimal('0')
+        bill_currency = bill.currency
 
         # Process each line item in the bill
         for line_item in bill.line_items.all():
@@ -50,6 +63,10 @@ def calculate_tab_balances(tab) -> List[Balance]:
                 # Skip if the person claiming is the payer
                 if person_id == payer_id:
                     continue
+
+                # Convert to settlement currency if specified
+                if settlement_currency and bill_currency != settlement_currency:
+                    amount = convert_amount(amount, bill_currency, settlement_currency)
 
                 # Debtor owes money (negative balance)
                 balances_by_person[person_id] = balances_by_person.get(person_id, Decimal('0')) - amount
@@ -111,11 +128,21 @@ def simp(balances: List[Balance]) -> List[Transaction]:
     return transactions
 
 
-def simp_tab(tab) -> List[Transaction]:
+def simp_tab(tab, settlement_currency: str = None) -> List[Transaction]:
     """
     Calculate and simplify all balances for a tab.
     Returns list of minimal settlement transactions.
+
+    Args:
+        tab: Tab instance
+        settlement_currency: Currency to use for settlements. If None, uses original currencies.
+
+    Returns:
+        List of Transaction objects representing simplified settlements
+
+    Raises:
+        ExchangeRateNotFoundError: If currency conversion is needed but no rate is found
     """
-    balances = calculate_tab_balances(tab)
+    balances = calculate_tab_balances(tab, settlement_currency)
     transactions = simp(balances)
     return transactions

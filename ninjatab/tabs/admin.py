@@ -1,6 +1,6 @@
 from django.contrib import admin
 from django.utils.html import format_html
-from .models import Tab, TabPerson, Bill, LineItem, PersonLineItemClaim, Settlement
+from .models import Tab, TabPerson, Bill, LineItem, PersonLineItemClaim, Settlement, ExchangeRate
 
 
 class TabPersonInline(admin.TabularInline):
@@ -13,15 +13,15 @@ class TabPersonInline(admin.TabularInline):
 
 @admin.register(Tab)
 class TabAdmin(admin.ModelAdmin):
-    list_display = ['name', 'default_currency', 'bill_count', 'is_settled', 'created_at']
-    list_filter = ['is_settled', 'default_currency', 'created_at']
+    list_display = ['name', 'default_currency', 'settlement_currency', 'bill_count', 'is_settled', 'created_at']
+    list_filter = ['is_settled', 'default_currency', 'settlement_currency', 'created_at']
     search_fields = ['name', 'description']
     readonly_fields = ['bill_count', 'created_at', 'updated_at']
     inlines = [TabPersonInline]
 
     fieldsets = (
         ('Basic Information', {
-            'fields': ('name', 'description', 'default_currency')
+            'fields': ('name', 'description', 'default_currency', 'settlement_currency')
         }),
         ('Status', {
             'fields': ('is_settled', 'bill_count')
@@ -232,3 +232,26 @@ class SettlementAdmin(admin.ModelAdmin):
     def get_queryset(self, request):
         qs = super().get_queryset(request)
         return qs.select_related('tab', 'from_person', 'to_person')
+
+
+@admin.register(ExchangeRate)
+class ExchangeRateAdmin(admin.ModelAdmin):
+    list_display = ['from_currency', 'to_currency', 'rate', 'effective_date', 'created_at']
+    list_filter = ['from_currency', 'to_currency', 'effective_date', 'created_at']
+    search_fields = ['from_currency', 'to_currency']
+    readonly_fields = ['created_at', 'updated_at']
+    date_hierarchy = 'effective_date'
+    ordering = ['-effective_date', 'from_currency', 'to_currency']
+
+    fieldsets = (
+        ('Exchange Rate Information', {
+            'fields': ('from_currency', 'to_currency', 'rate', 'effective_date')
+        }),
+        ('Timestamps', {
+            'fields': ('created_at', 'updated_at'),
+            'classes': ('collapse',)
+        }),
+    )
+
+    def get_queryset(self, request):
+        return super().get_queryset(request)

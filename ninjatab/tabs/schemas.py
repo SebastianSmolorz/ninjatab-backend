@@ -257,6 +257,7 @@ class TabSchema(BaseModel):
     bill_count: int
     people: List[TabPersonSchema]
     settlements: List['SettlementSchema']
+    balances: List['PersonBalanceSchema'] = []
     created_at: datetime
     updated_at: datetime
 
@@ -272,6 +273,27 @@ class TabSchema(BaseModel):
                 # It's a related manager, evaluate it
                 people_list = list(data.people.all())
                 settlements_list = list(data.settlements.all()) if hasattr(data, 'settlements') else []
+
+                # Calculate balances if tab is settled
+                balances_list = []
+                if data.is_settled and hasattr(data, 'settlement_currency'):
+                    from .simp import calculate_tab_balances
+                    try:
+                        balances = calculate_tab_balances(data, data.settlement_currency)
+                        # Convert Balance objects to dicts with person names
+                        person_map = {p.id: p for p in people_list}
+                        balances_list = [
+                            {
+                                'person_id': bal.person_id,
+                                'person_name': person_map[bal.person_id].name if bal.person_id in person_map else 'Unknown',
+                                'balance': bal.balance
+                            }
+                            for bal in balances
+                        ]
+                    except Exception:
+                        # If balance calculation fails, just return empty list
+                        pass
+
                 # Create a dict with all fields
                 return {
                     'id': data.id,
@@ -282,6 +304,7 @@ class TabSchema(BaseModel):
                     'bill_count': data.bill_count,
                     'people': people_list,
                     'settlements': settlements_list,
+                    'balances': balances_list,
                     'created_at': data.created_at,
                     'updated_at': data.updated_at,
                 }
@@ -321,7 +344,32 @@ class SettlementSchema(BaseModel):
     class Config:
         from_attributes = True
 
+    @model_validator(mode='before')
+    @classmethod
+    def extract_persons(cls, data: Any) -> Any:
+        # If data is a Django model instance, convert person relationships
+        if hasattr(data, 'from_person') and hasattr(data, 'to_person'):
+            return {
+                'id': data.id,
+                'from_person': data.from_person,
+                'to_person': data.to_person,
+                'amount': data.amount,
+                'currency': data.currency,
+                'created_at': data.created_at,
+                'updated_at': data.updated_at,
+            }
+        return data
+
 
 class SimplifyResultSchema(BaseModel):
     settlements: List[SettlementSchema]
     message: str
+
+
+class PersonBalanceSchema(BaseModel):
+    person_id: int
+    person_name: str
+    balance: Decimal
+
+    class Config:
+        from_attributes = True

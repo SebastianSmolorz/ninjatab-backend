@@ -48,6 +48,12 @@ class Tab(BaseModel):
         choices=Currency.choices,
         default=Currency.GBP
     )
+    settlement_currency = models.CharField(
+        max_length=3,
+        choices=Currency.choices,
+        default=Currency.GBP,
+        help_text="Currency used for calculating settlements"
+    )
     is_settled = models.BooleanField(default=False)
 
     class Meta:
@@ -229,3 +235,33 @@ class Settlement(BaseModel):
 
     def __str__(self):
         return f"{self.from_person.name} pays {self.to_person.name} {self.amount} {self.currency}"
+
+
+class ExchangeRate(BaseModel):
+    """Exchange rate from one currency to another with historical tracking"""
+    from_currency = models.CharField(
+        max_length=3,
+        choices=Currency.choices
+    )
+    to_currency = models.CharField(
+        max_length=3,
+        choices=Currency.choices
+    )
+    rate = models.DecimalField(
+        max_digits=12,
+        decimal_places=6,
+        help_text="Exchange rate: 1 from_currency = rate * to_currency"
+    )
+    effective_date = models.DateTimeField(
+        help_text="Date and time when this rate became effective"
+    )
+
+    class Meta:
+        ordering = ['-effective_date']
+        unique_together = [['from_currency', 'to_currency', 'effective_date']]
+        indexes = [
+            models.Index(fields=['from_currency', 'to_currency', '-effective_date']),
+        ]
+
+    def __str__(self):
+        return f"1 {self.from_currency} = {self.rate} {self.to_currency} (effective {self.effective_date.date()})"
