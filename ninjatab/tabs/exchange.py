@@ -40,7 +40,7 @@ def get_latest_exchange_rate(from_currency: str, to_currency: str, as_of_date: d
             from_currency=from_currency,
             to_currency=to_currency,
             effective_date__lte=as_of_date
-        ).first()
+        ).order_by('-effective_date').first()
 
         if rate:
             return rate.rate
@@ -53,9 +53,14 @@ def get_latest_exchange_rate(from_currency: str, to_currency: str, as_of_date: d
             from_currency=to_currency,
             to_currency=from_currency,
             effective_date__lte=as_of_date
-        ).first()
+        ).order_by('-effective_date').first()
 
         if rate and rate.rate != 0:
+            # Protect against near-zero rates that would cause huge inverses
+            if abs(rate.rate) < Decimal('0.000001'):
+                raise ExchangeRateNotFoundError(
+                    f"Exchange rate for {to_currency} to {from_currency} is too small to invert"
+                )
             return Decimal('1.0') / rate.rate
     except ExchangeRate.DoesNotExist:
         pass

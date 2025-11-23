@@ -253,11 +253,13 @@ class TabSchema(BaseModel):
     name: str
     description: str
     default_currency: CurrencyEnum
+    settlement_currency: CurrencyEnum
     is_settled: bool
     bill_count: int
     people: List[TabPersonSchema]
     settlements: List['SettlementSchema']
     balances: List['PersonBalanceSchema'] = []
+    total_spent_gbp: Optional[Decimal] = None
     created_at: datetime
     updated_at: datetime
 
@@ -274,10 +276,13 @@ class TabSchema(BaseModel):
                 people_list = list(data.people.all())
                 settlements_list = list(data.settlements.all()) if hasattr(data, 'settlements') else []
 
-                # Calculate balances if tab is settled
+                # Calculate balances and total spent if tab is settled
                 balances_list = []
+                total_spent_gbp = None
                 if data.is_settled and hasattr(data, 'settlement_currency'):
                     from .simp import calculate_tab_balances
+                    from .exchange import convert_amount
+                    from decimal import Decimal
                     try:
                         balances = calculate_tab_balances(data, data.settlement_currency)
                         # Convert Balance objects to dicts with person names
@@ -290,8 +295,18 @@ class TabSchema(BaseModel):
                             }
                             for bal in balances
                         ]
+
+                        # Calculate total spent in GBP
+                        total = Decimal('0')
+                        bills = data.bills.exclude(status='archived')
+                        for bill in bills:
+                            bill_total = bill.total_amount or Decimal('0')
+                            if bill.currency != data.settlement_currency:
+                                bill_total = convert_amount(bill_total, bill.currency, data.settlement_currency)
+                            total += bill_total
+                        total_spent_gbp = total
                     except Exception:
-                        # If balance calculation fails, just return empty list
+                        # If calculation fails, just return empty list and None
                         pass
 
                 # Create a dict with all fields
@@ -300,11 +315,13 @@ class TabSchema(BaseModel):
                     'name': data.name,
                     'description': data.description,
                     'default_currency': data.default_currency,
+                    'settlement_currency': data.settlement_currency,
                     'is_settled': data.is_settled,
                     'bill_count': data.bill_count,
                     'people': people_list,
                     'settlements': settlements_list,
                     'balances': balances_list,
+                    'total_spent_gbp': total_spent_gbp,
                     'created_at': data.created_at,
                     'updated_at': data.updated_at,
                 }
@@ -329,6 +346,7 @@ class TabCreateSchema(BaseModel):
     name: str
     description: str = ""
     default_currency: CurrencyEnum = CurrencyEnum.GBP
+    settlement_currency: CurrencyEnum = CurrencyEnum.GBP
     people: List[TabPersonCreateSchema] = Field(min_length=1)
 
 
@@ -370,6 +388,15 @@ class PersonBalanceSchema(BaseModel):
     person_id: int
     person_name: str
     balance: Decimal
+
+    class Config:
+        from_attributes = True
+
+
+class PersonSpendingTotalSchema(BaseModel):
+    person_id: int
+    person_name: str
+    total: Decimal
 
     class Config:
         from_attributes = True

@@ -82,7 +82,6 @@ def close_tab(request, tab_id: int):
         id=tab_id
     )
     tab.is_settled = True
-    tab.settlement_currency = 'GBP'  # Force GBP for settlements
     tab.save()
 
     # Close all bills in this tab and their line items
@@ -156,6 +155,47 @@ def simplify_tab(request, tab_id: int):
         "settlements": list(settlements),
         "message": f"Created {len(settlements)} simplified settlement(s) in {settlement_currency}"
     }
+
+
+@tab_router.get("/{tab_id}/person-totals", response=List[PersonSpendingTotalSchema])
+def get_tab_person_totals(request, tab_id: int):
+    """Get total spending per person for a tab in settlement currency (with currency conversion)"""
+    from .exchange import convert_amount, ExchangeRateNotFoundError
+
+    tab = get_object_or_404(
+        Tab.objects.prefetch_related('bills__line_items__person_claims__person'),
+        id=tab_id
+    )
+
+    settlement_currency = tab.settlement_currency  # Use tab's settlement currency
+    person_totals = {}
+
+    # Sum up all person claims across all bills, converting to settlement currency
+    for bill in tab.bills.all():
+        bill_currency = bill.currency
+        for line_item in bill.line_items.all():
+            for claim in line_item.person_claims.all():
+                person_id = claim.person.id
+                if person_id not in person_totals:
+                    person_totals[person_id] = {
+                        'person_id': person_id,
+                        'person_name': claim.person.name,
+                        'total': Decimal('0')
+                    }
+
+                amount = claim.calculated_amount or Decimal('0')
+
+                # Convert to GBP if needed
+                if bill_currency != settlement_currency:
+                    try:
+                        amount = convert_amount(amount, bill_currency, settlement_currency)
+                    except ExchangeRateNotFoundError:
+                        # If conversion fails, skip this claim
+                        continue
+
+                person_totals[person_id]['total'] += amount
+
+    return list(person_totals.values())
 
 
 # Bill Endpoints
