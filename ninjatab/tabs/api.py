@@ -61,6 +61,31 @@ def retrieve_tab(request, tab_id: int):
     return tab
 
 
+@tab_router.patch("/{tab_id}", response=TabSchema)
+@transaction.atomic
+def update_tab(request, tab_id: int, payload: TabUpdateSchema):
+    """Update tab fields (settlement_currency)"""
+    tab = get_object_or_404(
+        Tab.objects.prefetch_related(
+            'people__user',
+            'settlements__from_person__user',
+            'settlements__to_person__user'
+        ),
+        id=tab_id
+    )
+
+    # Update fields if provided
+    if payload.settlement_currency is not None:
+        tab.settlement_currency = payload.settlement_currency
+
+    tab.save()
+
+    # Refresh to get updated data
+    tab.refresh_from_db()
+
+    return tab
+
+
 @tab_router.delete("/{tab_id}")
 def delete_tab(request, tab_id: int):
     """Delete a tab"""
@@ -380,4 +405,12 @@ def close_bill(request, bill_id: int):
     bill.refresh_from_db()
 
     return bill
+
+
+@bill_router.delete("/{bill_id}")
+def delete_bill(request, bill_id: int):
+    """Delete a bill"""
+    bill = get_object_or_404(Bill, id=bill_id)
+    bill.delete()
+    return {"success": True}
 

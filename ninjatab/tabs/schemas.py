@@ -350,6 +350,10 @@ class TabCreateSchema(BaseModel):
     people: List[TabPersonCreateSchema] = Field(min_length=1)
 
 
+class TabUpdateSchema(BaseModel):
+    settlement_currency: CurrencyEnum = None
+
+
 class SettlementSchema(BaseModel):
     id: int
     from_person: TabPersonSchema
