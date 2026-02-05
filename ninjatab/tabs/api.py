@@ -182,6 +182,19 @@ def simplify_tab(request, tab_id: int):
     }
 
 
+@tab_router.post("/settlements/{settlement_id}/mark-paid", response=SettlementSchema)
+@transaction.atomic
+def mark_settlement_paid(request, settlement_id: int):
+    """Mark a settlement as paid"""
+    settlement = get_object_or_404(
+        Settlement.objects.select_related('from_person__user', 'to_person__user'),
+        id=settlement_id
+    )
+    settlement.paid = True
+    settlement.save()
+    return settlement
+
+
 @tab_router.get("/{tab_id}/person-totals", response=List[PersonSpendingTotalSchema])
 def get_tab_person_totals(request, tab_id: int):
     """Get total spending per person for a tab in settlement currency (with currency conversion)"""

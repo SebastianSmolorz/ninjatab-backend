@@ -361,6 +361,7 @@ class SettlementSchema(BaseModel):
     to_person: TabPersonSchema
     amount: Decimal
     currency: CurrencyEnum
+    paid: bool
     created_at: datetime
     updated_at: datetime
 
@@ -378,6 +379,7 @@ class SettlementSchema(BaseModel):
                 'to_person': data.to_person,
                 'amount': data.amount,
                 'currency': data.currency,
+                'paid': data.paid,
                 'created_at': data.created_at,
                 'updated_at': data.updated_at,
             }

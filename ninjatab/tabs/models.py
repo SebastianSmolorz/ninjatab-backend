@@ -233,6 +233,7 @@ class Settlement(BaseModel):
         max_length=3,
         choices=Currency.choices
     )
+    paid = models.BooleanField(default=False)
 
     class Meta:
         ordering = ['-created_at']
