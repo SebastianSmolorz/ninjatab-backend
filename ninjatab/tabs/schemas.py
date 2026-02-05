@@ -335,6 +335,7 @@ class TabListSchema(BaseModel):
     default_currency: CurrencyEnum
     is_settled: bool
     bill_count: int
+    people_count: int
     created_at: datetime
     updated_at: datetime
 

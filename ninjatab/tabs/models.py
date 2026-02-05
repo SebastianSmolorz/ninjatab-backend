@@ -66,6 +66,10 @@ class Tab(BaseModel):
     def bill_count(self):
         return self.bills.count()
 
+    @property
+    def people_count(self):
+        return self.people.count()
+
 
 class TabPerson(BaseModel):
     """A person on a tab, optionally linked to a User"""
