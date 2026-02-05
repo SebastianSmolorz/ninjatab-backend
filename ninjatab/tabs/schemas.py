@@ -96,7 +96,6 @@ class LineItemSchema(BaseModel):
     description: str
     value: Decimal
     split_type: SplitTypeEnum
-    is_closed: bool
     person_claims: List[PersonLineItemClaimSchema]
     created_at: datetime
     updated_at: datetime
@@ -118,7 +117,6 @@ class LineItemSchema(BaseModel):
                     'description': data.description,
                     'value': data.value,
                     'split_type': data.split_type,
-                    'is_closed': data.is_closed,
                     'person_claims': person_claims_list,
                     'created_at': data.created_at,
                     'updated_at': data.updated_at,
@@ -164,7 +162,6 @@ class BillSchema(BaseModel):
     creator: TabPersonSchema
     paid_by: Optional[TabPersonSchema] = None
     date: date
-    is_closed: bool
     line_items: List[LineItemSchema]
     total_amount: Decimal
     created_at: datetime
@@ -190,7 +187,6 @@ class BillSchema(BaseModel):
                     'creator': data.creator,
                     'paid_by': data.paid_by,
                     'date': data.date,
-                    'is_closed': data.is_closed,
                     'line_items': line_items_list,
                     'total_amount': data.total_amount,
                     'created_at': data.created_at,
@@ -239,7 +235,6 @@ class BillListSchema(BaseModel):
     currency: CurrencyEnum
     status: BillStatusEnum
     date: date
-    is_closed: bool
     total_amount: Decimal
     paid_by: Optional[TabPersonSchema] = None
     created_at: datetime

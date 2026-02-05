@@ -134,7 +134,6 @@ class Bill(BaseModel):
         blank=True
     )
     date = models.DateField(default=date.today)
-    is_closed = models.BooleanField(default=False)
 
     class Meta:
         ordering = ['-date', '-created_at']
@@ -148,9 +147,6 @@ class Bill(BaseModel):
 
     def save(self, *args, **kwargs):
         super().save(*args, **kwargs)
-        # If bill is closed, close all line items
-        if self.is_closed:
-            self.line_items.update(is_closed=True)
 
 
 class LineItem(BaseModel):
@@ -167,7 +163,6 @@ class LineItem(BaseModel):
         choices=SplitType.choices,
         default=SplitType.SHARES
     )
-    is_closed = models.BooleanField(default=False)
 
     class Meta:
         ordering = ['created_at']

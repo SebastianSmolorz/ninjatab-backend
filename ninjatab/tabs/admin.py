@@ -86,8 +86,8 @@ class LineItemInline(admin.TabularInline):
 
 @admin.register(Bill)
 class BillAdmin(admin.ModelAdmin):
-    list_display = ['description', 'tab', 'currency', 'total_amount', 'status', 'date', 'is_closed']
-    list_filter = ['status', 'currency', 'is_closed', 'date', 'created_at']
+    list_display = ['description', 'tab', 'currency', 'total_amount', 'status', 'date']
+    list_filter = ['status', 'currency', 'date', 'created_at']
     search_fields = ['description', 'tab__name']
     readonly_fields = ['total_amount', 'created_at', 'updated_at']
     autocomplete_fields = ['tab', 'creator', 'paid_by']
@@ -102,7 +102,7 @@ class BillAdmin(admin.ModelAdmin):
             'fields': ('creator', 'paid_by')
         }),
         ('Status', {
-            'fields': ('status', 'is_closed', 'total_amount')
+            'fields': ('status', 'total_amount')
         }),
         ('Timestamps', {
             'fields': ('created_at', 'updated_at'),
