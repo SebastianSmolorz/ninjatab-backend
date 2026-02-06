@@ -1,9 +1,6 @@
 # models.py
 from django.db import models
-from django.contrib.auth.models import User
-from enum import Enum
-
-from django.db import models
+from django.db.models import Q
 from django.contrib.auth.models import User
 from enum import Enum
 from datetime import date
@@ -39,6 +36,13 @@ class BaseModel(models.Model):
         abstract = True
 
 
+class TabManager(models.Manager):
+    def accessible_by(self, user):
+        return self.filter(
+            Q(created_by=user) | Q(people__user=user)
+        ).distinct()
+
+
 class Tab(BaseModel):
     """A tab that tracks shared expenses"""
     name = models.CharField(max_length=255)
@@ -62,6 +66,8 @@ class Tab(BaseModel):
         help_text="Currency used for calculating settlements"
     )
     is_settled = models.BooleanField(default=False)
+
+    objects = TabManager()
 
     class Meta:
         ordering = ['-created_at']

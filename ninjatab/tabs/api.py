@@ -45,7 +45,7 @@ def create_tab(request, payload: TabCreateSchema):
 @tab_router.get("/", response=List[TabListSchema])
 def list_tabs(request):
     """List all tabs"""
-    tabs = Tab.objects.filter(created_by=request.auth)
+    tabs = Tab.objects.accessible_by(request.auth)
     return tabs
 
 
@@ -53,13 +53,12 @@ def list_tabs(request):
 def retrieve_tab(request, tab_id: int):
     """Retrieve a tab with all its people"""
     tab = get_object_or_404(
-        Tab.objects.prefetch_related(
+        Tab.objects.accessible_by(request.auth).prefetch_related(
             'people__user',
             'settlements__from_person__user',
             'settlements__to_person__user'
         ),
         id=tab_id,
-        created_by=request.auth
     )
     return tab
 
@@ -69,13 +68,12 @@ def retrieve_tab(request, tab_id: int):
 def update_tab(request, tab_id: int, payload: TabUpdateSchema):
     """Update tab fields (settlement_currency)"""
     tab = get_object_or_404(
-        Tab.objects.prefetch_related(
+        Tab.objects.accessible_by(request.auth).prefetch_related(
             'people__user',
             'settlements__from_person__user',
             'settlements__to_person__user'
         ),
         id=tab_id,
-        created_by=request.auth
     )
 
     # Update fields if provided
@@ -93,7 +91,7 @@ def update_tab(request, tab_id: int, payload: TabUpdateSchema):
 @tab_router.delete("/{tab_id}")
 def delete_tab(request, tab_id: int):
     """Delete a tab"""
-    tab = get_object_or_404(Tab, id=tab_id, created_by=request.auth)
+    tab = get_object_or_404(Tab.objects.accessible_by(request.auth), id=tab_id)
     tab.delete()
     return {"success": True}
 
@@ -103,13 +101,12 @@ def delete_tab(request, tab_id: int):
 def close_tab(request, tab_id: int):
     """Close a tab (prevents adding new bills or splits) and close all bills"""
     tab = get_object_or_404(
-        Tab.objects.prefetch_related(
+        Tab.objects.accessible_by(request.auth).prefetch_related(
             'people__user',
             'settlements__from_person__user',
             'settlements__to_person__user'
         ),
         id=tab_id,
-        created_by=request.auth
     )
     tab.is_settled = True
     tab.save()
@@ -134,9 +131,10 @@ def simplify_tab(request, tab_id: int):
     Tab remains open and settlements can be regenerated.
     """
     tab = get_object_or_404(
-        Tab.objects.prefetch_related('people__user', 'bills__line_items__person_claims__person'),
+        Tab.objects.accessible_by(request.auth).prefetch_related(
+            'people__user', 'bills__line_items__person_claims__person'
+        ),
         id=tab_id,
-        created_by=request.auth
     )
 
     # Check if there are any non-archived bills
@@ -187,7 +185,7 @@ def mark_settlement_paid(request, settlement_id: int):
     settlement = get_object_or_404(
         Settlement.objects.select_related('from_person__user', 'to_person__user'),
         id=settlement_id,
-        tab__created_by=request.auth
+        tab__in=Tab.objects.accessible_by(request.auth)
     )
     settlement.paid = True
     settlement.save()
@@ -200,9 +198,10 @@ def get_tab_person_totals(request, tab_id: int):
     from .exchange import convert_amount, ExchangeRateNotFoundError
 
     tab = get_object_or_404(
-        Tab.objects.prefetch_related('bills__line_items__person_claims__person'),
+        Tab.objects.accessible_by(request.auth).prefetch_related(
+            'bills__line_items__person_claims__person'
+        ),
         id=tab_id,
-        created_by=request.auth
     )
 
     settlement_currency = tab.settlement_currency  # Use tab's settlement currency
@@ -241,8 +240,8 @@ def get_tab_person_totals(request, tab_id: int):
 @transaction.atomic
 def create_bill(request, payload: BillCreateSchema):
     """Create a new bill with line items"""
-    tab = get_object_or_404(Tab, id=payload.tab_id, created_by=request.auth)
-    creator = get_object_or_404(TabPerson, id=payload.creator_id, tab=tab)
+    tab = get_object_or_404(Tab.objects.accessible_by(request.auth), id=payload.tab_id)
+    creator = get_object_or_404(TabPerson, tab=tab, user=request.auth)
 
     paid_by = None
     if payload.paid_by_id:
@@ -314,7 +313,7 @@ def submit_bill_splits(request, bill_id: int, payload: BillSplitSubmitSchema):
     bill = get_object_or_404(
         Bill.objects.prefetch_related('line_items', 'tab__people'),
         id=bill_id,
-        tab__created_by=request.auth
+        tab__in=Tab.objects.accessible_by(request.auth)
     )
 
     if bill.id != payload.bill_id:
@@ -342,7 +341,7 @@ def submit_bill_splits(request, bill_id: int, payload: BillSplitSubmitSchema):
 @bill_router.get("/", response=List[BillListSchema])
 def list_bills(request, tab_id: int = None):
     """List all bills, optionally filtered by tab"""
-    bills = Bill.objects.filter(tab__created_by=request.auth)
+    bills = Bill.objects.filter(tab__in=Tab.objects.accessible_by(request.auth))
     if tab_id:
         bills = bills.filter(tab_id=tab_id)
     bills = bills.select_related('paid_by__user').prefetch_related('line_items')
@@ -359,7 +358,7 @@ def retrieve_bill(request, bill_id: int):
             'paid_by__user'
         ),
         id=bill_id,
-        tab__created_by=request.auth
+        tab__in=Tab.objects.accessible_by(request.auth)
     )
     return bill
 
@@ -375,7 +374,7 @@ def update_bill(request, bill_id: int, payload: BillUpdateSchema):
             'paid_by__user'
         ),
         id=bill_id,
-        tab__created_by=request.auth
+        tab__in=Tab.objects.accessible_by(request.auth)
     )
 
     # Update fields if provided
@@ -401,7 +400,7 @@ def update_bill(request, bill_id: int, payload: BillUpdateSchema):
 @bill_router.delete("/{bill_id}")
 def delete_bill(request, bill_id: int):
     """Delete a bill"""
-    bill = get_object_or_404(Bill, id=bill_id, tab__created_by=request.auth)
+    bill = get_object_or_404(Bill, id=bill_id, tab__in=Tab.objects.accessible_by(request.auth))
     if bill.tab.is_settled:
         raise HttpError(400, "Cannot delete a bill from a closed tab")
     bill.delete()

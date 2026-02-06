@@ -199,7 +199,6 @@ class BillCreateSchema(BaseModel):
     tab_id: int
     description: str
     currency: CurrencyEnum
-    creator_id: int
     paid_by_id: Optional[int] = None
     date: Optional[date] = None
     line_items: List[LineItemCreateSchema] = []
