@@ -39,7 +39,7 @@ def refresh(request, payload: RefreshSchema):
         token_data = decode_token(payload.refresh_token)
         if token_data.get("type") != "refresh":
             raise HttpError(401, "Invalid token type")
-        user = User.objects.get(id=token_data["sub"])
+        user = User.objects.get(id=int(token_data["sub"]))
     except (jwt.ExpiredSignatureError, jwt.InvalidTokenError):
         raise HttpError(401, "Invalid or expired refresh token")
     except User.DoesNotExist:

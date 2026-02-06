@@ -43,6 +43,13 @@ class Tab(BaseModel):
     """A tab that tracks shared expenses"""
     name = models.CharField(max_length=255)
     description = models.TextField(blank=True)
+    created_by = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name='created_tabs',
+        null=True,
+        blank=True
+    )
     default_currency = models.CharField(
         max_length=3,
         choices=Currency.choices,
@@ -90,7 +97,7 @@ class TabPerson(BaseModel):
 
     class Meta:
         ordering = ['created_at']
-        unique_together = [['tab', 'email']]
+        unique_together = [['tab', 'email'], ['tab', 'name']]
 
     def __str__(self):
         return f"{self.name} on {self.tab.name}"
