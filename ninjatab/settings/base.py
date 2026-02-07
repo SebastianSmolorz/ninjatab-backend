@@ -6,7 +6,7 @@ from envparse import Env
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 # Load .env from backend/ directory (won't override existing env vars)
-load_dotenv(BASE_DIR / ".env")
+load_dotenv(BASE_DIR.parent / ".env")
 
 env = Env()
 
