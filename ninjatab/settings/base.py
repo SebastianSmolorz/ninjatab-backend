@@ -1,12 +1,16 @@
 from pathlib import Path
 
+from dotenv import load_dotenv
 from envparse import Env
-
-env = Env()
 
 # BASE_DIR points to backend/ (same as before: settings.py was in ninjatab/,
 # now base.py is in ninjatab/settings/, so one extra .parent)
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
+
+# Load .env from backend/ directory (won't override existing env vars)
+load_dotenv(BASE_DIR / ".env")
+
+env = Env()
 
 SECRET_KEY = env.str("SECRET_KEY", default="django-insecure-fallback-key-override-in-production")
 

@@ -8,6 +8,7 @@ django-ninja
 dnspython
 email_validator
 envparse
+python-dotenv
 gunicorn
 idna
 packaging

@@ -12,6 +12,10 @@ ENV/
 env/
 .virtualenv
 
+db.sqlite3
+.env*
+.env.example
+
 # Django
 *.log
 db.sqlite3
