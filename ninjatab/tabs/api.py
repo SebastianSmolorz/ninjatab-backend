@@ -6,7 +6,7 @@ from django.db import transaction
 from ninjatab.tabs.models import *
 from ninjatab.tabs.schemas import *
 from ninjatab.tabs.simp import simp_tab
-from ninjatab.tabs.exchange import ExchangeRateNotFoundError
+from ninjatab.tabs.exchange import convert_amount, ExchangeRateNotFoundError
 from ninjatab.auth.bearer import JWTBearer
 
 tab_router = Router(tags=["tabs"], auth=JWTBearer())
@@ -195,7 +195,6 @@ def mark_settlement_paid(request, settlement_id: int):
 @tab_router.get("/{tab_id}/person-totals", response=List[PersonSpendingTotalSchema])
 def get_tab_person_totals(request, tab_id: int):
     """Get total spending per person for a tab in settlement currency (with currency conversion)"""
-    from .exchange import convert_amount, ExchangeRateNotFoundError
 
     tab = get_object_or_404(
         Tab.objects.accessible_by(request.auth).prefetch_related(
@@ -207,8 +206,8 @@ def get_tab_person_totals(request, tab_id: int):
     settlement_currency = tab.settlement_currency  # Use tab's settlement currency
     person_totals = {}
 
-    # Sum up all person claims across all bills, converting to settlement currency
-    for bill in tab.bills.all():
+    # Sum up all person claims across all non-archived bills, converting to settlement currency
+    for bill in tab.bills.exclude(status=BillStatus.ARCHIVED.value):
         bill_currency = bill.currency
         for line_item in bill.line_items.all():
             for claim in line_item.person_claims.all():
@@ -222,13 +221,11 @@ def get_tab_person_totals(request, tab_id: int):
 
                 amount = claim.calculated_amount or Decimal('0')
 
-                # Convert to GBP if needed
                 if bill_currency != settlement_currency:
                     try:
                         amount = convert_amount(amount, bill_currency, settlement_currency)
-                    except ExchangeRateNotFoundError:
-                        # If conversion fails, skip this claim
-                        continue
+                    except ExchangeRateNotFoundError as e:
+                        raise HttpError(400, f"Currency conversion failed: {str(e)}")
 
                 person_totals[person_id]['total'] += amount
 
