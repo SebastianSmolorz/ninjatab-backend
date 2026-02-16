@@ -1,6 +1,5 @@
 import uuid
 from datetime import datetime
-from decimal import Decimal
 
 import boto3
 from ninja import Router, UploadedFile, File
@@ -269,7 +268,7 @@ def upload_receipt(request, tab_id: int, file: UploadedFile = File(...)):
     class Item(BaseModel):
         name: str
         translated_name: str
-        total: Decimal
+        total: float
 
     class Document(BaseModel):
         receipt_language: str
