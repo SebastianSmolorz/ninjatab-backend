@@ -27,7 +27,6 @@ INSTALLED_APPS = [
     "django.contrib.staticfiles",
     "corsheaders",
     "ninjatab.tabs",
-    "ninjatab.mistral",
 ]
 
 MIDDLEWARE = [
