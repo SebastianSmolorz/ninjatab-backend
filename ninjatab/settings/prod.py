@@ -22,3 +22,23 @@ CSRF_COOKIE_SECURE = True
 
 STATIC_ROOT = "/var/www/ninjatab/static"
 MEDIA_ROOT = "/var/www/ninjatab/media"
+
+LOGGING = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "handlers": {
+        "file": {
+            "level": "ERROR",
+            "class": "logging.FileHandler",
+            "filename": "/var/log/django/error.log",
+        },
+    },
+    "loggers": {
+        "django": {
+            "handlers": ["file"],
+            "level": "ERROR",
+            "propagate": True,
+        },
+    },
+}
+
