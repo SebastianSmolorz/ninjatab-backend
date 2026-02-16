@@ -236,7 +236,7 @@ def get_tab_person_totals(request, tab_id: int):
     return list(person_totals.values())
 
 
-ALLOWED_IMAGE_TYPES = {"image/jpeg", "image/png", "image/webp", "image/heic", "image/heif"}
+ALLOWED_IMAGE_TYPES = {"image/jpeg", "image/png", "image/webp", "image/heic", "image/heif", "application/octet-stream"}
 MAX_UPLOAD_SIZE = 10 * 1024 * 1024  # 10 MB
 
 
@@ -253,7 +253,8 @@ def _upload_to_spaces(file: UploadedFile, key: str) -> str:
         key,
         ExtraArgs={"ACL": "public-read", "ContentType": file.content_type},
     )
-    return f"{settings.S3_ENDPOINT}/{settings.S3_BUCKET}/{key}"
+    url = "https://tab-ninja-receipt-scans.lon1.digitaloceanspaces.com"
+    return f"{url}/{key}"
 
 
 @tab_router.post("/{tab_id}/upload-receipt", auth=None)
