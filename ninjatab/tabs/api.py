@@ -1,5 +1,6 @@
 import uuid
 from datetime import datetime
+from decimal import Decimal
 
 import boto3
 from ninja import Router, UploadedFile, File
@@ -265,9 +266,14 @@ def upload_receipt(request, tab_id: int, file: UploadedFile = File(...)):
     from mistralai import Mistral, DocumentURLChunk, ImageURLChunk, ResponseFormat
     from mistralai.extra import response_format_from_pydantic_model
 
+    class Item(BaseModel):
+        name: str
+        translated_name: str
+        total: Decimal
+
     class Document(BaseModel):
         receipt_language: str
-        items: list[str]
+        items: list[Item]
         receipt_total: float
         receipt_establishment_name: str
         # datetime_of_receipt: datetime
