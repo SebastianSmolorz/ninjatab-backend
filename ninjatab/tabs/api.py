@@ -285,8 +285,10 @@ def upload_receipt(request, tab_id: int, file: UploadedFile = File(...)):
     url = _upload_to_spaces(file, key)
 
     document_annotation_prompt = """
-    Extract items, total, establishment and language from this receipt. items should include the total paid for the item 
-    and the name of it and include the translated name into English if language is not English.
+    Extract items, total, establishment and language from this receipt. items should have these keys:
+    - name - string of the item name
+    - total - the float total paid for this item
+    - translated_name - if the language is not English, the translated name of this item
     Be precise.
     """
     # todo - Language (e.g., "English")
