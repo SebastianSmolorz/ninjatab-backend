@@ -27,6 +27,7 @@ INSTALLED_APPS = [
     "django.contrib.staticfiles",
     "corsheaders",
     "ninjatab.tabs",
+    "ninjatab.mistral",
 ]
 
 MIDDLEWARE = [
@@ -115,6 +116,9 @@ AWS_ACCESS_KEY_ID = env.str("AWS_ACCESS_KEY_ID", default="")
 AWS_SECRET_ACCESS_KEY = env.str("AWS_SECRET_ACCESS_KEY", default="")
 S3_ENDPOINT = env.str("S3_ENDPOINT", default="https://ams3.digitaloceanspaces.com")
 S3_BUCKET = "tab-ninja-receipt-scans"
+
+# Mistral AI
+MISTRAL_API_KEY = env.str("MISTRAL_API_KEY", default="")
 
 CORS_ALLOW_METHODS = [
     "DELETE",

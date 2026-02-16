@@ -1,4 +1,5 @@
 import uuid
+from datetime import datetime
 
 import boto3
 from ninja import Router, UploadedFile, File
@@ -260,6 +261,17 @@ def _upload_to_spaces(file: UploadedFile, key: str) -> str:
 @tab_router.post("/{tab_id}/upload-receipt", auth=None)
 def upload_receipt(request, tab_id: int, file: UploadedFile = File(...)):
     """Upload a receipt image to storage and return its URL"""
+    from pydantic import BaseModel
+    from mistralai import Mistral, DocumentURLChunk, ImageURLChunk, ResponseFormat
+    from mistralai.extra import response_format_from_pydantic_model
+
+    class Document(BaseModel):
+        receipt_language: str
+        items: list[str]
+        receipt_total: float
+        receipt_establishment_name: str
+        # datetime_of_receipt: datetime
+
     get_object_or_404(Tab, id=tab_id)
 
     if file.content_type not in ALLOWED_IMAGE_TYPES:
@@ -272,7 +284,27 @@ def upload_receipt(request, tab_id: int, file: UploadedFile = File(...)):
     key = f"receipts/{tab_id}/{uuid.uuid4()}.{ext}"
     url = _upload_to_spaces(file, key)
 
-    return {"url": url}
+    document_annotation_prompt = """
+    Extract items, total, establishment and language from this receipt. items should include the total paid for the item 
+    and the name of it and include the translated name into English if language is not English.
+    Be precise.
+    """
+    # todo - Language (e.g., "English")
+    client = Mistral(api_key=settings.MISTRAL_API_KEY)
+
+    # Client call
+    response = client.ocr.process(
+        model="mistral-ocr-latest",
+        pages=list(range(8)),
+        document=DocumentURLChunk(
+            document_url=url
+        ),
+        document_annotation_format=response_format_from_pydantic_model(Document),
+        document_annotation_prompt=document_annotation_prompt,
+        include_image_base64=True
+    )
+
+    return response
 
 
 # Bill Endpoints
