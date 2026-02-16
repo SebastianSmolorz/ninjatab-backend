@@ -1,5 +1,9 @@
-from ninja import Router
+import uuid
+
+import boto3
+from ninja import Router, UploadedFile, File
 from ninja.errors import HttpError
+from django.conf import settings
 from django.shortcuts import get_object_or_404
 from django.db import transaction
 
@@ -230,6 +234,44 @@ def get_tab_person_totals(request, tab_id: int):
                 person_totals[person_id]['total'] += amount
 
     return list(person_totals.values())
+
+
+ALLOWED_IMAGE_TYPES = {"image/jpeg", "image/png", "image/webp", "image/heic", "image/heif"}
+MAX_UPLOAD_SIZE = 10 * 1024 * 1024  # 10 MB
+
+
+def _upload_to_spaces(file: UploadedFile, key: str) -> str:
+    s3 = boto3.client(
+        "s3",
+        endpoint_url=settings.S3_ENDPOINT,
+        aws_access_key_id=settings.AWS_ACCESS_KEY_ID,
+        aws_secret_access_key=settings.AWS_SECRET_ACCESS_KEY,
+    )
+    s3.upload_fileobj(
+        file,
+        settings.S3_BUCKET,
+        key,
+        ExtraArgs={"ACL": "public-read", "ContentType": file.content_type},
+    )
+    return f"{settings.S3_ENDPOINT}/{settings.S3_BUCKET}/{key}"
+
+
+@tab_router.post("/{tab_id}/upload-receipt", auth=None)
+def upload_receipt(request, tab_id: int, file: UploadedFile = File(...)):
+    """Upload a receipt image to storage and return its URL"""
+    get_object_or_404(Tab, id=tab_id)
+
+    if file.content_type not in ALLOWED_IMAGE_TYPES:
+        raise HttpError(400, f"Unsupported file type: {file.content_type}. Allowed: JPEG, PNG, WebP, HEIC")
+
+    if file.size > MAX_UPLOAD_SIZE:
+        raise HttpError(400, f"File too large. Maximum size is {MAX_UPLOAD_SIZE // (1024 * 1024)} MB")
+
+    ext = file.name.rsplit(".", 1)[-1] if "." in file.name else "jpg"
+    key = f"receipts/{tab_id}/{uuid.uuid4()}.{ext}"
+    url = _upload_to_spaces(file, key)
+
+    return {"url": url}
 
 
 # Bill Endpoints

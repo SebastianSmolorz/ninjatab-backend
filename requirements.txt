@@ -18,3 +18,4 @@ pydantic_core
 PyJWT
 sqlparse
 typing_extensions
+boto3

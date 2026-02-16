@@ -110,6 +110,12 @@ CORS_ALLOW_HEADERS = [
     "x-requested-with",
 ]
 
+# S3 / DigitalOcean Spaces
+AWS_ACCESS_KEY_ID = env.str("AWS_ACCESS_KEY_ID", default="")
+AWS_SECRET_ACCESS_KEY = env.str("AWS_SECRET_ACCESS_KEY", default="")
+S3_ENDPOINT = env.str("S3_ENDPOINT", default="https://ams3.digitaloceanspaces.com")
+S3_BUCKET = "tab-ninja-receipt-scans"
+
 CORS_ALLOW_METHODS = [
     "DELETE",
     "GET",
