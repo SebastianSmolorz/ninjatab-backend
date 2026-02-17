@@ -275,6 +275,7 @@ def upload_receipt(request, tab_id: int, file: UploadedFile = File(...)):
         items: list[Item]
         receipt_total: float
         receipt_establishment_name: str
+        currency_code: str
         # datetime_of_receipt: datetime
 
     get_object_or_404(Tab, id=tab_id)
@@ -290,13 +291,13 @@ def upload_receipt(request, tab_id: int, file: UploadedFile = File(...)):
     url = _upload_to_spaces(file, key)
 
     document_annotation_prompt = """
-    Extract items, total, establishment and language from this receipt. items should have these keys:
+    Extract items, total, establishment name, currency code and language from this receipt. items should have these keys:
     - name - string of the item name
     - total - the float total paid for this item
     - translated_name - if the language is not English, the translated name of this item
+    Currency code should be in ISO 4217 format
     Be precise.
     """
-    # todo - Language (e.g., "English")
     client = Mistral(api_key=settings.MISTRAL_API_KEY)
 
     # Client call
