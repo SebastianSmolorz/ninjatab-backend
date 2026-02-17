@@ -25,5 +25,10 @@ class RefreshSchema(BaseModel):
     refresh_token: str
 
 
+class RegisterSchema(BaseModel):
+    email: EmailStr
+    name: str
+
+
 class RefreshResponseSchema(BaseModel):
     access_token: str

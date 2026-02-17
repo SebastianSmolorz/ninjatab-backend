@@ -5,6 +5,7 @@ from django.contrib.auth.models import User
 
 from ninjatab.auth.schemas import (
     LoginSchema,
+    RegisterSchema,
     TokenResponseSchema,
     AuthUserSchema,
     RefreshSchema,
@@ -21,7 +22,28 @@ def login(request, payload: LoginSchema):
     try:
         user = User.objects.get(email=payload.email)
     except User.DoesNotExist:
-        raise HttpError(401, "No user found with this email")
+        raise HttpError(404, "not_found")
+
+    access_token = create_access_token(user.id, user.email)
+    refresh_token = create_refresh_token(user.id)
+
+    return {
+        "access_token": access_token,
+        "refresh_token": refresh_token,
+        "user": user,
+    }
+
+
+@auth_router.post("/register", response=TokenResponseSchema)
+def register(request, payload: RegisterSchema):
+    if User.objects.filter(email=payload.email).exists():
+        raise HttpError(409, "A user with this email already exists")
+
+    user = User.objects.create_user(
+        username=payload.email,
+        email=payload.email,
+        first_name=payload.name,
+    )
 
     access_token = create_access_token(user.id, user.email)
     refresh_token = create_refresh_token(user.id)
