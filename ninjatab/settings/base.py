@@ -119,6 +119,10 @@ S3_BUCKET = "tab-ninja-receipt-scans"
 # Mistral AI
 MISTRAL_API_KEY = env.str("MISTRAL_API_KEY", default="")
 
+# Brevo (transactional email)
+BREVO_API_KEY = env.str("BREVO_API_KEY", default="")
+MAGIC_LINK_BASE_URL = env.str("MAGIC_LINK_BASE_URL", default="http://localhost:3000/auth/verify")
+
 CORS_ALLOW_METHODS = [
     "DELETE",
     "GET",
