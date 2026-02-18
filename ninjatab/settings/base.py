@@ -119,6 +119,9 @@ S3_BUCKET = "tab-ninja-receipt-scans"
 # Mistral AI
 MISTRAL_API_KEY = env.str("MISTRAL_API_KEY", default="")
 
+# Open Exchange Rates
+OPEN_EXCHANGE_RATES_APP_ID = env.str("OPEN_EXCHANGE_RATES_APP_ID", default="")
+
 CORS_ALLOW_METHODS = [
     "DELETE",
     "GET",
