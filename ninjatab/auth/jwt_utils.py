@@ -4,6 +4,7 @@ from django.conf import settings
 
 ACCESS_TOKEN_EXPIRE_HOURS = 24
 REFRESH_TOKEN_EXPIRE_DAYS = 7
+MAGIC_TOKEN_EXPIRE_MINUTES = 15
 
 
 def create_access_token(user_id: int, email: str) -> str:
@@ -12,6 +13,16 @@ def create_access_token(user_id: int, email: str) -> str:
         "email": email,
         "type": "access",
         "exp": datetime.now(timezone.utc) + timedelta(hours=ACCESS_TOKEN_EXPIRE_HOURS),
+        "iat": datetime.now(timezone.utc),
+    }
+    return jwt.encode(payload, settings.SECRET_KEY, algorithm="HS256")
+
+
+def create_magic_token(user_id: int) -> str:
+    payload = {
+        "sub": str(user_id),
+        "type": "magic",
+        "exp": datetime.now(timezone.utc) + timedelta(minutes=MAGIC_TOKEN_EXPIRE_MINUTES),
         "iat": datetime.now(timezone.utc),
     }
     return jwt.encode(payload, settings.SECRET_KEY, algorithm="HS256")

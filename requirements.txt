@@ -20,3 +20,4 @@ sqlparse
 typing_extensions
 boto3
 mistralai
+requests

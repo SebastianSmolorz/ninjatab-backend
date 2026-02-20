@@ -4,46 +4,48 @@ from ninja.errors import HttpError
 from django.contrib.auth.models import User
 
 from ninjatab.auth.schemas import (
-    LoginSchema,
-    RegisterSchema,
+    MagicLinkSchema,
+    MagicLinkSuccessSchema,
+    VerifyMagicLinkSchema,
     TokenResponseSchema,
     AuthUserSchema,
     RefreshSchema,
     RefreshResponseSchema,
 )
-from ninjatab.auth.jwt_utils import create_access_token, create_refresh_token, decode_token
+from ninjatab.auth.jwt_utils import (
+    create_access_token,
+    create_refresh_token,
+    create_magic_token,
+    decode_token,
+)
 from ninjatab.auth.bearer import JWTBearer
+from ninjatab.auth.email import send_magic_link
 
 auth_router = Router(tags=["auth"])
 
 
-@auth_router.post("/login", response=TokenResponseSchema)
-def login(request, payload: LoginSchema):
-    try:
-        user = User.objects.get(email=payload.email)
-    except User.DoesNotExist:
-        raise HttpError(404, "not_found")
-
-    access_token = create_access_token(user.id, user.email)
-    refresh_token = create_refresh_token(user.id)
-
-    return {
-        "access_token": access_token,
-        "refresh_token": refresh_token,
-        "user": user,
-    }
-
-
-@auth_router.post("/register", response=TokenResponseSchema)
-def register(request, payload: RegisterSchema):
-    if User.objects.filter(email=payload.email).exists():
-        raise HttpError(409, "A user with this email already exists")
-
-    user = User.objects.create_user(
-        username=payload.email,
+@auth_router.post("/magic-link", response=MagicLinkSuccessSchema)
+def magic_link(request, payload: MagicLinkSchema):
+    user, _ = User.objects.get_or_create(
         email=payload.email,
-        first_name=payload.name,
+        defaults={"username": payload.email},
     )
+    token = create_magic_token(user.id)
+    send_magic_link(payload.email, token)
+    return {"success": True}
+
+
+@auth_router.post("/verify-magic-link", response=TokenResponseSchema)
+def verify_magic_link(request, payload: VerifyMagicLinkSchema):
+    try:
+        token_data = decode_token(payload.token)
+        if token_data.get("type") != "magic":
+            raise HttpError(401, "Invalid token type")
+        user = User.objects.get(id=int(token_data["sub"]))
+    except (jwt.ExpiredSignatureError, jwt.InvalidTokenError):
+        raise HttpError(401, "Invalid or expired magic link")
+    except User.DoesNotExist:
+        raise HttpError(401, "User not found")
 
     access_token = create_access_token(user.id, user.email)
     refresh_token = create_refresh_token(user.id)

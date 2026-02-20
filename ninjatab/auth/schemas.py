@@ -1,8 +1,16 @@
 from pydantic import BaseModel, EmailStr
 
 
-class LoginSchema(BaseModel):
+class MagicLinkSchema(BaseModel):
     email: EmailStr
+
+
+class MagicLinkSuccessSchema(BaseModel):
+    success: bool
+
+
+class VerifyMagicLinkSchema(BaseModel):
+    token: str
 
 
 class AuthUserSchema(BaseModel):
@@ -23,11 +31,6 @@ class TokenResponseSchema(BaseModel):
 
 class RefreshSchema(BaseModel):
     refresh_token: str
-
-
-class RegisterSchema(BaseModel):
-    email: EmailStr
-    name: str
 
 
 class RefreshResponseSchema(BaseModel):
