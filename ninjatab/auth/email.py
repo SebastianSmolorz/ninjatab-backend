@@ -6,9 +6,9 @@ from django.conf import settings
 def send_magic_link(email: str, token: str) -> None:
     magic_url = f"{settings.MAGIC_LINK_BASE_URL}?token={token}"
 
-    # if settings.DEBUG:
-    #     print(f"\n[MAGIC LINK] {email}\n{magic_url}\n")
-    #     return
+    if settings.DEBUG:
+        print(f"\n[MAGIC LINK] {email}\n{magic_url}\n")
+        return
 
     html = f"""\
         <!DOCTYPE html>
