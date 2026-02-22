@@ -249,6 +249,7 @@ class TabSchema(BaseModel):
     default_currency: CurrencyEnum
     settlement_currency: CurrencyEnum
     is_settled: bool
+    invite_code: str
     bill_count: int
     people: List[TabPersonSchema]
     settlements: List['SettlementSchema']
@@ -311,6 +312,7 @@ class TabSchema(BaseModel):
                     'default_currency': data.default_currency,
                     'settlement_currency': data.settlement_currency,
                     'is_settled': data.is_settled,
+                    'invite_code': str(data.invite_code),
                     'bill_count': data.bill_count,
                     'people': people_list,
                     'settlements': settlements_list,
@@ -401,3 +403,21 @@ class PersonSpendingTotalSchema(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+class InvitePersonSchema(BaseModel):
+    id: int
+    name: str
+
+    class Config:
+        from_attributes = True
+
+
+class InviteTabInfoSchema(BaseModel):
+    tab_name: str
+    people: List[InvitePersonSchema]
+
+
+class ClaimInviteSchema(BaseModel):
+    person_id: int
+    email: EmailStr

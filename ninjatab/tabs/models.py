@@ -1,4 +1,5 @@
 # models.py
+import uuid
 from django.db import models
 from django.db.models import Q
 from django.contrib.auth.models import User
@@ -66,6 +67,7 @@ class Tab(BaseModel):
         help_text="Currency used for calculating settlements"
     )
     is_settled = models.BooleanField(default=False)
+    invite_code = models.UUIDField(default=uuid.uuid4, unique=True)
 
     objects = TabManager()
 

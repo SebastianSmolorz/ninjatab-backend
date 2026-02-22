@@ -13,6 +13,9 @@ from ninjatab.tabs.schemas import *
 from ninjatab.tabs.simp import simp_tab
 from ninjatab.tabs.exchange import convert_amount, ExchangeRateNotFoundError
 from ninjatab.auth.bearer import JWTBearer
+from ninjatab.auth.schemas import MagicLinkSuccessSchema
+from ninjatab.auth.jwt_utils import create_magic_token
+from ninjatab.auth.email import send_magic_link
 
 tab_router = Router(tags=["tabs"], auth=JWTBearer())
 bill_router = Router(tags=["bills"], auth=JWTBearer())
@@ -235,6 +238,29 @@ def get_tab_person_totals(request, tab_id: int):
                 person_totals[person_id]['total'] += amount
 
     return list(person_totals.values())
+
+
+@tab_router.get("/invite/{invite_code}", response=InviteTabInfoSchema, auth=None)
+def get_invite(request, invite_code: str):
+    """Get tab info for invite page — no auth required"""
+    tab = get_object_or_404(Tab, invite_code=invite_code)
+    unclaimed = list(tab.people.filter(user__isnull=True))
+    return {"tab_name": tab.name, "people": unclaimed}
+
+
+@tab_router.post("/invite/{invite_code}/claim", response=MagicLinkSuccessSchema, auth=None)
+def claim_invite(request, invite_code: str, payload: ClaimInviteSchema):
+    """Claim a placeholder person on a tab and send a magic link — no auth required"""
+    tab = get_object_or_404(Tab, invite_code=invite_code)
+    person = get_object_or_404(TabPerson, id=payload.person_id, tab=tab, user__isnull=True)
+    user, _ = User.objects.get_or_create(email=payload.email, defaults={"username": payload.email})
+    user.first_name = person.name
+    user.save(update_fields=["first_name"])
+    person.user = user
+    person.save()
+    token = create_magic_token(user.id)
+    send_magic_link(payload.email, token)
+    return {"success": True}
 
 
 ALLOWED_IMAGE_TYPES = {"image/jpeg", "image/png", "image/webp", "image/heic", "image/heif", "application/octet-stream"}
