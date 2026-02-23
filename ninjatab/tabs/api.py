@@ -36,7 +36,6 @@ def create_tab(request, payload: TabCreateSchema):
         TabPerson.objects.create(
             tab=tab,
             name=person_data.name,
-            email=person_data.email
         )
 
     # Refresh to get related people

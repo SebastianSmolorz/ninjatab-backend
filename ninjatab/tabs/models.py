@@ -14,6 +14,8 @@ class Currency(models.TextChoices):
     JPY = 'JPY', 'Japanese Yen'
     CAD = 'CAD', 'Canadian Dollar'
     TRY = 'TRY', 'Turkish Lira'
+    PLN = 'PLN', 'Polish Złoty'
+    CZK = 'CZK', 'Czech Crown'
 
 
 class SplitType(models.TextChoices):
@@ -23,8 +25,6 @@ class SplitType(models.TextChoices):
 
 class BillStatus(models.TextChoices):
     OPEN = 'open', 'Open'
-    ALL_CLAIMED = 'all_claimed', 'All Claimed'
-    ALL_PAID = 'all_paid', 'All Paid'
     ARCHIVED = 'archived', 'Archived'
 
 
@@ -85,6 +85,10 @@ class Tab(BaseModel):
     def people_count(self):
         return self.people.count()
 
+    def rotate_invite_code(self):
+        self.invite_code = uuid.uuid4()
+        self.save(update_fields=["invite_code"])
+
 
 class TabPerson(BaseModel):
     """A person on a tab, optionally linked to a User"""
@@ -94,7 +98,6 @@ class TabPerson(BaseModel):
         related_name='people'
     )
     name = models.CharField(max_length=255)
-    email = models.EmailField(blank=True, null=True)
     user = models.ForeignKey(
         User,
         on_delete=models.SET_NULL,
@@ -105,18 +108,10 @@ class TabPerson(BaseModel):
 
     class Meta:
         ordering = ['created_at']
-        unique_together = [['tab', 'email'], ['tab', 'name']]
+        unique_together = [['tab', 'name']]
 
     def __str__(self):
         return f"{self.name} on {self.tab.name}"
-
-    def save(self, *args, **kwargs):
-        if self.email and not self.user:
-            try:
-                self.user = User.objects.get(email=self.email)
-            except User.DoesNotExist:
-                pass
-        super().save(*args, **kwargs)
 
 
 class Bill(BaseModel):

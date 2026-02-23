@@ -35,7 +35,7 @@ class TabAdmin(admin.ModelAdmin):
 
 @admin.register(TabPerson)
 class TabPersonAdmin(admin.ModelAdmin):
-    list_display = ['name', 'tab', 'email', 'user_link', 'created_at']
+    list_display = ['name', 'tab', 'user_link', 'created_at']
     list_filter = ['tab', 'created_at']
     search_fields = ['name', 'email', 'user__username', 'user__email']
     readonly_fields = ['created_at', 'updated_at']
@@ -43,7 +43,7 @@ class TabPersonAdmin(admin.ModelAdmin):
 
     fieldsets = (
         ('Person Information', {
-            'fields': ('tab', 'name', 'email')
+            'fields': ('tab', 'name')
         }),
         ('User Association', {
             'fields': ('user',)

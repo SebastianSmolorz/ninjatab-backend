@@ -46,7 +46,6 @@ class UserSchema(BaseModel):
 class TabPersonSchema(BaseModel):
     id: int
     name: str
-    email: Optional[EmailStr] = None
     user: Optional[UserSchema] = None
     created_at: datetime
     updated_at: datetime
@@ -57,7 +56,6 @@ class TabPersonSchema(BaseModel):
 
 class TabPersonCreateSchema(BaseModel):
     name: str
-    email: Optional[EmailStr] = None
 
 
 class PersonLineItemClaimSchema(BaseModel):
