@@ -56,6 +56,7 @@ class TabPersonSchema(BaseModel):
 
 class TabPersonCreateSchema(BaseModel):
     name: str
+    email: Optional[str]
 
 
 class PersonLineItemClaimSchema(BaseModel):

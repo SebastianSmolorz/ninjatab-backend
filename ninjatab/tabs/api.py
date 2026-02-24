@@ -7,6 +7,7 @@ from ninja.errors import HttpError
 from django.conf import settings
 from django.shortcuts import get_object_or_404
 from django.db import transaction
+from django.db.models import Q
 
 from ninjatab.tabs.models import *
 from ninjatab.tabs.schemas import *
@@ -245,6 +246,26 @@ def get_invite(request, invite_code: str):
     tab = get_object_or_404(Tab, invite_code=invite_code)
     unclaimed = list(tab.people.filter(user__isnull=True))
     return {"tab_name": tab.name, "people": unclaimed}
+
+
+@tab_router.post("/{tab_id}/people", response=TabPersonSchema)
+def add_tab_person(request, tab_id: int, payload: TabPersonCreateSchema):
+    """Add a new person to a tab"""
+    tab = get_object_or_404(Tab.objects.accessible_by(request.auth), id=tab_id, is_settled=False)
+    person = TabPerson.objects.create(tab=tab, name=payload.name)
+    return person
+
+
+@tab_router.delete("/{tab_id}/people/{person_id}")
+def remove_tab_person(request, tab_id: int, person_id: int):
+    """Remove a person from a tab (only if not referenced in any bills)"""
+    tab = get_object_or_404(Tab.objects.accessible_by(request.auth), id=tab_id)
+    person = get_object_or_404(TabPerson, id=person_id, tab=tab)
+    if (PersonLineItemClaim.objects.filter(person=person).exists() or
+            Bill.objects.filter(Q(paid_by=person) | Q(creator=person)).exists()):
+        raise HttpError(400, "Cannot remove a person who is associated with a bill")
+    person.delete()
+    return {"success": True}
 
 
 @tab_router.post("/invite/{invite_code}/claim", response=MagicLinkSuccessSchema, auth=None)
