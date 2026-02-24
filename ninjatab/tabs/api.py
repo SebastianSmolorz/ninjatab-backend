@@ -34,9 +34,16 @@ def create_tab(request, payload: TabCreateSchema):
     )
 
     for person_data in payload.people:
+        user = None
+        if person_data.user_id:
+            user = get_object_or_404(User, id=person_data.user_id)
+            if not user.first_name:
+                user.first_name = person_data.name
+                user.save(update_fields=["first_name"])
         TabPerson.objects.create(
             tab=tab,
             name=person_data.name,
+            user=user,
         )
 
     # Refresh to get related people
