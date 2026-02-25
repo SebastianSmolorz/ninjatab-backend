@@ -26,6 +26,7 @@ INSTALLED_APPS = [
     "django.contrib.messages",
     "django.contrib.staticfiles",
     "corsheaders",
+    "ninjatab.currencies",
     "ninjatab.tabs",
 ]
 
@@ -118,6 +119,9 @@ S3_BUCKET = "tab-ninja-receipt-scans"
 
 # Mistral AI
 MISTRAL_API_KEY = env.str("MISTRAL_API_KEY", default="")
+
+# Open Exchange Rates
+OPEN_EXCHANGE_RATES_APP_ID = env.str("OPEN_EXCHANGE_RATES_APP_ID", default="")
 
 # Brevo (transactional email)
 BREVO_API_KEY = env.str("BREVO_API_KEY", default="")

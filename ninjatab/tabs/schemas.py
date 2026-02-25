@@ -12,6 +12,14 @@ class CurrencyEnum(str, Enum):
     JPY = 'JPY'
     CAD = 'CAD'
     TRY = 'TRY'
+    PLN = 'PLN'
+    CZK = 'CZK'
+    AUD = 'AUD'
+    CHF = 'CHF'
+    HUF = 'HUF'
+    BGN = 'BGN'
+    MXN = 'MXN'
+    TBH = 'THB'
 
 
 class SplitTypeEnum(str, Enum):
