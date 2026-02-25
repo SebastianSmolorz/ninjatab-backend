@@ -284,7 +284,7 @@ class TabSchema(BaseModel):
                 total_spent_gbp = None
                 if data.is_settled and hasattr(data, 'settlement_currency'):
                     from .simp import calculate_tab_balances
-                    from .exchange import convert_amount
+                    from ninjatab.currencies.exchange import convert_amount
                     from decimal import Decimal
                     try:
                         balances = calculate_tab_balances(data, data.settlement_currency)

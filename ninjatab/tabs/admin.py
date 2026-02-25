@@ -1,6 +1,6 @@
 from django.contrib import admin
 from django.utils.html import format_html
-from .models import Tab, TabPerson, Bill, LineItem, PersonLineItemClaim, Settlement, ExchangeRate
+from .models import Tab, TabPerson, Bill, LineItem, PersonLineItemClaim, Settlement
 
 
 class TabPersonInline(admin.TabularInline):
@@ -234,24 +234,3 @@ class SettlementAdmin(admin.ModelAdmin):
         return qs.select_related('tab', 'from_person', 'to_person')
 
 
-@admin.register(ExchangeRate)
-class ExchangeRateAdmin(admin.ModelAdmin):
-    list_display = ['from_currency', 'to_currency', 'rate', 'effective_date', 'created_at']
-    list_filter = ['from_currency', 'to_currency', 'effective_date', 'created_at']
-    search_fields = ['from_currency', 'to_currency']
-    readonly_fields = ['created_at', 'updated_at']
-    date_hierarchy = 'effective_date'
-    ordering = ['-effective_date', 'from_currency', 'to_currency']
-
-    fieldsets = (
-        ('Exchange Rate Information', {
-            'fields': ('from_currency', 'to_currency', 'rate', 'effective_date')
-        }),
-        ('Timestamps', {
-            'fields': ('created_at', 'updated_at'),
-            'classes': ('collapse',)
-        }),
-    )
-
-    def get_queryset(self, request):
-        return super().get_queryset(request)

@@ -12,7 +12,7 @@ from django.db.models import Q
 from ninjatab.tabs.models import *
 from ninjatab.tabs.schemas import *
 from ninjatab.tabs.simp import simp_tab
-from ninjatab.tabs.exchange import convert_amount, ExchangeRateNotFoundError
+from ninjatab.currencies.exchange import convert_amount, ExchangeRateNotFoundError
 from ninjatab.auth.bearer import JWTBearer
 from ninjatab.auth.schemas import MagicLinkSuccessSchema
 from ninjatab.auth.jwt_utils import create_magic_token

@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 from typing import List
 from decimal import Decimal
-from .exchange import convert_amount, ExchangeRateNotFoundError
+from ninjatab.currencies.exchange import convert_amount, ExchangeRateNotFoundError
 
 
 @dataclass
