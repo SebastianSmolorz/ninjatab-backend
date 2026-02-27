@@ -6,7 +6,7 @@ from .models import Tab, TabPerson, Bill, LineItem, PersonLineItemClaim, Settlem
 class TabPersonInline(admin.TabularInline):
     model = TabPerson
     extra = 1
-    fields = ['name', 'email', 'user', 'created_at']
+    fields = ['name', 'user', 'created_at']
     readonly_fields = ['created_at']
     autocomplete_fields = ['user']
 
@@ -16,7 +16,7 @@ class TabAdmin(admin.ModelAdmin):
     list_display = ['name', 'default_currency', 'settlement_currency', 'bill_count', 'is_settled', 'created_by', 'created_at']
     list_filter = ['is_settled', 'default_currency', 'settlement_currency', 'created_at']
     search_fields = ['name', 'description']
-    readonly_fields = ['bill_count', 'created_at', 'updated_at']
+    readonly_fields = ['uuid', 'bill_count', 'created_at', 'updated_at']
     inlines = [TabPersonInline]
 
     fieldsets = (
@@ -37,7 +37,7 @@ class TabAdmin(admin.ModelAdmin):
 class TabPersonAdmin(admin.ModelAdmin):
     list_display = ['name', 'tab', 'user_link', 'created_at']
     list_filter = ['tab', 'created_at']
-    search_fields = ['name', 'email', 'user__username', 'user__email']
+    search_fields = ['name', 'user__username', 'user__email']
     readonly_fields = ['created_at', 'updated_at']
     autocomplete_fields = ['tab', 'user']
 
@@ -57,7 +57,7 @@ class TabPersonAdmin(admin.ModelAdmin):
     def user_link(self, obj):
         if obj.user:
             return format_html(
-                '<a href="/admin/auth/user/{}/change/">{}</a>',
+                '<a href="/admin/ninjatab_auth/user/{}/change/">{}</a>',
                 obj.user.id,
                 obj.user.username
             )

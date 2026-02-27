@@ -41,7 +41,7 @@ class SplitModeEnum(str, Enum):
 
 # Schemas
 class UserSchema(BaseModel):
-    id: int
+    id: str
     username: str
     email: EmailStr
     first_name: str
@@ -50,9 +50,22 @@ class UserSchema(BaseModel):
     class Config:
         from_attributes = True
 
+    @model_validator(mode='before')
+    @classmethod
+    def extract_uuid(cls, data: Any) -> Any:
+        if hasattr(data, 'uuid'):
+            return {
+                'id': str(data.uuid),
+                'username': data.username,
+                'email': data.email,
+                'first_name': data.first_name,
+                'last_name': data.last_name,
+            }
+        return data
+
 
 class TabPersonSchema(BaseModel):
-    id: int
+    id: str
     name: str
     user: Optional[UserSchema] = None
     created_at: datetime
@@ -61,16 +74,29 @@ class TabPersonSchema(BaseModel):
     class Config:
         from_attributes = True
 
+    @model_validator(mode='before')
+    @classmethod
+    def extract_uuid(cls, data: Any) -> Any:
+        if hasattr(data, 'uuid'):
+            return {
+                'id': str(data.uuid),
+                'name': data.name,
+                'user': data.user,
+                'created_at': data.created_at,
+                'updated_at': data.updated_at,
+            }
+        return data
+
 
 class TabPersonCreateSchema(BaseModel):
     name: str
     email: Optional[str] = None
-    user_id: Optional[int] = None
+    user_id: Optional[str] = None
 
 
 class PersonLineItemClaimSchema(BaseModel):
-    id: int
-    person_id: int
+    id: str
+    person_id: str
     person_name: str
     split_value: Optional[Decimal] = None
     calculated_amount: Optional[Decimal] = None
@@ -87,8 +113,8 @@ class PersonLineItemClaimSchema(BaseModel):
         # If data is a Django model instance, extract person_id and person_name
         if hasattr(data, 'person'):
             return {
-                'id': data.id,
-                'person_id': data.person.id,
+                'id': str(data.uuid),
+                'person_id': str(data.person.uuid),
                 'person_name': data.person.name,
                 'split_value': data.split_value,
                 'calculated_amount': data.calculated_amount,
@@ -100,7 +126,7 @@ class PersonLineItemClaimSchema(BaseModel):
 
 
 class LineItemSchema(BaseModel):
-    id: int
+    id: str
     description: str
     value: Decimal
     split_type: SplitTypeEnum
@@ -121,7 +147,7 @@ class LineItemSchema(BaseModel):
                 person_claims_list = list(data.person_claims.all())
                 # Create a dict with all fields
                 return {
-                    'id': data.id,
+                    'id': str(data.uuid),
                     'description': data.description,
                     'value': data.value,
                     'split_type': data.split_type,
@@ -133,7 +159,7 @@ class LineItemSchema(BaseModel):
 
 
 class PersonSplitCreateSchema(BaseModel):
-    person_id: int
+    person_id: str
     split_value: Optional[Decimal] = None
 
 
@@ -163,7 +189,7 @@ class LineItemCreateSchema(BaseModel):
 
 
 class BillSchema(BaseModel):
-    id: int
+    id: str
     description: str
     currency: CurrencyEnum
     status: BillStatusEnum
@@ -188,7 +214,7 @@ class BillSchema(BaseModel):
                 line_items_list = list(data.line_items.all())
                 # Create a dict with all fields
                 return {
-                    'id': data.id,
+                    'id': str(data.uuid),
                     'description': data.description,
                     'currency': data.currency,
                     'status': data.status,
@@ -204,10 +230,10 @@ class BillSchema(BaseModel):
 
 
 class BillCreateSchema(BaseModel):
-    tab_id: int
+    tab_id: str
     description: str
     currency: CurrencyEnum
-    paid_by_id: Optional[int] = None
+    paid_by_id: Optional[str] = None
     date: Optional[date] = None
     line_items: List[LineItemCreateSchema] = []
 
@@ -216,28 +242,28 @@ class BillUpdateSchema(BaseModel):
     """Schema for updating bill fields"""
     description: Optional[str] = None
     currency: Optional[CurrencyEnum] = None
-    paid_by_id: Optional[int] = None
+    paid_by_id: Optional[str] = None
 
 
 class BillSplitSubmitSchema(BaseModel):
     """Schema for submitting splits from the UI"""
-    bill_id: int
+    bill_id: str
     split_mode: SplitModeEnum
     line_item_splits: List['LineItemSplitSubmitSchema']
 
 
 class LineItemSplitSubmitSchema(BaseModel):
-    line_item_id: int
+    line_item_id: str
     person_splits: List['PersonSplitSubmitSchema']
 
 
 class PersonSplitSubmitSchema(BaseModel):
-    person_id: int
+    person_id: str
     split_value: Optional[Decimal] = None
 
 
 class BillListSchema(BaseModel):
-    id: int
+    id: str
     description: str
     currency: CurrencyEnum
     status: BillStatusEnum
@@ -249,9 +275,25 @@ class BillListSchema(BaseModel):
     class Config:
         from_attributes = True
 
+    @model_validator(mode='before')
+    @classmethod
+    def extract_uuid(cls, data: Any) -> Any:
+        if hasattr(data, 'uuid'):
+            return {
+                'id': str(data.uuid),
+                'description': data.description,
+                'currency': data.currency,
+                'status': data.status,
+                'date': data.date,
+                'total_amount': data.total_amount,
+                'paid_by': data.paid_by,
+                'created_at': data.created_at,
+            }
+        return data
+
 
 class TabSchema(BaseModel):
-    id: int
+    id: str
     name: str
     description: str
     default_currency: CurrencyEnum
@@ -289,17 +331,18 @@ class TabSchema(BaseModel):
                     try:
                         balances = calculate_tab_balances(data, data.settlement_currency)
                         # Convert Balance objects to dicts with person names
+                        # simp uses internal integer PKs, map back to UUIDs
                         person_map = {p.id: p for p in people_list}
                         balances_list = [
                             {
-                                'person_id': bal.person_id,
+                                'person_id': str(person_map[bal.person_id].uuid) if bal.person_id in person_map else 'unknown',
                                 'person_name': person_map[bal.person_id].name if bal.person_id in person_map else 'Unknown',
                                 'balance': bal.balance
                             }
                             for bal in balances
                         ]
 
-                        # Calculate total spent in GBP
+                        # Calculate total spent in settlement currency
                         total = Decimal('0')
                         bills = data.bills.exclude(status='archived')
                         for bill in bills:
@@ -314,7 +357,7 @@ class TabSchema(BaseModel):
 
                 # Create a dict with all fields
                 return {
-                    'id': data.id,
+                    'id': str(data.uuid),
                     'name': data.name,
                     'description': data.description,
                     'default_currency': data.default_currency,
@@ -333,7 +376,7 @@ class TabSchema(BaseModel):
 
 
 class TabListSchema(BaseModel):
-    id: int
+    id: str
     name: str
     description: str
     default_currency: CurrencyEnum
@@ -345,6 +388,23 @@ class TabListSchema(BaseModel):
 
     class Config:
         from_attributes = True
+
+    @model_validator(mode='before')
+    @classmethod
+    def extract_uuid(cls, data: Any) -> Any:
+        if hasattr(data, 'uuid'):
+            return {
+                'id': str(data.uuid),
+                'name': data.name,
+                'description': data.description,
+                'default_currency': data.default_currency,
+                'is_settled': data.is_settled,
+                'bill_count': data.bill_count,
+                'people_count': data.people_count,
+                'created_at': data.created_at,
+                'updated_at': data.updated_at,
+            }
+        return data
 
 
 class TabCreateSchema(BaseModel):
@@ -360,7 +420,7 @@ class TabUpdateSchema(BaseModel):
 
 
 class SettlementSchema(BaseModel):
-    id: int
+    id: str
     from_person: TabPersonSchema
     to_person: TabPersonSchema
     amount: Decimal
@@ -378,7 +438,7 @@ class SettlementSchema(BaseModel):
         # If data is a Django model instance, convert person relationships
         if hasattr(data, 'from_person') and hasattr(data, 'to_person'):
             return {
-                'id': data.id,
+                'id': str(data.uuid),
                 'from_person': data.from_person,
                 'to_person': data.to_person,
                 'amount': data.amount,
@@ -396,7 +456,7 @@ class SimplifyResultSchema(BaseModel):
 
 
 class PersonBalanceSchema(BaseModel):
-    person_id: int
+    person_id: str
     person_name: str
     balance: Decimal
 
@@ -405,7 +465,7 @@ class PersonBalanceSchema(BaseModel):
 
 
 class PersonSpendingTotalSchema(BaseModel):
-    person_id: int
+    person_id: str
     person_name: str
     total: Decimal
 
@@ -414,11 +474,21 @@ class PersonSpendingTotalSchema(BaseModel):
 
 
 class InvitePersonSchema(BaseModel):
-    id: int
+    id: str
     name: str
 
     class Config:
         from_attributes = True
+
+    @model_validator(mode='before')
+    @classmethod
+    def extract_uuid(cls, data: Any) -> Any:
+        if hasattr(data, 'uuid'):
+            return {
+                'id': str(data.uuid),
+                'name': data.name,
+            }
+        return data
 
 
 class InviteTabInfoSchema(BaseModel):
@@ -427,5 +497,5 @@ class InviteTabInfoSchema(BaseModel):
 
 
 class ClaimInviteSchema(BaseModel):
-    person_id: int
+    person_id: str
     email: EmailStr

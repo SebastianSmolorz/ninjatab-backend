@@ -1,4 +1,5 @@
 from django.db import models
+from uuid6 import uuid7
 
 
 class Currency(models.TextChoices):
@@ -19,6 +20,7 @@ class Currency(models.TextChoices):
 
 
 class BaseModel(models.Model):
+    uuid = models.UUIDField(default=uuid7, unique=True, editable=False, db_index=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

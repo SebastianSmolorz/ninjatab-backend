@@ -18,6 +18,7 @@ pydantic_core
 PyJWT
 sqlparse
 typing_extensions
+uuid6
 boto3
 mistralai
 requests

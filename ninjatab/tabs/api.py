@@ -8,6 +8,7 @@ from django.conf import settings
 from django.shortcuts import get_object_or_404
 from django.db import transaction
 from django.db.models import Q
+from django.contrib.auth import get_user_model
 
 from ninjatab.tabs.models import *
 from ninjatab.tabs.schemas import *
@@ -17,6 +18,8 @@ from ninjatab.auth.bearer import JWTBearer
 from ninjatab.auth.schemas import MagicLinkSuccessSchema
 from ninjatab.auth.jwt_utils import create_magic_token
 from ninjatab.auth.email import send_magic_link
+
+User = get_user_model()
 
 tab_router = Router(tags=["tabs"], auth=JWTBearer())
 bill_router = Router(tags=["bills"], auth=JWTBearer())
@@ -36,7 +39,7 @@ def create_tab(request, payload: TabCreateSchema):
     for person_data in payload.people:
         user = None
         if person_data.user_id:
-            user = get_object_or_404(User, id=person_data.user_id)
+            user = get_object_or_404(User, uuid=person_data.user_id)
             if not user.first_name:
                 user.first_name = person_data.name
                 user.save(update_fields=["first_name"])
@@ -65,7 +68,7 @@ def list_tabs(request):
 
 
 @tab_router.get("/{tab_id}", response=TabSchema)
-def retrieve_tab(request, tab_id: int):
+def retrieve_tab(request, tab_id: str):
     """Retrieve a tab with all its people"""
     tab = get_object_or_404(
         Tab.objects.accessible_by(request.auth).prefetch_related(
@@ -73,14 +76,14 @@ def retrieve_tab(request, tab_id: int):
             'settlements__from_person__user',
             'settlements__to_person__user'
         ),
-        id=tab_id,
+        uuid=tab_id,
     )
     return tab
 
 
 @tab_router.patch("/{tab_id}", response=TabSchema)
 @transaction.atomic
-def update_tab(request, tab_id: int, payload: TabUpdateSchema):
+def update_tab(request, tab_id: str, payload: TabUpdateSchema):
     """Update tab fields (settlement_currency)"""
     tab = get_object_or_404(
         Tab.objects.accessible_by(request.auth).prefetch_related(
@@ -88,7 +91,7 @@ def update_tab(request, tab_id: int, payload: TabUpdateSchema):
             'settlements__from_person__user',
             'settlements__to_person__user'
         ),
-        id=tab_id,
+        uuid=tab_id,
     )
 
     # Update fields if provided
@@ -104,16 +107,16 @@ def update_tab(request, tab_id: int, payload: TabUpdateSchema):
 
 
 @tab_router.delete("/{tab_id}")
-def delete_tab(request, tab_id: int):
+def delete_tab(request, tab_id: str):
     """Delete a tab"""
-    tab = get_object_or_404(Tab.objects.accessible_by(request.auth), id=tab_id)
+    tab = get_object_or_404(Tab.objects.accessible_by(request.auth), uuid=tab_id)
     tab.delete()
     return {"success": True}
 
 
 @tab_router.post("/{tab_id}/close", response=TabSchema)
 @transaction.atomic
-def close_tab(request, tab_id: int):
+def close_tab(request, tab_id: str):
     """Close a tab (prevents adding new bills or splits) and close all bills"""
     tab = get_object_or_404(
         Tab.objects.accessible_by(request.auth).prefetch_related(
@@ -121,7 +124,7 @@ def close_tab(request, tab_id: int):
             'settlements__from_person__user',
             'settlements__to_person__user'
         ),
-        id=tab_id,
+        uuid=tab_id,
     )
     tab.is_settled = True
     tab.save()
@@ -139,7 +142,7 @@ def close_tab(request, tab_id: int):
 
 @tab_router.post("/{tab_id}/simplify", response=SimplifyResultSchema)
 @transaction.atomic
-def simplify_tab(request, tab_id: int):
+def simplify_tab(request, tab_id: str):
     """
     Calculate and save simplified settlements for a tab.
     Settlements are calculated in the tab's settlement_currency, converting bills as needed.
@@ -149,7 +152,7 @@ def simplify_tab(request, tab_id: int):
         Tab.objects.accessible_by(request.auth).prefetch_related(
             'people__user', 'bills__line_items__person_claims__person'
         ),
-        id=tab_id,
+        uuid=tab_id,
     )
 
     # Check if there are any non-archived bills
@@ -195,11 +198,11 @@ def simplify_tab(request, tab_id: int):
 
 @tab_router.post("/settlements/{settlement_id}/mark-paid", response=SettlementSchema)
 @transaction.atomic
-def mark_settlement_paid(request, settlement_id: int):
+def mark_settlement_paid(request, settlement_id: str):
     """Mark a settlement as paid"""
     settlement = get_object_or_404(
         Settlement.objects.select_related('from_person__user', 'to_person__user'),
-        id=settlement_id,
+        uuid=settlement_id,
         tab__in=Tab.objects.accessible_by(request.auth)
     )
     settlement.paid = True
@@ -208,14 +211,14 @@ def mark_settlement_paid(request, settlement_id: int):
 
 
 @tab_router.get("/{tab_id}/person-totals", response=List[PersonSpendingTotalSchema])
-def get_tab_person_totals(request, tab_id: int):
+def get_tab_person_totals(request, tab_id: str):
     """Get total spending per person for a tab in settlement currency (with currency conversion)"""
 
     tab = get_object_or_404(
         Tab.objects.accessible_by(request.auth).prefetch_related(
             'bills__line_items__person_claims__person'
         ),
-        id=tab_id,
+        uuid=tab_id,
     )
 
     settlement_currency = tab.settlement_currency  # Use tab's settlement currency
@@ -226,10 +229,10 @@ def get_tab_person_totals(request, tab_id: int):
         bill_currency = bill.currency
         for line_item in bill.line_items.all():
             for claim in line_item.person_claims.all():
-                person_id = claim.person.id
-                if person_id not in person_totals:
-                    person_totals[person_id] = {
-                        'person_id': person_id,
+                person_uuid = str(claim.person.uuid)
+                if person_uuid not in person_totals:
+                    person_totals[person_uuid] = {
+                        'person_id': person_uuid,
                         'person_name': claim.person.name,
                         'total': Decimal('0')
                     }
@@ -242,7 +245,7 @@ def get_tab_person_totals(request, tab_id: int):
                     except ExchangeRateNotFoundError as e:
                         raise HttpError(400, f"Currency conversion failed: {str(e)}")
 
-                person_totals[person_id]['total'] += amount
+                person_totals[person_uuid]['total'] += amount
 
     return list(person_totals.values())
 
@@ -256,18 +259,18 @@ def get_invite(request, invite_code: str):
 
 
 @tab_router.post("/{tab_id}/people", response=TabPersonSchema)
-def add_tab_person(request, tab_id: int, payload: TabPersonCreateSchema):
+def add_tab_person(request, tab_id: str, payload: TabPersonCreateSchema):
     """Add a new person to a tab"""
-    tab = get_object_or_404(Tab.objects.accessible_by(request.auth), id=tab_id, is_settled=False)
+    tab = get_object_or_404(Tab.objects.accessible_by(request.auth), uuid=tab_id, is_settled=False)
     person = TabPerson.objects.create(tab=tab, name=payload.name)
     return person
 
 
 @tab_router.delete("/{tab_id}/people/{person_id}")
-def remove_tab_person(request, tab_id: int, person_id: int):
+def remove_tab_person(request, tab_id: str, person_id: str):
     """Remove a person from a tab (only if not referenced in any bills)"""
-    tab = get_object_or_404(Tab.objects.accessible_by(request.auth), id=tab_id)
-    person = get_object_or_404(TabPerson, id=person_id, tab=tab)
+    tab = get_object_or_404(Tab.objects.accessible_by(request.auth), uuid=tab_id)
+    person = get_object_or_404(TabPerson, uuid=person_id, tab=tab)
     if (PersonLineItemClaim.objects.filter(person=person).exists() or
             Bill.objects.filter(Q(paid_by=person) | Q(creator=person)).exists()):
         raise HttpError(400, "Cannot remove a person who is associated with a bill")
@@ -279,7 +282,7 @@ def remove_tab_person(request, tab_id: int, person_id: int):
 def claim_invite(request, invite_code: str, payload: ClaimInviteSchema):
     """Claim a placeholder person on a tab and send a magic link — no auth required"""
     tab = get_object_or_404(Tab, invite_code=invite_code)
-    person = get_object_or_404(TabPerson, id=payload.person_id, tab=tab, user__isnull=True)
+    person = get_object_or_404(TabPerson, uuid=payload.person_id, tab=tab, user__isnull=True)
     user, _ = User.objects.get_or_create(email=payload.email, defaults={"username": payload.email})
     user.first_name = person.name
     user.save(update_fields=["first_name"])
@@ -312,7 +315,7 @@ def _upload_to_spaces(file: UploadedFile, key: str) -> str:
 
 
 @tab_router.post("/{tab_id}/upload-receipt", auth=None)
-def upload_receipt(request, tab_id: int, file: UploadedFile = File(...)):
+def upload_receipt(request, tab_id: str, file: UploadedFile = File(...)):
     """Upload a receipt image to storage and return its URL"""
     from pydantic import BaseModel
     from mistralai import Mistral, DocumentURLChunk, ImageURLChunk, ResponseFormat
@@ -331,7 +334,7 @@ def upload_receipt(request, tab_id: int, file: UploadedFile = File(...)):
         currency_code: str
         # datetime_of_receipt: datetime
 
-    get_object_or_404(Tab, id=tab_id)
+    get_object_or_404(Tab, uuid=tab_id)
 
     if file.content_type not in ALLOWED_IMAGE_TYPES:
         raise HttpError(400, f"Unsupported file type: {file.content_type}. Allowed: JPEG, PNG, WebP, HEIC")
@@ -373,12 +376,12 @@ def upload_receipt(request, tab_id: int, file: UploadedFile = File(...)):
 @transaction.atomic
 def create_bill(request, payload: BillCreateSchema):
     """Create a new bill with line items"""
-    tab = get_object_or_404(Tab.objects.accessible_by(request.auth), id=payload.tab_id)
+    tab = get_object_or_404(Tab.objects.accessible_by(request.auth), uuid=payload.tab_id)
     creator = get_object_or_404(TabPerson, tab=tab, user=request.auth)
 
     paid_by = None
     if payload.paid_by_id:
-        paid_by = get_object_or_404(TabPerson, id=payload.paid_by_id, tab=tab)
+        paid_by = get_object_or_404(TabPerson, uuid=payload.paid_by_id, tab=tab)
 
     bill = Bill.objects.create(
         tab=tab,
@@ -414,7 +417,7 @@ def _create_person_claims(line_item: LineItem, person_splits: List[PersonSplitCr
         total_shares = sum(ps.split_value for ps in person_splits if ps.split_value)
 
     for person_split in person_splits:
-        person = get_object_or_404(TabPerson, id=person_split.person_id, tab=tab)
+        person = get_object_or_404(TabPerson, uuid=person_split.person_id, tab=tab)
 
         calculated_amount = None
 
@@ -441,22 +444,22 @@ def _create_person_claims(line_item: LineItem, person_splits: List[PersonSplitCr
 
 @bill_router.post("/{bill_id}/submit-splits", response=BillSchema)
 @transaction.atomic
-def submit_bill_splits(request, bill_id: int, payload: BillSplitSubmitSchema):
+def submit_bill_splits(request, bill_id: str, payload: BillSplitSubmitSchema):
     """Submit or update splits for a bill from the UI"""
     bill = get_object_or_404(
         Bill.objects.prefetch_related('line_items', 'tab__people'),
-        id=bill_id,
+        uuid=bill_id,
         tab__in=Tab.objects.accessible_by(request.auth)
     )
 
-    if bill.id != payload.bill_id:
+    if str(bill.uuid) != payload.bill_id:
         return {"error": "Bill ID mismatch"}, 400
 
     # Process each line item split
     for line_item_split in payload.line_item_splits:
         line_item = get_object_or_404(
             LineItem,
-            id=line_item_split.line_item_id,
+            uuid=line_item_split.line_item_id,
             bill=bill
         )
 
@@ -472,17 +475,17 @@ def submit_bill_splits(request, bill_id: int, payload: BillSplitSubmitSchema):
 
 
 @bill_router.get("/", response=List[BillListSchema])
-def list_bills(request, tab_id: int = None):
+def list_bills(request, tab_id: str = None):
     """List all bills, optionally filtered by tab"""
     bills = Bill.objects.filter(tab__in=Tab.objects.accessible_by(request.auth))
     if tab_id:
-        bills = bills.filter(tab_id=tab_id)
+        bills = bills.filter(tab__uuid=tab_id)
     bills = bills.select_related('paid_by__user').prefetch_related('line_items')
     return bills
 
 
 @bill_router.get("/{bill_id}", response=BillSchema)
-def retrieve_bill(request, bill_id: int):
+def retrieve_bill(request, bill_id: str):
     """Retrieve a bill with all its line items and claims"""
     bill = get_object_or_404(
         Bill.objects.prefetch_related(
@@ -490,7 +493,7 @@ def retrieve_bill(request, bill_id: int):
             'creator__user',
             'paid_by__user'
         ),
-        id=bill_id,
+        uuid=bill_id,
         tab__in=Tab.objects.accessible_by(request.auth)
     )
     return bill
@@ -498,7 +501,7 @@ def retrieve_bill(request, bill_id: int):
 
 @bill_router.patch("/{bill_id}", response=BillSchema)
 @transaction.atomic
-def update_bill(request, bill_id: int, payload: BillUpdateSchema):
+def update_bill(request, bill_id: str, payload: BillUpdateSchema):
     """Update bill fields (description, currency, paid_by)"""
     bill = get_object_or_404(
         Bill.objects.prefetch_related(
@@ -506,7 +509,7 @@ def update_bill(request, bill_id: int, payload: BillUpdateSchema):
             'creator__user',
             'paid_by__user'
         ),
-        id=bill_id,
+        uuid=bill_id,
         tab__in=Tab.objects.accessible_by(request.auth)
     )
 
@@ -518,7 +521,7 @@ def update_bill(request, bill_id: int, payload: BillUpdateSchema):
         bill.currency = payload.currency
 
     if payload.paid_by_id is not None:
-        paid_by = get_object_or_404(TabPerson, id=payload.paid_by_id, tab=bill.tab)
+        paid_by = get_object_or_404(TabPerson, uuid=payload.paid_by_id, tab=bill.tab)
         bill.paid_by = paid_by
 
     bill.save()
@@ -531,11 +534,10 @@ def update_bill(request, bill_id: int, payload: BillUpdateSchema):
 
 
 @bill_router.delete("/{bill_id}")
-def delete_bill(request, bill_id: int):
+def delete_bill(request, bill_id: str):
     """Delete a bill"""
-    bill = get_object_or_404(Bill, id=bill_id, tab__in=Tab.objects.accessible_by(request.auth))
+    bill = get_object_or_404(Bill, uuid=bill_id, tab__in=Tab.objects.accessible_by(request.auth))
     if bill.tab.is_settled:
         raise HttpError(400, "Cannot delete a bill from a closed tab")
     bill.delete()
     return {"success": True}
-

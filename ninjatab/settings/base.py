@@ -26,9 +26,12 @@ INSTALLED_APPS = [
     "django.contrib.messages",
     "django.contrib.staticfiles",
     "corsheaders",
+    "ninjatab.auth",
     "ninjatab.currencies",
     "ninjatab.tabs",
 ]
+
+AUTH_USER_MODEL = "ninjatab_auth.User"
 
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",

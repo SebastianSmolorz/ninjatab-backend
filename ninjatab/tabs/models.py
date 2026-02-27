@@ -2,9 +2,10 @@
 import uuid
 from django.db import models
 from django.db.models import Q
-from django.contrib.auth.models import User
+from django.conf import settings
 from enum import Enum
 from datetime import date
+from uuid6 import uuid7
 
 
 class Currency(models.TextChoices):
@@ -30,6 +31,7 @@ class BillStatus(models.TextChoices):
 
 class BaseModel(models.Model):
     """Base model with timestamps"""
+    uuid = models.UUIDField(default=uuid7, unique=True, editable=False, db_index=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -49,7 +51,7 @@ class Tab(BaseModel):
     name = models.CharField(max_length=255)
     description = models.TextField(blank=True)
     created_by = models.ForeignKey(
-        User,
+        settings.AUTH_USER_MODEL,
         on_delete=models.CASCADE,
         related_name='created_tabs',
         null=True,
@@ -99,7 +101,7 @@ class TabPerson(BaseModel):
     )
     name = models.CharField(max_length=255)
     user = models.ForeignKey(
-        User,
+        settings.AUTH_USER_MODEL,
         on_delete=models.SET_NULL,
         null=True,
         blank=True,

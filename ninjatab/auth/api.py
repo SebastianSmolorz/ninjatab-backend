@@ -1,7 +1,7 @@
 import jwt
 from ninja import Router
 from ninja.errors import HttpError
-from django.contrib.auth.models import User
+from django.contrib.auth import get_user_model
 
 from ninjatab.auth.schemas import (
     MagicLinkSchema,
@@ -20,6 +20,8 @@ from ninjatab.auth.jwt_utils import (
 )
 from ninjatab.auth.bearer import JWTBearer
 from ninjatab.auth.email import send_magic_link
+
+User = get_user_model()
 
 auth_router = Router(tags=["auth"])
 

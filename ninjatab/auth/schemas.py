@@ -1,4 +1,5 @@
-from pydantic import BaseModel, EmailStr
+from typing import Any
+from pydantic import BaseModel, EmailStr, model_validator
 
 
 class MagicLinkSchema(BaseModel):
@@ -14,13 +15,25 @@ class VerifyMagicLinkSchema(BaseModel):
 
 
 class AuthUserSchema(BaseModel):
-    id: int
+    id: str
     email: str
     first_name: str
     last_name: str
 
     class Config:
         from_attributes = True
+
+    @model_validator(mode='before')
+    @classmethod
+    def extract_uuid(cls, data):
+        if hasattr(data, 'uuid'):
+            return {
+                'id': str(data.uuid),
+                'email': data.email,
+                'first_name': data.first_name,
+                'last_name': data.last_name,
+            }
+        return data
 
 
 class TokenResponseSchema(BaseModel):
