@@ -51,7 +51,7 @@ DATABASES = {
         "HOST": os.environ["DB_HOST"],
         "PORT": os.environ.get("DB_PORT", "5432"),
 
-        "CONN_MAX_AGE": int(os.environ.get("DB_CONN_MAX_AGE", "60")),
+        "CONN_MAX_AGE": int(os.environ.get("DB_CONN_MAX_AGE", "30")),
         "CONN_HEALTH_CHECKS": True,
 
         "OPTIONS": {
@@ -59,3 +59,4 @@ DATABASES = {
         },
     }
 }
+DISABLE_SERVER_SIDE_CURSORS = True
