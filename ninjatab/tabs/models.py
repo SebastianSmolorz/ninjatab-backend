@@ -218,6 +218,27 @@ class PersonLineItemClaim(BaseModel):
         return f"{self.person.name} - {self.line_item.description}"
 
 
+class Contact(BaseModel):
+    """Tracks a contact relationship between two users (built from shared tab history)"""
+    owner = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='contacts'
+    )
+    contact_user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='contact_of'
+    )
+
+    class Meta:
+        unique_together = [['owner', 'contact_user']]
+        ordering = ['contact_user__first_name', 'contact_user__last_name']
+
+    def __str__(self):
+        return f"{self.owner} → {self.contact_user}"
+
+
 class Settlement(BaseModel):
     """Simplified settlement transaction showing who owes whom"""
     tab = models.ForeignKey(

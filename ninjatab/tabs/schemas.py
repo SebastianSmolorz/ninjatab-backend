@@ -496,6 +496,30 @@ class InviteTabInfoSchema(BaseModel):
     people: List[InvitePersonSchema]
 
 
+class ContactSchema(BaseModel):
+    id: str
+    user_id: str
+    first_name: str
+    last_name: str
+    email: str
+
+    class Config:
+        from_attributes = True
+
+    @model_validator(mode='before')
+    @classmethod
+    def extract_contact(cls, data: Any) -> Any:
+        if hasattr(data, 'contact_user'):
+            return {
+                'id': str(data.uuid),
+                'user_id': str(data.contact_user.uuid),
+                'first_name': data.contact_user.first_name,
+                'last_name': data.contact_user.last_name,
+                'email': data.contact_user.email,
+            }
+        return data
+
+
 class ClaimInviteSchema(BaseModel):
     person_id: str
     email: EmailStr

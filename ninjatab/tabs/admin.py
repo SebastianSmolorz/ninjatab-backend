@@ -1,6 +1,6 @@
 from django.contrib import admin
 from django.utils.html import format_html
-from .models import Tab, TabPerson, Bill, LineItem, PersonLineItemClaim, Settlement
+from .models import Tab, TabPerson, Bill, LineItem, PersonLineItemClaim, Settlement, Contact
 
 
 class TabPersonInline(admin.TabularInline):
@@ -232,5 +232,18 @@ class SettlementAdmin(admin.ModelAdmin):
     def get_queryset(self, request):
         qs = super().get_queryset(request)
         return qs.select_related('tab', 'from_person', 'to_person')
+
+
+@admin.register(Contact)
+class ContactAdmin(admin.ModelAdmin):
+    list_display = ['owner', 'contact_user', 'created_at']
+    list_filter = ['created_at']
+    search_fields = ['owner__email', 'owner__first_name', 'contact_user__email', 'contact_user__first_name']
+    readonly_fields = ['created_at', 'updated_at']
+    autocomplete_fields = ['owner', 'contact_user']
+
+    def get_queryset(self, request):
+        qs = super().get_queryset(request)
+        return qs.select_related('owner', 'contact_user')
 
 

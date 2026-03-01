@@ -25,6 +25,20 @@ tab_router = Router(tags=["tabs"], auth=JWTBearer())
 bill_router = Router(tags=["bills"], auth=JWTBearer())
 
 
+def _sync_contacts_for_tab(tab):
+    """Create bidirectional Contact records for every user pair on a tab."""
+    user_ids = list(
+        TabPerson.objects.filter(tab=tab, user__isnull=False)
+        .values_list('user_id', flat=True)
+    )
+    if len(user_ids) < 2:
+        return
+    for i, uid_a in enumerate(user_ids):
+        for uid_b in user_ids[i + 1:]:
+            Contact.objects.get_or_create(owner_id=uid_a, contact_user_id=uid_b)
+            Contact.objects.get_or_create(owner_id=uid_b, contact_user_id=uid_a)
+
+
 @tab_router.post("/", response=TabSchema)
 @transaction.atomic
 def create_tab(request, payload: TabCreateSchema):
@@ -49,6 +63,8 @@ def create_tab(request, payload: TabCreateSchema):
             user=user,
         )
 
+    _sync_contacts_for_tab(tab)
+
     # Refresh to get related people
     tab.refresh_from_db()
     tab = Tab.objects.prefetch_related(
@@ -65,6 +81,19 @@ def list_tabs(request):
     """List all tabs"""
     tabs = Tab.objects.accessible_by(request.auth)
     return tabs
+
+
+@tab_router.get("/contacts", response=List[ContactSchema])
+def list_contacts(request, exclude_tab: str = None):
+    """List the authenticated user's contacts, optionally excluding those already on a tab"""
+    contacts = Contact.objects.filter(owner=request.auth).select_related('contact_user')
+    if exclude_tab:
+        tab = get_object_or_404(Tab, uuid=exclude_tab)
+        existing_user_ids = TabPerson.objects.filter(
+            tab=tab, user__isnull=False
+        ).values_list('user_id', flat=True)
+        contacts = contacts.exclude(contact_user_id__in=existing_user_ids)
+    return list(contacts)
 
 
 @tab_router.get("/{tab_id}", response=TabSchema)
@@ -259,10 +288,16 @@ def get_invite(request, invite_code: str):
 
 
 @tab_router.post("/{tab_id}/people", response=TabPersonSchema)
+@transaction.atomic
 def add_tab_person(request, tab_id: str, payload: TabPersonCreateSchema):
     """Add a new person to a tab"""
     tab = get_object_or_404(Tab.objects.accessible_by(request.auth), uuid=tab_id, is_settled=False)
-    person = TabPerson.objects.create(tab=tab, name=payload.name)
+    user = None
+    if payload.user_id:
+        user = get_object_or_404(User, uuid=payload.user_id)
+    person = TabPerson.objects.create(tab=tab, name=payload.name, user=user)
+    if user:
+        _sync_contacts_for_tab(tab)
     return person
 
 
@@ -279,6 +314,7 @@ def remove_tab_person(request, tab_id: str, person_id: str):
 
 
 @tab_router.post("/invite/{invite_code}/claim", response=MagicLinkSuccessSchema, auth=None)
+@transaction.atomic
 def claim_invite(request, invite_code: str, payload: ClaimInviteSchema):
     """Claim a placeholder person on a tab and send a magic link — no auth required"""
     tab = get_object_or_404(Tab, invite_code=invite_code)
@@ -288,6 +324,7 @@ def claim_invite(request, invite_code: str, payload: ClaimInviteSchema):
     user.save(update_fields=["first_name"])
     person.user = user
     person.save()
+    _sync_contacts_for_tab(tab)
     token = create_magic_token(user.id)
     send_magic_link(payload.email, token)
     return {"success": True}
