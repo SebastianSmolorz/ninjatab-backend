@@ -133,6 +133,10 @@ MAGIC_LINK_BASE_URL = env.str("MAGIC_LINK_BASE_URL", default="http://localhost:3
 # Auth cookies
 AUTH_COOKIE_SECURE = True
 
+# Magic link rate limiting
+MAGIC_LINK_MIN_INTERVAL = 30        # seconds
+MAGIC_LINK_EXTENDED_COOLDOWN = 120   # seconds
+
 CORS_ALLOW_METHODS = [
     "DELETE",
     "GET",

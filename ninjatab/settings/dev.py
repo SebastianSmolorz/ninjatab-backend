@@ -13,3 +13,7 @@ CORS_ALLOWED_ORIGINS = env.list(
 )
 
 AUTH_COOKIE_SECURE = False
+
+# Disable magic link rate limiting in dev
+MAGIC_LINK_MIN_INTERVAL = None
+MAGIC_LINK_EXTENDED_COOLDOWN = None

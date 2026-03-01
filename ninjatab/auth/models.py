@@ -5,3 +5,5 @@ from uuid6 import uuid7
 
 class User(AbstractUser):
     uuid = models.UUIDField(default=uuid7, unique=True, editable=False, db_index=True)
+    last_magic_link_sent_dt = models.DateTimeField(null=True, blank=True)
+    before_last_magic_link_sent_dt = models.DateTimeField(null=True, blank=True)

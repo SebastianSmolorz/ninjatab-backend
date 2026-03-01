@@ -21,7 +21,9 @@ from ninjatab.auth.jwt_utils import (
 )
 from ninjatab.auth.bearer import JWTBearer
 from ninjatab.auth.email import send_magic_link
+from ninjatab.auth.rate_limit import check_magic_link_rate_limit
 from django.conf import settings as django_settings
+from django.utils import timezone
 from ninjatab.auth.cookies import (
     ACCESS_COOKIE,
     REFRESH_COOKIE,
@@ -40,8 +42,12 @@ def magic_link(request, payload: MagicLinkSchema):
         email=payload.email,
         defaults={"username": payload.email},
     )
+    check_magic_link_rate_limit(user)
     token = create_magic_token(user.id)
     send_magic_link(payload.email, token)
+    user.before_last_magic_link_sent_dt = user.last_magic_link_sent_dt
+    user.last_magic_link_sent_dt = timezone.now()
+    user.save(update_fields=["last_magic_link_sent_dt", "before_last_magic_link_sent_dt"])
     return {"success": True}
 
 
