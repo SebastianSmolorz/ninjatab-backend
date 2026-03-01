@@ -2,6 +2,7 @@ import jwt
 from ninja import Router
 from ninja.errors import HttpError
 from django.contrib.auth import get_user_model
+from django.http import JsonResponse
 
 from ninjatab.auth.schemas import (
     MagicLinkSchema,
@@ -9,8 +10,8 @@ from ninjatab.auth.schemas import (
     VerifyMagicLinkSchema,
     TokenResponseSchema,
     AuthUserSchema,
-    RefreshSchema,
     RefreshResponseSchema,
+    LogoutResponseSchema,
 )
 from ninjatab.auth.jwt_utils import (
     create_access_token,
@@ -20,6 +21,13 @@ from ninjatab.auth.jwt_utils import (
 )
 from ninjatab.auth.bearer import JWTBearer
 from ninjatab.auth.email import send_magic_link
+from django.conf import settings as django_settings
+from ninjatab.auth.cookies import (
+    ACCESS_COOKIE,
+    REFRESH_COOKIE,
+    set_auth_cookies,
+    clear_auth_cookies,
+)
 
 User = get_user_model()
 
@@ -52,17 +60,20 @@ def verify_magic_link(request, payload: VerifyMagicLinkSchema):
     access_token = create_access_token(user.id, user.email)
     refresh_token = create_refresh_token(user.id)
 
-    return {
-        "access_token": access_token,
-        "refresh_token": refresh_token,
-        "user": user,
-    }
+    user_schema = AuthUserSchema.model_validate(user)
+    response = JsonResponse({"user": user_schema.model_dump()})
+    set_auth_cookies(response, access_token, refresh_token)
+    return response
 
 
 @auth_router.post("/refresh", response=RefreshResponseSchema)
-def refresh(request, payload: RefreshSchema):
+def refresh(request):
+    raw = request.COOKIES.get(REFRESH_COOKIE)
+    if not raw:
+        raise HttpError(401, "No refresh token")
+
     try:
-        token_data = decode_token(payload.refresh_token)
+        token_data = decode_token(raw)
         if token_data.get("type") != "refresh":
             raise HttpError(401, "Invalid token type")
         user = User.objects.get(id=int(token_data["sub"]))
@@ -72,7 +83,25 @@ def refresh(request, payload: RefreshSchema):
         raise HttpError(401, "User not found")
 
     new_access_token = create_access_token(user.id, user.email)
-    return {"access_token": new_access_token}
+
+    response = JsonResponse({"success": True})
+    response.set_cookie(
+        ACCESS_COOKIE,
+        new_access_token,
+        httponly=True,
+        secure=django_settings.AUTH_COOKIE_SECURE,
+        samesite="Lax",
+        max_age=24 * 3600,
+        path="/api/",
+    )
+    return response
+
+
+@auth_router.post("/logout", response=LogoutResponseSchema)
+def logout(request):
+    response = JsonResponse({"success": True})
+    clear_auth_cookies(response)
+    return response
 
 
 @auth_router.get("/me", response=AuthUserSchema, auth=JWTBearer())

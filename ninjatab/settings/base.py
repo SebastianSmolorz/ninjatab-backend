@@ -130,6 +130,9 @@ OPEN_EXCHANGE_RATES_APP_ID = env.str("OPEN_EXCHANGE_RATES_APP_ID", default="")
 BREVO_API_KEY = env.str("BREVO_API_KEY", default="")
 MAGIC_LINK_BASE_URL = env.str("MAGIC_LINK_BASE_URL", default="http://localhost:3000/auth/verify")
 
+# Auth cookies
+AUTH_COOKIE_SECURE = True
+
 CORS_ALLOW_METHODS = [
     "DELETE",
     "GET",

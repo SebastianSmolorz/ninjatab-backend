@@ -1,4 +1,3 @@
-from typing import Any
 from pydantic import BaseModel, EmailStr, model_validator
 
 
@@ -37,14 +36,12 @@ class AuthUserSchema(BaseModel):
 
 
 class TokenResponseSchema(BaseModel):
-    access_token: str
-    refresh_token: str
     user: AuthUserSchema
 
 
-class RefreshSchema(BaseModel):
-    refresh_token: str
-
-
 class RefreshResponseSchema(BaseModel):
-    access_token: str
+    success: bool
+
+
+class LogoutResponseSchema(BaseModel):
+    success: bool

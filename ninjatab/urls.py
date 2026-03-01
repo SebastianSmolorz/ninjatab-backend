@@ -28,6 +28,6 @@ api.add_router("/bills", bill_router)
 api.add_router("/auth", auth_router)
 
 urlpatterns = [
-    path("admin/", admin.site.urls),
+    path("kurwa/admin/", admin.site.urls),
     path("api/", api.urls),
 ]
