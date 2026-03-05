@@ -285,7 +285,18 @@ def get_invite(request, invite_code: str):
     """Get tab info for invite page — no auth required"""
     tab = get_object_or_404(Tab, invite_code=invite_code)
     unclaimed = list(tab.people.filter(user__isnull=True))
-    return {"tab_name": tab.name, "people": unclaimed}
+
+    user_already_on_tab = False
+    user = JWTBearer()(request)
+    if user:
+        user_already_on_tab = tab.people.filter(user=user).exists()
+
+    return {
+        "tab_id": str(tab.uuid),
+        "tab_name": tab.name,
+        "people": unclaimed,
+        "user_already_on_tab": user_already_on_tab,
+    }
 
 
 @tab_router.post("/{tab_id}/people", response=TabPersonSchema)

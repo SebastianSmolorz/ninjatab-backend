@@ -496,8 +496,10 @@ class InvitePersonSchema(BaseModel):
 
 
 class InviteTabInfoSchema(BaseModel):
+    tab_id: str
     tab_name: str
     people: List[InvitePersonSchema]
+    user_already_on_tab: bool = False
 
 
 class ContactSchema(BaseModel):
