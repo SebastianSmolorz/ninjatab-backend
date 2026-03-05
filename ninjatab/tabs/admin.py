@@ -6,22 +6,22 @@ from .models import Tab, TabPerson, Bill, LineItem, PersonLineItemClaim, Settlem
 class TabPersonInline(admin.TabularInline):
     model = TabPerson
     extra = 1
-    fields = ['name', 'user', 'created_at']
-    readonly_fields = ['created_at']
+    fields = ['uuid', 'name', 'user', 'created_at']
+    readonly_fields = ['uuid', 'created_at']
     autocomplete_fields = ['user']
 
 
 @admin.register(Tab)
 class TabAdmin(admin.ModelAdmin):
-    list_display = ['name', 'default_currency', 'settlement_currency', 'bill_count', 'is_pro', 'is_settled', 'created_by', 'created_at']
+    list_display = ['name', 'uuid', 'default_currency', 'settlement_currency', 'bill_count', 'is_pro', 'is_settled', 'created_by', 'created_at']
     list_filter = ['is_pro', 'is_settled', 'default_currency', 'settlement_currency', 'created_at']
-    search_fields = ['name', 'description']
+    search_fields = ['name', 'description', 'uuid']
     readonly_fields = ['uuid', 'bill_count', 'created_at', 'updated_at']
     inlines = [TabPersonInline]
 
     fieldsets = (
         ('Basic Information', {
-            'fields': ('name', 'description', 'default_currency', 'settlement_currency', 'created_by')
+            'fields': ('uuid', 'name', 'description', 'default_currency', 'settlement_currency', 'created_by')
         }),
         ('Status', {
             'fields': ('is_pro', 'is_settled', 'bill_count')
@@ -35,15 +35,15 @@ class TabAdmin(admin.ModelAdmin):
 
 @admin.register(TabPerson)
 class TabPersonAdmin(admin.ModelAdmin):
-    list_display = ['name', 'tab', 'user_link', 'created_at']
+    list_display = ['name', 'uuid', 'tab', 'user_link', 'created_at']
     list_filter = ['tab', 'created_at']
-    search_fields = ['name', 'user__username', 'user__email']
-    readonly_fields = ['created_at', 'updated_at']
+    search_fields = ['name', 'uuid', 'user__username', 'user__email']
+    readonly_fields = ['uuid', 'created_at', 'updated_at']
     autocomplete_fields = ['tab', 'user']
 
     fieldsets = (
         ('Person Information', {
-            'fields': ('tab', 'name')
+            'fields': ('uuid', 'tab', 'name')
         }),
         ('User Association', {
             'fields': ('user',)
@@ -69,8 +69,8 @@ class TabPersonAdmin(admin.ModelAdmin):
 class LineItemInline(admin.TabularInline):
     model = LineItem
     extra = 1
-    fields = ['description', 'value', 'split_type', 'total_claimed', 'created_at']
-    readonly_fields = ['total_claimed', 'created_at']
+    fields = ['uuid', 'description', 'value', 'split_type', 'total_claimed', 'created_at']
+    readonly_fields = ['uuid', 'total_claimed', 'created_at']
 
     def total_claimed(self, obj):
         if obj.pk:
@@ -86,17 +86,17 @@ class LineItemInline(admin.TabularInline):
 
 @admin.register(Bill)
 class BillAdmin(admin.ModelAdmin):
-    list_display = ['description', 'tab', 'currency', 'total_amount', 'is_itemised', 'status', 'date']
+    list_display = ['description', 'uuid', 'tab', 'currency', 'total_amount', 'is_itemised', 'status', 'date']
     list_filter = ['status', 'currency', 'date', 'created_at']
-    search_fields = ['description', 'tab__name']
-    readonly_fields = ['total_amount', 'created_at', 'updated_at']
+    search_fields = ['description', 'uuid', 'tab__name', 'tab__uuid']
+    readonly_fields = ['uuid', 'total_amount', 'created_at', 'updated_at']
     autocomplete_fields = ['tab', 'creator', 'paid_by']
     date_hierarchy = 'date'
     inlines = [LineItemInline]
 
     fieldsets = (
         ('Bill Information', {
-            'fields': ('tab', 'description', 'currency', 'date')
+            'fields': ('uuid', 'tab', 'description', 'currency', 'date')
         }),
         ('People', {
             'fields': ('creator', 'paid_by')
@@ -118,23 +118,23 @@ class BillAdmin(admin.ModelAdmin):
 class PersonLineItemClaimInline(admin.TabularInline):
     model = PersonLineItemClaim
     extra = 0
-    fields = ['person', 'split_value', 'calculated_amount', 'has_claimed']
-    readonly_fields = ['calculated_amount']
+    fields = ['uuid', 'person', 'split_value', 'calculated_amount', 'has_claimed']
+    readonly_fields = ['uuid', 'calculated_amount']
     autocomplete_fields = ['person']
 
 
 @admin.register(LineItem)
 class LineItemAdmin(admin.ModelAdmin):
-    list_display = ['description', 'bill', 'value', 'split_type', 'total_claimed_amount', 'claims_count', 'created_at']
+    list_display = ['description', 'uuid', 'bill', 'value', 'split_type', 'total_claimed_amount', 'claims_count', 'created_at']
     list_filter = ['split_type', 'bill__tab', 'created_at']
-    search_fields = ['description', 'bill__description', 'bill__tab__name']
-    readonly_fields = ['created_at', 'updated_at', 'claims_count', 'total_claimed_amount']
+    search_fields = ['description', 'uuid', 'bill__description', 'bill__uuid', 'bill__tab__name']
+    readonly_fields = ['uuid', 'created_at', 'updated_at', 'claims_count', 'total_claimed_amount']
     autocomplete_fields = ['bill']
     inlines = [PersonLineItemClaimInline]
 
     fieldsets = (
         ('Line Item Information', {
-            'fields': ('bill', 'description', 'value', 'split_type')
+            'fields': ('uuid', 'bill', 'description', 'value', 'split_type')
         }),
         ('Claims', {
             'fields': ('claims_count', 'total_claimed_amount')
@@ -167,6 +167,7 @@ class LineItemAdmin(admin.ModelAdmin):
 @admin.register(PersonLineItemClaim)
 class PersonLineItemClaimAdmin(admin.ModelAdmin):
     list_display = [
+        'uuid',
         'person',
         'line_item',
         'split_value',
@@ -176,17 +177,20 @@ class PersonLineItemClaimAdmin(admin.ModelAdmin):
     ]
     list_filter = ['has_claimed', 'line_item__split_type', 'created_at']
     search_fields = [
+        'uuid',
         'person__name',
+        'person__uuid',
         'line_item__description',
+        'line_item__uuid',
         'line_item__bill__description',
         'line_item__bill__tab__name'
     ]
-    readonly_fields = ['created_at', 'updated_at']
+    readonly_fields = ['uuid', 'created_at', 'updated_at']
     autocomplete_fields = ['person', 'line_item']
 
     fieldsets = (
         ('Claim Information', {
-            'fields': ('person', 'line_item')
+            'fields': ('uuid', 'person', 'line_item')
         }),
         ('Split Details', {
             'fields': ('split_value', 'calculated_amount')
@@ -213,15 +217,15 @@ class PersonLineItemClaimAdmin(admin.ModelAdmin):
 
 @admin.register(Settlement)
 class SettlementAdmin(admin.ModelAdmin):
-    list_display = ['tab', 'from_person', 'to_person', 'amount', 'currency', 'created_at']
+    list_display = ['uuid', 'tab', 'from_person', 'to_person', 'amount', 'currency', 'created_at']
     list_filter = ['currency', 'tab', 'created_at']
-    search_fields = ['tab__name', 'from_person__name', 'to_person__name']
-    readonly_fields = ['created_at', 'updated_at']
+    search_fields = ['uuid', 'tab__name', 'tab__uuid', 'from_person__name', 'to_person__name']
+    readonly_fields = ['uuid', 'created_at', 'updated_at']
     autocomplete_fields = ['tab', 'from_person', 'to_person']
 
     fieldsets = (
         ('Settlement Information', {
-            'fields': ('tab', 'from_person', 'to_person', 'amount', 'currency')
+            'fields': ('uuid', 'tab', 'from_person', 'to_person', 'amount', 'currency')
         }),
         ('Timestamps', {
             'fields': ('created_at', 'updated_at'),
@@ -236,14 +240,12 @@ class SettlementAdmin(admin.ModelAdmin):
 
 @admin.register(Contact)
 class ContactAdmin(admin.ModelAdmin):
-    list_display = ['owner', 'contact_user', 'created_at']
+    list_display = ['uuid', 'owner', 'contact_user', 'created_at']
     list_filter = ['created_at']
-    search_fields = ['owner__email', 'owner__first_name', 'contact_user__email', 'contact_user__first_name']
-    readonly_fields = ['created_at', 'updated_at']
+    search_fields = ['uuid', 'owner__email', 'owner__first_name', 'contact_user__email', 'contact_user__first_name']
+    readonly_fields = ['uuid', 'created_at', 'updated_at']
     autocomplete_fields = ['owner', 'contact_user']
 
     def get_queryset(self, request):
         qs = super().get_queryset(request)
         return qs.select_related('owner', 'contact_user')
-
-
