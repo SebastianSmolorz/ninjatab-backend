@@ -18,6 +18,7 @@ from ninjatab.auth.bearer import JWTBearer
 from ninjatab.auth.schemas import MagicLinkSuccessSchema
 from ninjatab.auth.jwt_utils import create_magic_token
 from ninjatab.auth.email import send_magic_link
+from ninjatab.tabs.limits import check_bill_limit, check_itemised_limit
 
 User = get_user_model()
 
@@ -408,12 +409,32 @@ def upload_receipt(request, tab_id: str, file: UploadedFile = File(...)):
     return response
 
 
+@tab_router.get("/{tab_id}/can-add-single")
+def can_add_single(request, tab_id: str):
+    """Return 200 if a single expense can be added, 402 if limit reached."""
+    tab = get_object_or_404(Tab.objects.accessible_by(request.auth), uuid=tab_id)
+    check_bill_limit(tab)
+    return {"ok": True}
+
+
+@tab_router.get("/{tab_id}/can-add-itemised")
+def can_add_itemised(request, tab_id: str):
+    """Return 200 if an itemised bill can be added, 402 if limit reached."""
+    tab = get_object_or_404(Tab.objects.accessible_by(request.auth), uuid=tab_id)
+    check_bill_limit(tab)
+    check_itemised_limit(tab)
+    return {"ok": True}
+
+
 # Bill Endpoints
 @bill_router.post("/", response=BillSchema)
 @transaction.atomic
 def create_bill(request, payload: BillCreateSchema):
     """Create a new bill with line items"""
     tab = get_object_or_404(Tab.objects.accessible_by(request.auth), uuid=payload.tab_id)
+    check_bill_limit(tab)
+    if len(payload.line_items) > 1:
+        check_itemised_limit(tab)
     creator = get_object_or_404(TabPerson, tab=tab, user=request.auth)
 
     paid_by = None

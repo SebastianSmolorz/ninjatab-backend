@@ -154,6 +154,10 @@ class Bill(BaseModel):
         return f"{self.description} on {self.tab.name}"
 
     @property
+    def is_itemised(self):
+        return self.line_items.count() > 1
+
+    @property
     def total_amount(self):
         return sum(item.value for item in self.line_items.all())
 

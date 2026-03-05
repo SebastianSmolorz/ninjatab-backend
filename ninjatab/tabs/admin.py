@@ -86,7 +86,7 @@ class LineItemInline(admin.TabularInline):
 
 @admin.register(Bill)
 class BillAdmin(admin.ModelAdmin):
-    list_display = ['description', 'tab', 'currency', 'total_amount', 'status', 'date']
+    list_display = ['description', 'tab', 'currency', 'total_amount', 'is_itemised', 'status', 'date']
     list_filter = ['status', 'currency', 'date', 'created_at']
     search_fields = ['description', 'tab__name']
     readonly_fields = ['total_amount', 'created_at', 'updated_at']
