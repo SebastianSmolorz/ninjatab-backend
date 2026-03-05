@@ -69,6 +69,7 @@ class Tab(BaseModel):
         help_text="Currency used for calculating settlements"
     )
     is_settled = models.BooleanField(default=False)
+    is_pro = models.BooleanField(default=False)
     invite_code = models.UUIDField(default=uuid.uuid4, unique=True)
 
     objects = TabManager()

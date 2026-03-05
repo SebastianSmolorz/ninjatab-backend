@@ -13,8 +13,8 @@ class TabPersonInline(admin.TabularInline):
 
 @admin.register(Tab)
 class TabAdmin(admin.ModelAdmin):
-    list_display = ['name', 'default_currency', 'settlement_currency', 'bill_count', 'is_settled', 'created_by', 'created_at']
-    list_filter = ['is_settled', 'default_currency', 'settlement_currency', 'created_at']
+    list_display = ['name', 'default_currency', 'settlement_currency', 'bill_count', 'is_pro', 'is_settled', 'created_by', 'created_at']
+    list_filter = ['is_pro', 'is_settled', 'default_currency', 'settlement_currency', 'created_at']
     search_fields = ['name', 'description']
     readonly_fields = ['uuid', 'bill_count', 'created_at', 'updated_at']
     inlines = [TabPersonInline]
@@ -24,7 +24,7 @@ class TabAdmin(admin.ModelAdmin):
             'fields': ('name', 'description', 'default_currency', 'settlement_currency', 'created_by')
         }),
         ('Status', {
-            'fields': ('is_settled', 'bill_count')
+            'fields': ('is_pro', 'is_settled', 'bill_count')
         }),
         ('Timestamps', {
             'fields': ('created_at', 'updated_at'),

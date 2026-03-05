@@ -299,6 +299,7 @@ class TabSchema(BaseModel):
     default_currency: CurrencyEnum
     settlement_currency: CurrencyEnum
     is_settled: bool
+    is_pro: bool
     invite_code: str
     bill_count: int
     people: List[TabPersonSchema]
@@ -363,6 +364,7 @@ class TabSchema(BaseModel):
                     'default_currency': data.default_currency,
                     'settlement_currency': data.settlement_currency,
                     'is_settled': data.is_settled,
+                    'is_pro': data.is_pro,
                     'invite_code': str(data.invite_code),
                     'bill_count': data.bill_count,
                     'people': people_list,
@@ -381,6 +383,7 @@ class TabListSchema(BaseModel):
     description: str
     default_currency: CurrencyEnum
     is_settled: bool
+    is_pro: bool
     bill_count: int
     people_count: int
     created_at: datetime
@@ -399,6 +402,7 @@ class TabListSchema(BaseModel):
                 'description': data.description,
                 'default_currency': data.default_currency,
                 'is_settled': data.is_settled,
+                'is_pro': data.is_pro,
                 'bill_count': data.bill_count,
                 'people_count': data.people_count,
                 'created_at': data.created_at,
