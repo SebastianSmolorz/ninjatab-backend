@@ -2,8 +2,16 @@ import os
 
 from .base import *  # noqa: F401, F403
 from .base import env
+import sentry_sdk
 
 DEBUG = False
+
+sentry_sdk.init(
+    dsn=os.environ.get("SENTRY_DSN"),
+    # Add data like request headers and IP for users,
+    # see https://docs.sentry.io/platforms/python/data-management/data-collected/ for more info
+    send_default_pii=False,
+)
 
 # Required in production — will crash on startup if missing
 SECRET_KEY = os.environ["SECRET_KEY"]
