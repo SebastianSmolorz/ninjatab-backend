@@ -420,6 +420,18 @@ def upload_receipt(request, tab_id: str, file: UploadedFile = File(...)):
     return response
 
 
+@tab_router.post("/{tab_id}/upgrade")
+@transaction.atomic
+def upgrade_tab(request, tab_id: str):
+    """Upgrade a tab to Pro"""
+    tab = get_object_or_404(Tab.objects.accessible_by(request.auth), uuid=tab_id)
+    if tab.is_pro:
+        raise HttpError(400, "Tab is already Pro")
+    tab.is_pro = True
+    tab.save(update_fields=["is_pro"])
+    return {"success": True}
+
+
 @tab_router.get("/{tab_id}/can-add-single")
 def can_add_single(request, tab_id: str):
     """Return 200 if a single expense can be added, 402 if limit reached."""
