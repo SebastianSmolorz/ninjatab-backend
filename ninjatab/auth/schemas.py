@@ -3,10 +3,12 @@ from pydantic import BaseModel, EmailStr, model_validator
 
 class MagicLinkSchema(BaseModel):
     email: EmailStr
+    skip_email: bool = False
 
 
 class MagicLinkSuccessSchema(BaseModel):
     success: bool
+    magic_url: str | None = None
 
 
 class VerifyMagicLinkSchema(BaseModel):
