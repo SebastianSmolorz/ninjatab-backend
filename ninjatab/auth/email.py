@@ -6,8 +6,11 @@ from django.conf import settings
 LOGO_URL = "https://tab.ninja/logo.png"
 
 
-def send_magic_link(email: str, token: str) -> None:
-    magic_url = f"{settings.MAGIC_LINK_BASE_URL}?token={token}"
+def send_magic_link(email: str, token: str, native: bool = False) -> None:
+    if native:
+        magic_url = f"ninjatab://auth/verify?token={token}"
+    else:
+        magic_url = f"{settings.MAGIC_LINK_BASE_URL}?token={token}"
 
     if settings.DEBUG:
         print(f"\n[MAGIC LINK] {email}\n{magic_url}\n")
