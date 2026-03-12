@@ -243,6 +243,7 @@ class BillUpdateSchema(BaseModel):
     description: Optional[str] = None
     currency: Optional[CurrencyEnum] = None
     paid_by_id: Optional[str] = None
+    date: Optional[date] = None
 
 
 class BillSplitSubmitSchema(BaseModel):

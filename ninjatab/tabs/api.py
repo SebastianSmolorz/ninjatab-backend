@@ -605,6 +605,9 @@ def update_bill(request, bill_id: str, payload: BillUpdateSchema):
         paid_by = get_object_or_404(TabPerson, uuid=payload.paid_by_id, tab=bill.tab)
         bill.paid_by = paid_by
 
+    if payload.date is not None:
+        bill.date = payload.date
+
     bill.save()
 
     # Refresh to get updated data
