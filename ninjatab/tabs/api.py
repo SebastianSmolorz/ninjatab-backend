@@ -540,6 +540,7 @@ def create_bill(request, payload: BillCreateSchema):
         line_item = LineItem.objects.create(
             bill=bill,
             description=line_item_data.description,
+            translated_name=line_item_data.translated_name,
             value=line_item_data.value,
             split_type=line_item_data.split_type
         )

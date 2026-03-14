@@ -174,6 +174,7 @@ class LineItem(BaseModel):
         related_name='line_items'
     )
     description = models.CharField(max_length=255)
+    translated_name = models.CharField(max_length=255, blank=True, default='')
     value = models.DecimalField(max_digits=10, decimal_places=2)
     split_type = models.CharField(
         max_length=10,

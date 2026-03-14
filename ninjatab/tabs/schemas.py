@@ -128,6 +128,7 @@ class PersonLineItemClaimSchema(BaseModel):
 class LineItemSchema(BaseModel):
     id: str
     description: str
+    translated_name: str = ''
     value: Decimal
     split_type: SplitTypeEnum
     person_claims: List[PersonLineItemClaimSchema]
@@ -149,6 +150,7 @@ class LineItemSchema(BaseModel):
                 return {
                     'id': str(data.uuid),
                     'description': data.description,
+                    'translated_name': data.translated_name,
                     'value': data.value,
                     'split_type': data.split_type,
                     'person_claims': person_claims_list,
@@ -165,6 +167,7 @@ class PersonSplitCreateSchema(BaseModel):
 
 class LineItemCreateSchema(BaseModel):
     description: str
+    translated_name: str = ''
     value: Decimal
     split_type: SplitTypeEnum = SplitTypeEnum.SHARES
     person_splits: List[PersonSplitCreateSchema] = []
