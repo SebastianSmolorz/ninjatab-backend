@@ -27,8 +27,8 @@ class _Item(BaseModel):
     name: str
     translated_name: str
     total_price: float
-    quantity: int
-    price_per_quantity: float
+    quantity: Optional[int] = None
+    price_per_quantity: Optional[float] = None
 
 
 class _Document(BaseModel):
@@ -40,45 +40,49 @@ class _Document(BaseModel):
     currency_code: str
     datetime_of_receipt: Optional[str] = None
 
+# Each item must include:
+# - name: the item name exactly as shown on the receipt
+# - translated_name: the English translation of the item name
+#   - if the item name is already in English, set translated_name equal to name
+# - quantity: number of items of this item bought
+# - price_per_quantity: the price of this item per quantity
+# - total_price: the final price paid for that line item so quantity * price_per_quantity
+#
+# 3. If a discount clearly applies to a specific line item, subtract it from that item total.
+#
+# 4. If there is a receipt-level service charge, gratuity, tip, or other mandatory fee that contributes to the final total, include it as a line item in items.
+# - Use the charge label as shown on the receipt for name
+# - Use the English translation for translated_name, or the same value if already English
+# - Use the charge amount for total
 
 DOCUMENT_ANNOTATION_PROMPT = """
 Extract structured data from this receipt.
 Extraction rules:
 
-1. Extract the receipt language into receipt_language.
+Extract the receipt language into receipt_language.
 - If the receipt is in English, set receipt_language to "English".
 - Otherwise set it to the detected language name.
 
-2. Extract all purchasable line items into items.
-Each item must include:
-- name: the item name exactly as shown on the receipt
-- translated_name: the English translation of the item name
-  - if the item name is already in English, set translated_name equal to name
-- quantity: number of items of this item bought
-- price_per_quantity: the price of this item per quantity
-- total_price: the final price paid for that line item so quantity * price_per_quantity
+Extract all purchasable line items into items.
+Only include price_per_quantity and quantity if clearly on the receipt. 
+uantity: number of instanced of this item purchased
+price_per_quantity: the price of this item per quantity
+total_price: the final price paid for that line item so quantity * price_per_quantity
 
-3. If a discount clearly applies to a specific line item, subtract it from that item total.
+Do not include subtotal, tax, VAT, payment method, change, balance, or loyalty adjustments as items unless they clearly affect the grand total as a receipt-level charge described above.
 
-4. If there is a receipt-level service charge, gratuity, tip, or other mandatory fee that contributes to the final total, include it as a line item in items.
-- Use the charge label as shown on the receipt for name
-- Use the English translation for translated_name, or the same value if already English
-- Use the charge amount for total
+Extract receipt_total as the final total charged on the receipt.
 
-5. Do not include subtotal, tax, VAT, payment method, change, balance, or loyalty adjustments as items unless they clearly affect the grand total as a receipt-level charge described above.
+Extract receipt_establishment_name as the merchant or establishment name shown on the receipt.
 
-6. Extract receipt_total as the final total charged on the receipt.
+Extract currency_code in ISO 4217 format, for example GBP, EUR, USD.
 
-7. Extract receipt_establishment_name as the merchant or establishment name shown on the receipt.
-
-8. Extract currency_code in ISO 4217 format, for example GBP, EUR, USD.
-
-9. Extract datetime_of_receipt from the receipt date/time.
+Extract datetime_of_receipt from the receipt date/time.
 - Return it as an ISO 8601 string when possible
 - If the receipt provides only a partial date or ambiguous date/time that cannot be confidently converted to ISO 8601, return null
 - If no receipt date/time is present, return null
 
-10. Be precise and conservative.
+Be precise and conservative.
 - Do not invent values
 - Only include items that clearly represent purchased goods or services or qualifying receipt-level charges
 """
