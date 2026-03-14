@@ -456,12 +456,11 @@ def upload_receipt(request, tab_id: str, file: UploadedFile = File(...)):
 
     logger.info("Mistral OCR response for tab %s: %s", tab_id, response.model_dump_json())
 
-    # Extract annotation from first page and return as top-level field
+    # Extract annotation from response (top-level field, JSON string)
     annotation = None
-    if response.pages:
-        raw = response.pages[0].document_annotation
-        if raw:
-            annotation = json.loads(raw) if isinstance(raw, str) else raw
+    raw = response.document_annotation
+    if raw and isinstance(raw, str) and not raw.startswith("~?~"):
+        annotation = json.loads(raw)
 
     # Parse date from annotation, default to today
     receipt_date = datetime.now().strftime("%Y-%m-%d")
