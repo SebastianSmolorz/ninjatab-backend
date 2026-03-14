@@ -1,3 +1,4 @@
+import json
 import uuid
 from datetime import datetime
 
@@ -455,7 +456,31 @@ def upload_receipt(request, tab_id: str, file: UploadedFile = File(...)):
 
     logger.info("Mistral OCR response for tab %s: %s", tab_id, response.model_dump_json())
 
-    return response
+    # Extract annotation from first page and return as top-level field
+    annotation = None
+    if response.pages:
+        raw = response.pages[0].document_annotation
+        if raw:
+            annotation = json.loads(raw) if isinstance(raw, str) else raw
+
+    # Parse date from annotation, default to today
+    receipt_date = datetime.now().strftime("%Y-%m-%d")
+    if annotation and annotation.get("datetime_of_receipt"):
+        raw_dt = annotation["datetime_of_receipt"].strip()
+        try:
+            # Handle Z suffix and other ISO variants
+            parsed = datetime.fromisoformat(raw_dt.replace("Z", "+00:00"))
+            receipt_date = parsed.strftime("%Y-%m-%d")
+        except (ValueError, TypeError):
+            # Try date-only format
+            try:
+                from datetime import date as date_type
+                parsed_date = date_type.fromisoformat(raw_dt[:10])
+                receipt_date = parsed_date.isoformat()
+            except (ValueError, TypeError):
+                pass
+
+    return {"document_annotation": annotation, "date": receipt_date}
 
 
 @tab_router.post("/{tab_id}/upgrade")
