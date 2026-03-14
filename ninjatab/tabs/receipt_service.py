@@ -26,7 +26,7 @@ MAX_UPLOAD_SIZE = 10 * 1024 * 1024  # 10 MB
 class _Item(BaseModel):
     name: str
     translated_name: str
-    total_price: float
+    total: float
     quantity: Optional[int] = None
     price_per_quantity: Optional[float] = None
 
@@ -46,7 +46,7 @@ class _Document(BaseModel):
 #   - if the item name is already in English, set translated_name equal to name
 # - quantity: number of items of this item bought
 # - price_per_quantity: the price of this item per quantity
-# - total_price: the final price paid for that line item so quantity * price_per_quantity
+# - total: the final price paid for that line item so quantity * price_per_quantity
 #
 # 3. If a discount clearly applies to a specific line item, subtract it from that item total.
 #
@@ -67,7 +67,7 @@ Extract all purchasable line items into items.
 Only include price_per_quantity and quantity if clearly on the receipt. 
 uantity: number of instanced of this item purchased
 price_per_quantity: the price of this item per quantity
-total_price: the final price paid for that line item so quantity * price_per_quantity
+total: the final price paid for that line item so quantity * price_per_quantity
 
 Do not include subtotal, tax, VAT, payment method, change, balance, or loyalty adjustments as items unless they clearly affect the grand total as a receipt-level charge described above.
 
