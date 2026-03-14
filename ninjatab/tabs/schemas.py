@@ -1,6 +1,6 @@
 from pydantic import BaseModel, EmailStr, Field, field_validator, model_validator
 from typing import Optional, List, Any
-from datetime import datetime, date
+from datetime import datetime, date as Date
 from decimal import Decimal
 from enum import Enum
 
@@ -195,7 +195,7 @@ class BillSchema(BaseModel):
     status: BillStatusEnum
     creator: TabPersonSchema
     paid_by: Optional[TabPersonSchema] = None
-    date: date
+    date: Date
     line_items: List[LineItemSchema]
     total_amount: Decimal
     created_at: datetime
@@ -234,7 +234,7 @@ class BillCreateSchema(BaseModel):
     description: str
     currency: CurrencyEnum
     paid_by_id: Optional[str] = None
-    date: Optional[date] = None
+    date: Optional[Date] = None
     line_items: List[LineItemCreateSchema] = []
 
 
@@ -243,7 +243,7 @@ class BillUpdateSchema(BaseModel):
     description: Optional[str] = None
     currency: Optional[CurrencyEnum] = None
     paid_by_id: Optional[str] = None
-    date: Optional[date] = None
+    date: Optional[Date] = None
 
 
 class BillSplitSubmitSchema(BaseModel):
@@ -268,7 +268,7 @@ class BillListSchema(BaseModel):
     description: str
     currency: CurrencyEnum
     status: BillStatusEnum
-    date: date
+    date: Date
     total_amount: Decimal
     paid_by: Optional[TabPersonSchema] = None
     created_at: datetime
