@@ -10,7 +10,11 @@ from pydantic import BaseModel
 from mistralai import Mistral, DocumentURLChunk
 from mistralai.extra import response_format_from_pydantic_model
 
+import sentry_sdk
+
 logger = logging.getLogger("app")
+
+MAX_SCANS_PER_TAB = 150
 
 ALLOWED_IMAGE_TYPES = {
     "image/jpeg", "image/png", "image/webp",
@@ -74,6 +78,29 @@ Each item must include:
 - Do not invent values
 - Only include items that clearly represent purchased goods or services or qualifying receipt-level charges
 """
+
+
+class ScanLimitExceeded(Exception):
+    pass
+
+
+def check_scan_limit(tab):
+    """Check if tab has exceeded the receipt scan limit."""
+    if tab.receipt_scan_count >= MAX_SCANS_PER_TAB:
+        sentry_sdk.capture_message(
+            f"Receipt scan limit reached for tab {tab.uuid} "
+            f"({tab.receipt_scan_count} scans)",
+            level="warning",
+        )
+        raise ScanLimitExceeded(
+            f"Scan limit of {MAX_SCANS_PER_TAB} receipts per tab reached"
+        )
+
+
+def increment_scan_count(tab):
+    """Increment the receipt scan count on the tab."""
+    tab.receipt_scan_count += 1
+    tab.save(update_fields=["receipt_scan_count"])
 
 
 def validate_upload(file):

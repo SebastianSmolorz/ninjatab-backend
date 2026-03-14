@@ -70,6 +70,7 @@ class Tab(BaseModel):
     )
     is_settled = models.BooleanField(default=False)
     is_pro = models.BooleanField(default=False)
+    receipt_scan_count = models.PositiveIntegerField(default=0)
     invite_code = models.UUIDField(default=uuid.uuid4, unique=True)
 
     objects = TabManager()

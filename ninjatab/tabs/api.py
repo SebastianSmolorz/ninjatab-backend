@@ -349,9 +349,15 @@ def upload_receipt(request, tab_id: str, file: UploadedFile = File(...)):
     """Upload a receipt image, run OCR, and return parsed annotation."""
     from ninjatab.tabs.receipt_service import (
         validate_upload, upload_to_spaces, scan_receipt,
+        check_scan_limit, increment_scan_count, ScanLimitExceeded,
     )
 
-    get_object_or_404(Tab, uuid=tab_id)
+    tab = get_object_or_404(Tab, uuid=tab_id)
+
+    try:
+        check_scan_limit(tab)
+    except ScanLimitExceeded as e:
+        raise HttpError(429, str(e))
 
     try:
         validate_upload(file)
@@ -359,7 +365,9 @@ def upload_receipt(request, tab_id: str, file: UploadedFile = File(...)):
         raise HttpError(400, str(e))
 
     image_url = upload_to_spaces(file, tab_id)
-    return scan_receipt(image_url, tab_id)
+    result = scan_receipt(image_url, tab_id)
+    increment_scan_count(tab)
+    return result
 
 
 @tab_router.post("/{tab_id}/upgrade")
