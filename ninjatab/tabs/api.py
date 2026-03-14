@@ -1,8 +1,6 @@
-import json
 import uuid
 from datetime import datetime
 
-import boto3
 from ninja import Router, UploadedFile, File
 from ninja.errors import HttpError
 from django.conf import settings
@@ -346,140 +344,22 @@ def claim_invite(request, invite_code: str, payload: ClaimInviteSchema):
     return {"success": True}
 
 
-ALLOWED_IMAGE_TYPES = {"image/jpeg", "image/png", "image/webp", "image/heic", "image/heif", "application/octet-stream"}
-MAX_UPLOAD_SIZE = 10 * 1024 * 1024  # 10 MB
-
-
-def _upload_to_spaces(file: UploadedFile, key: str) -> str:
-    s3 = boto3.client(
-        "s3",
-        endpoint_url=settings.S3_ENDPOINT,
-        aws_access_key_id=settings.AWS_ACCESS_KEY_ID,
-        aws_secret_access_key=settings.AWS_SECRET_ACCESS_KEY,
-    )
-    s3.upload_fileobj(
-        file,
-        settings.S3_BUCKET,
-        key,
-        ExtraArgs={"ACL": "public-read", "ContentType": file.content_type},
-    )
-    url = "https://tab-ninja-receipt-scans.lon1.digitaloceanspaces.com"
-    return f"{url}/{key}"
-
-
 @tab_router.post("/{tab_id}/upload-receipt", auth=None)
 def upload_receipt(request, tab_id: str, file: UploadedFile = File(...)):
-    """Upload a receipt image to storage and return its URL"""
-    from pydantic import BaseModel
-    from mistralai import Mistral, DocumentURLChunk, ImageURLChunk, ResponseFormat
-    from mistralai.extra import response_format_from_pydantic_model
-    from typing import Optional
-
-    class Item(BaseModel):
-        name: str
-        translated_name: str
-        total: float
-
-    class Document(BaseModel):
-        receipt_language: str  # "English", "Polish", etc.
-        receipt_language_code: Optional[str] = None  # "en", "pl", etc.
-        items: list[Item]
-        receipt_total: float
-        receipt_establishment_name: str
-        currency_code: str
-        datetime_of_receipt: Optional[str] = None
+    """Upload a receipt image, run OCR, and return parsed annotation."""
+    from ninjatab.tabs.receipt_service import (
+        validate_upload, upload_to_spaces, scan_receipt,
+    )
 
     get_object_or_404(Tab, uuid=tab_id)
 
-    if file.content_type not in ALLOWED_IMAGE_TYPES:
-        raise HttpError(400, f"Unsupported file type: {file.content_type}. Allowed: JPEG, PNG, WebP, HEIC")
+    try:
+        validate_upload(file)
+    except ValueError as e:
+        raise HttpError(400, str(e))
 
-    if file.size > MAX_UPLOAD_SIZE:
-        raise HttpError(400, f"File too large. Maximum size is {MAX_UPLOAD_SIZE // (1024 * 1024)} MB")
-
-    ext = file.name.rsplit(".", 1)[-1] if "." in file.name else "jpg"
-    key = f"receipts/{tab_id}/{uuid.uuid4()}.{ext}"
-    url = _upload_to_spaces(file, key)
-
-    document_annotation_prompt = """
-    Extract structured data from this receipt.
-    Extraction rules:
-    
-    1. Extract the receipt language into receipt_language.
-    - If the receipt is in English, set receipt_language to "English".
-    - Otherwise set it to the detected language name.
-    
-    2. Extract all purchasable line items into items.
-    Each item must include:
-    - name: the item name exactly as shown on the receipt
-    - translated_name: the English translation of the item name
-      - if the item name is already in English, set translated_name equal to name
-    - total: the final price paid for that line item
-    
-    3. If a discount clearly applies to a specific line item, subtract it from that item total.
-    
-    4. If there is a receipt-level service charge, gratuity, tip, or other mandatory fee that contributes to the final total, include it as a line item in items.
-    - Use the charge label as shown on the receipt for name
-    - Use the English translation for translated_name, or the same value if already English
-    - Use the charge amount for total
-    
-    5. Do not include subtotal, tax, VAT, payment method, change, balance, or loyalty adjustments as items unless they clearly affect the grand total as a receipt-level charge described above.
-    
-    6. Extract receipt_total as the final total charged on the receipt.
-    
-    7. Extract receipt_establishment_name as the merchant or establishment name shown on the receipt.
-    
-    8. Extract currency_code in ISO 4217 format, for example GBP, EUR, USD.
-    
-    9. Extract datetime_of_receipt from the receipt date/time.
-    - Return it as an ISO 8601 string when possible
-    - If the receipt provides only a partial date or ambiguous date/time that cannot be confidently converted to ISO 8601, return null
-    - If no receipt date/time is present, return null
-    
-    10. Be precise and conservative.
-    - Do not invent values
-    - Only include items that clearly represent purchased goods or services or qualifying receipt-level charges
-    """
-    client = Mistral(api_key=settings.MISTRAL_API_KEY)
-
-    # Client call
-    response = client.ocr.process(
-        model="mistral-ocr-latest",
-        pages=list(range(8)),
-        document=DocumentURLChunk(
-            document_url=url
-        ),
-        document_annotation_format=response_format_from_pydantic_model(Document),
-        document_annotation_prompt=document_annotation_prompt,
-        include_image_base64=True
-    )
-
-    logger.info("Mistral OCR response for tab %s: %s", tab_id, response.model_dump_json())
-
-    # Extract annotation from response (top-level field, JSON string)
-    annotation = None
-    raw = response.document_annotation
-    if raw and isinstance(raw, str) and not raw.startswith("~?~"):
-        annotation = json.loads(raw)
-
-    # Parse date from annotation, default to today
-    receipt_date = datetime.now().strftime("%Y-%m-%d")
-    if annotation and annotation.get("datetime_of_receipt"):
-        raw_dt = annotation["datetime_of_receipt"].strip()
-        try:
-            # Handle Z suffix and other ISO variants
-            parsed = datetime.fromisoformat(raw_dt.replace("Z", "+00:00"))
-            receipt_date = parsed.strftime("%Y-%m-%d")
-        except (ValueError, TypeError):
-            # Try date-only format
-            try:
-                from datetime import date as date_type
-                parsed_date = date_type.fromisoformat(raw_dt[:10])
-                receipt_date = parsed_date.isoformat()
-            except (ValueError, TypeError):
-                pass
-
-    return {"document_annotation": annotation, "date": receipt_date}
+    image_url = upload_to_spaces(file, tab_id)
+    return scan_receipt(image_url, tab_id)
 
 
 @tab_router.post("/{tab_id}/upgrade")
