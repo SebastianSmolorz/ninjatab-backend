@@ -22,6 +22,8 @@ class JWTBearer(HttpBearer):
             if payload.get("type") != "access":
                 return None
             user = User.objects.get(id=int(payload["sub"]))
+            if not user.is_active:
+                return None
             return user
         except (jwt.ExpiredSignatureError, jwt.InvalidTokenError, User.DoesNotExist):
             return None

@@ -71,6 +71,9 @@ def verify_magic_link(request, payload: VerifyMagicLinkSchema):
     except User.DoesNotExist:
         raise HttpError(401, "User not found")
 
+    if not user.is_active:
+        raise HttpError(403, "Account is blocked")
+
     access_token = create_access_token(user.id, user.email)
     refresh_token = create_refresh_token(user.id)
 
@@ -95,6 +98,9 @@ def refresh(request):
         raise HttpError(401, "Invalid or expired refresh token")
     except User.DoesNotExist:
         raise HttpError(401, "User not found")
+
+    if not user.is_active:
+        raise HttpError(403, "Account is blocked")
 
     new_access_token = create_access_token(user.id, user.email)
 
