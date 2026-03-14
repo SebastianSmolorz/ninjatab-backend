@@ -34,11 +34,24 @@ MEDIA_ROOT = "/var/www/ninjatab/media"
 LOGGING = {
     "version": 1,
     "disable_existing_loggers": False,
+    "formatters": {
+        "verbose": {
+            "format": "{asctime} {levelname} {name} {message}",
+            "style": "{",
+        },
+    },
     "handlers": {
         "file": {
             "level": "ERROR",
             "class": "logging.FileHandler",
             "filename": "/var/log/django/error.log",
+            "formatter": "verbose",
+        },
+        "app_file": {
+            "level": "INFO",
+            "class": "logging.FileHandler",
+            "filename": "/var/log/django/app.log",
+            "formatter": "verbose",
         },
     },
     "loggers": {
@@ -46,6 +59,11 @@ LOGGING = {
             "handlers": ["file"],
             "level": "ERROR",
             "propagate": True,
+        },
+        "app": {
+            "handlers": ["app_file"],
+            "level": "INFO",
+            "propagate": False,
         },
     },
 }
