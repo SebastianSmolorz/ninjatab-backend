@@ -26,7 +26,9 @@ MAX_UPLOAD_SIZE = 10 * 1024 * 1024  # 10 MB
 class _Item(BaseModel):
     name: str
     translated_name: str
-    total: float
+    total_price: float
+    quantity: int
+    price_per_quantity: float
 
 
 class _Document(BaseModel):
@@ -52,7 +54,9 @@ Each item must include:
 - name: the item name exactly as shown on the receipt
 - translated_name: the English translation of the item name
   - if the item name is already in English, set translated_name equal to name
-- total: the final price paid for that line item
+- quantity: number of items of this item bought
+- price_per_quantity: the price of this item per quantity
+- total_price: the final price paid for that line item so quantity * price_per_quantity
 
 3. If a discount clearly applies to a specific line item, subtract it from that item total.
 
