@@ -86,10 +86,10 @@ class LineItemInline(admin.TabularInline):
 
 @admin.register(Bill)
 class BillAdmin(admin.ModelAdmin):
-    list_display = ['description', 'uuid', 'tab', 'currency', 'total_amount', 'is_itemised', 'status', 'date']
+    list_display = ['description', 'uuid', 'tab', 'currency', 'total_amount', 'is_itemised', 'status', 'date', 'has_receipt']
     list_filter = ['status', 'currency', 'date', 'created_at']
     search_fields = ['description', 'uuid', 'tab__name', 'tab__uuid']
-    readonly_fields = ['uuid', 'total_amount', 'created_at', 'updated_at']
+    readonly_fields = ['uuid', 'total_amount', 'receipt_image_link', 'created_at', 'updated_at']
     autocomplete_fields = ['tab', 'creator', 'paid_by']
     date_hierarchy = 'date'
     inlines = [LineItemInline]
@@ -104,11 +104,28 @@ class BillAdmin(admin.ModelAdmin):
         ('Status', {
             'fields': ('status', 'total_amount')
         }),
+        ('Receipt', {
+            'fields': ('receipt_image_link',),
+        }),
         ('Timestamps', {
             'fields': ('created_at', 'updated_at'),
             'classes': ('collapse',)
         }),
     )
+
+    def has_receipt(self, obj):
+        return bool(obj.receipt_image_url)
+    has_receipt.boolean = True
+    has_receipt.short_description = 'Receipt'
+
+    def receipt_image_link(self, obj):
+        if obj.receipt_image_url:
+            return format_html(
+                '<a href="{}" target="_blank">View receipt image</a>',
+                obj.receipt_image_url,
+            )
+        return '-'
+    receipt_image_link.short_description = 'Receipt Image'
 
     def get_queryset(self, request):
         qs = super().get_queryset(request)

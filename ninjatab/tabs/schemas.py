@@ -238,6 +238,7 @@ class BillCreateSchema(BaseModel):
     currency: CurrencyEnum
     paid_by_id: Optional[str] = None
     date: Optional[Date] = None
+    receipt_image_url: str = ''
     line_items: List[LineItemCreateSchema] = []
 
 

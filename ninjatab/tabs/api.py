@@ -420,7 +420,8 @@ def create_bill(request, payload: BillCreateSchema):
         currency=payload.currency,
         creator=creator,
         paid_by=paid_by,
-        date=payload.date if payload.date else date.today()
+        date=payload.date if payload.date else date.today(),
+        receipt_image_url=payload.receipt_image_url
     )
 
     # Create line items with splits

@@ -181,4 +181,4 @@ def scan_receipt(image_url: str, tab_id: str) -> dict:
             except (ValueError, TypeError):
                 pass
 
-    return {"document_annotation": annotation, "date": receipt_date}
+    return {"document_annotation": annotation, "date": receipt_date, "image_url": image_url}

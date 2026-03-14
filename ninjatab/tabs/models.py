@@ -148,6 +148,7 @@ class Bill(BaseModel):
         blank=True
     )
     date = models.DateField(default=date.today)
+    receipt_image_url = models.URLField(max_length=500, blank=True, default='')
 
     class Meta:
         ordering = ['-date', '-created_at']
