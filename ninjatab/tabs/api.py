@@ -25,6 +25,9 @@ User = get_user_model()
 tab_router = Router(tags=["tabs"], auth=JWTBearer())
 bill_router = Router(tags=["bills"], auth=JWTBearer())
 
+import logging
+
+logger = logging.getLogger("app")
 
 def _sync_contacts_for_tab(tab):
     """Create bidirectional Contact records for every user pair on a tab."""
@@ -449,6 +452,8 @@ def upload_receipt(request, tab_id: str, file: UploadedFile = File(...)):
         document_annotation_prompt=document_annotation_prompt,
         include_image_base64=True
     )
+
+    logger.info("Mistral OCR response for tab %s: %s", tab_id, response.model_dump_json())
 
     return response
 

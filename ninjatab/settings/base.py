@@ -141,6 +141,36 @@ MAGIC_LINK_EXTENDED_COOLDOWN = 120   # seconds
 FREE_TAB_MAX_BILLS = 7
 FREE_TAB_MAX_ITEMISED_BILLS = 1
 
+# Logging
+LOG_DIR = BASE_DIR.parent / "logs"
+LOG_DIR.mkdir(exist_ok=True)
+
+LOGGING = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "formatters": {
+        "verbose": {
+            "format": "{asctime} {levelname} {name} {message}",
+            "style": "{",
+        },
+    },
+    "handlers": {
+        "app_file": {
+            "level": "INFO",
+            "class": "logging.FileHandler",
+            "filename": LOG_DIR / "app.log",
+            "formatter": "verbose",
+        },
+    },
+    "loggers": {
+        "app": {
+            "handlers": ["app_file"],
+            "level": "INFO",
+            "propagate": False,
+        },
+    },
+}
+
 CORS_ALLOW_METHODS = [
     "DELETE",
     "GET",
