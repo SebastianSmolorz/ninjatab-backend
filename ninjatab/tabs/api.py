@@ -50,6 +50,7 @@ def create_tab(request, payload: TabCreateSchema):
         name=payload.name,
         description=payload.description,
         default_currency=payload.default_currency,
+        settlement_currency=payload.settlement_currency,
         created_by=request.auth
     )
 
@@ -158,6 +159,10 @@ def close_tab(request, tab_id: str):
         ),
         uuid=tab_id,
     )
+    # Prevent settling a tab with no bills
+    if not tab.bills.exclude(status=BillStatus.ARCHIVED.value).exists():
+        raise HttpError(400, "Cannot settle a tab with no bills")
+
     tab.is_settled = True
     tab.save()
 
