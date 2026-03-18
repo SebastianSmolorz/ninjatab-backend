@@ -36,8 +36,9 @@ class _Document(BaseModel):
     receipt_language_code: Optional[str] = None
     items: list[_Item]
     receipt_total: float
-    receipt_establishment_name: str
-    currency_code: str
+    items_total: float
+    receipt_establishment_name: Optional[str] = None
+    currency_code: Optional[str] = None
     datetime_of_receipt: Optional[str] = None
 
 # Each item must include:
@@ -57,15 +58,14 @@ class _Document(BaseModel):
 
 DOCUMENT_ANNOTATION_PROMPT = """
 Extract structured data from this receipt.
-Extraction rules:
-
-Extract the receipt language into receipt_language.
+Detect and extract the receipt language into receipt_language.
 - If the receipt is in English, set receipt_language to "English".
 - Otherwise set it to the detected language name.
 
-Extract all purchasable line items into items.
+Extract all items which contribute to the receipt total into items.
+Include all purchasable items as well as any service charges if they contribute to the receipt total. 
 Only include price_per_quantity and quantity if clearly on the receipt. 
-uantity: number of instanced of this item purchased
+quantity: number of instanced of this item purchased. Set to 1 if it is not clear
 price_per_quantity: the price of this item per quantity
 total: the final price paid for that line item so quantity * price_per_quantity
 
@@ -73,9 +73,12 @@ Do not include subtotal, tax, VAT, payment method, change, balance, or loyalty a
 
 Extract receipt_total as the final total charged on the receipt.
 
-Extract receipt_establishment_name as the merchant or establishment name shown on the receipt.
+Extract receipt_establishment_name as the merchant or establishment name shown on the receipt if available.
 
 Extract currency_code in ISO 4217 format, for example GBP, EUR, USD.
+
+Calculate items_total which is the sum of the totals of all items which affect the total.
+items_total should ideally match the receipt_total. If it does not, an item may be missing or have an incorrect total.
 
 Extract datetime_of_receipt from the receipt date/time.
 - Return it as an ISO 8601 string when possible
@@ -84,8 +87,8 @@ Extract datetime_of_receipt from the receipt date/time.
 
 Be precise and conservative.
 - Do not invent values
-- Only include items that clearly represent purchased goods or services or qualifying receipt-level charges
 """
+# - Only include items that clearly represent purchased goods or services or qualifying receipt-level charges
 
 
 class ScanLimitExceeded(Exception):
@@ -154,7 +157,7 @@ def scan_receipt(image_url: str, tab_id: str) -> dict:
     client = Mistral(api_key=settings.MISTRAL_API_KEY)
 
     response = client.ocr.process(
-        model="mistral-ocr-2505",
+        model="latest",
         pages=list(range(8)),
         document=DocumentURLChunk(document_url=image_url),
         document_annotation_format=response_format_from_pydantic_model(_Document),
