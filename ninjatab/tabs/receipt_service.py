@@ -157,7 +157,7 @@ def scan_receipt(image_url: str, tab_id: str) -> dict:
     client = Mistral(api_key=settings.MISTRAL_API_KEY)
 
     response = client.ocr.process(
-        model="latest",
+        model="mistral-ocr-latest",
         pages=list(range(8)),
         document=DocumentURLChunk(document_url=image_url),
         document_annotation_format=response_format_from_pydantic_model(_Document),
