@@ -78,7 +78,7 @@ Extract receipt_establishment_name as the merchant or establishment name shown o
 Extract currency_code in ISO 4217 format, for example GBP, EUR, USD.
 
 Calculate items_total which is the sum of the totals of all items which affect the total.
-items_total should ideally match the receipt_total. If it does not, an item may be missing or have an incorrect total.
+items_total should ideally match the receipt_total. If it does not, an item may be missing or have an incorrect total, or there may be a superfluous item.
 
 Extract datetime_of_receipt from the receipt date/time.
 - Return it as an ISO 8601 string when possible
