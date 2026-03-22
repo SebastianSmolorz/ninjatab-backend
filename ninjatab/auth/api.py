@@ -12,6 +12,7 @@ from ninjatab.auth.schemas import (
     AuthUserSchema,
     RefreshResponseSchema,
     LogoutResponseSchema,
+    UpdateProfileSchema,
 )
 from ninjatab.auth.jwt_utils import (
     create_access_token,
@@ -127,3 +128,11 @@ def logout(request):
 @auth_router.get("/me", response=AuthUserSchema, auth=JWTBearer())
 def me(request):
     return request.auth
+
+
+@auth_router.patch("/me", response=AuthUserSchema, auth=JWTBearer())
+def update_me(request, payload: UpdateProfileSchema):
+    user = request.auth
+    user.first_name = payload.first_name.strip()
+    user.save(update_fields=["first_name"])
+    return user
