@@ -20,12 +20,14 @@ from django.urls import path
 
 from ninjatab.tabs.api import tab_router, bill_router
 from ninjatab.auth.api import auth_router
+from ninjatab.marketing.api import marketing_router
 from ninja import NinjaAPI
 
 api = NinjaAPI()
 api.add_router("/tabs", tab_router)
 api.add_router("/bills", bill_router)
 api.add_router("/auth", auth_router)
+api.add_router("/marketing", marketing_router)
 
 urlpatterns = [
     path("kurwa/admin/", admin.site.urls),

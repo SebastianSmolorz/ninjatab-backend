@@ -47,3 +47,7 @@ class RefreshResponseSchema(BaseModel):
 
 class LogoutResponseSchema(BaseModel):
     success: bool
+
+
+class UpdateProfileSchema(BaseModel):
+    first_name: str
