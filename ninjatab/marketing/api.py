@@ -1,10 +1,16 @@
 from ninja import Router
 from ninja.errors import HttpError
 
-from ninjatab.marketing.models import WaitlistEntry
+from ninjatab.marketing.models import WaitlistEntry, WaitlistPageView
 from ninjatab.marketing.schemas import WaitlistCreateSchema, WaitlistResponseSchema
 
 marketing_router = Router(tags=["marketing"])
+
+
+@marketing_router.post("/waitlist/pageview", response=WaitlistResponseSchema)
+def waitlist_pageview(request):
+    WaitlistPageView.objects.create()
+    return {"success": True}
 
 
 @marketing_router.post("/waitlist", response=WaitlistResponseSchema)

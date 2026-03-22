@@ -17,3 +17,12 @@ class WaitlistEntry(models.Model):
 
     def __str__(self):
         return f"{self.email} ({self.platform})"
+
+
+class WaitlistPageView(models.Model):
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        verbose_name = "Waitlist Page View"
+        verbose_name_plural = "Waitlist Page Views"
