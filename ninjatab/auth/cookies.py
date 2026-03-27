@@ -20,7 +20,7 @@ def set_auth_cookies(response, access_token, refresh_token):
         httponly=True,
         secure=settings.AUTH_COOKIE_SECURE,
         samesite="Lax",
-        max_age=14 * 24 * 3600,
+        max_age=30 * 24 * 3600,
         path="/api/auth/refresh",
     )
 
