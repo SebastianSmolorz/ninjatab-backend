@@ -3,7 +3,7 @@ import requests
 from django.conf import settings
 
 
-LOGO_URL = "https://tab.ninja/logo.png"
+LOGO_URL = "https://tab.ninja/logo-120.png"
 
 
 def send_magic_link(email: str, token: str, native: bool = False) -> None:
