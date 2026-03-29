@@ -8,6 +8,7 @@ LOGO_URL = "https://tab.ninja/logo-120.png"
 
 def send_magic_link(email: str, token: str) -> None:
     magic_url = f"{settings.MAGIC_LINK_BASE_URL}?token={token}"
+    native_url = f"ninjatab://auth/verify?token={token}"
 
     if settings.DEBUG:
         print(f"\n[MAGIC LINK] {email}\n{magic_url}\n")
@@ -60,22 +61,15 @@ def send_magic_link(email: str, token: str) -> None:
                   <hr style="border: none; border-top: 1px solid #e5e7eb; margin: 0;" />
                 </td>
               </tr>
-              <!-- Fallback link -->
+              <!-- Direct app link -->
               <tr>
-                <td style="padding: 20px 40px 12px;">
-                  <p style="margin: 0; font-size: 13px; color: #9ca3af;">
-                    Or copy and paste this link into your browser:
-                  </p>
-                </td>
-              </tr>
-              <tr>
-                <td style="padding: 0 40px 24px;">
-                  <a href="{magic_url}" style="font-size: 13px; color: #6b7280; word-break: break-all; text-decoration: underline;">{magic_url}</a>
+                <td align="center" style="padding: 16px 40px 8px;">
+                  <a href="{native_url}" style="font-size: 12px; color: #9ca3af; text-decoration: underline;">Open directly in the app</a>
                 </td>
               </tr>
               <!-- Footer -->
               <tr>
-                <td style="padding: 16px 40px 32px;">
+                <td style="padding: 8px 40px 32px;">
                   <p style="margin: 0; font-size: 12px; color: #d1d5db;">
                     This link expires in 15 minutes. If you didn't request this, you can safely ignore this email.
                   </p>
