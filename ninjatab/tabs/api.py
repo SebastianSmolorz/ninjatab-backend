@@ -338,14 +338,22 @@ def claim_invite(request, invite_code: str, payload: ClaimInviteSchema):
     """Claim a placeholder person on a tab and send a magic link — no auth required"""
     tab = get_object_or_404(Tab, invite_code=invite_code)
     person = get_object_or_404(TabPerson, uuid=payload.person_id, tab=tab, user__isnull=True)
+
+    # Prevent claiming if the authenticated user is already on this tab
+    authed_user = JWTBearer()(request)
+    if authed_user and tab.people.filter(user=authed_user).exists():
+        raise HttpError(400, "You are already on this tab")
+
     user, _ = User.objects.get_or_create(email=payload.email, defaults={"username": payload.email})
+
+    # Prevent claiming if the email's user is already on this tab
+    if tab.people.filter(user=user).exists():
+        raise HttpError(400, "This email is already associated with someone on this tab")
     user.first_name = person.name
     user.save(update_fields=["first_name"])
     person.user = user
     person.save()
     _sync_contacts_for_tab(tab)
-    token = create_magic_token(user.id)
-    send_magic_link(payload.email, token)
     return {"success": True}
 
 
