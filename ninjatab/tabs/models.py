@@ -81,14 +81,6 @@ class Tab(BaseModel):
     def __str__(self):
         return self.name
 
-    @property
-    def bill_count(self):
-        return self.bills.count()
-
-    @property
-    def people_count(self):
-        return self.people.count()
-
     def rotate_invite_code(self):
         self.invite_code = uuid.uuid4()
         self.save(update_fields=["invite_code"])
