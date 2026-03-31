@@ -391,6 +391,8 @@ class TabListSchema(BaseModel):
     is_pro: bool
     bill_count: int
     people_count: int
+    user_owes: Decimal = Decimal('0')
+    user_owed: Decimal = Decimal('0')
     created_at: datetime
     updated_at: datetime
 
@@ -410,6 +412,8 @@ class TabListSchema(BaseModel):
                 'is_pro': data.is_pro,
                 'bill_count': data.bill_count,
                 'people_count': data.people_count,
+                'user_owes': getattr(data, 'user_owes', 0),
+                'user_owed': getattr(data, 'user_owed', 0),
                 'created_at': data.created_at,
                 'updated_at': data.updated_at,
             }

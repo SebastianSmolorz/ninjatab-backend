@@ -6,7 +6,8 @@ from ninja.errors import HttpError
 from django.conf import settings
 from django.shortcuts import get_object_or_404
 from django.db import transaction
-from django.db.models import Q
+from django.db.models import Q, Count, OuterRef, Subquery, Sum, DecimalField
+from django.db.models.functions import Coalesce
 from django.contrib.auth import get_user_model
 
 from ninjatab.tabs.models import *
@@ -83,7 +84,30 @@ def create_tab(request, payload: TabCreateSchema):
 @tab_router.get("/", response=List[TabListSchema])
 def list_tabs(request):
     """List all tabs"""
-    tabs = Tab.objects.accessible_by(request.auth)
+    user_owes_sq = (
+        PersonLineItemClaim.objects
+        .filter(person__tab=OuterRef('pk'), person__user=request.auth)
+        .exclude(line_item__bill__paid_by__user=request.auth)
+        .values('person__tab')
+        .annotate(total=Sum('calculated_amount'))
+        .values('total')
+    )
+
+    user_owed_sq = (
+        PersonLineItemClaim.objects
+        .filter(line_item__bill__tab=OuterRef('pk'), line_item__bill__paid_by__user=request.auth)
+        .exclude(person__user=request.auth)
+        .values('line_item__bill__tab')
+        .annotate(total=Sum('calculated_amount'))
+        .values('total')
+    )
+
+    tabs = Tab.objects.accessible_by(request.auth).annotate(
+        bill_count=Count('bills', distinct=True),
+        people_count=Count('people', distinct=True),
+        user_owes=Coalesce(Subquery(user_owes_sq), 0, output_field=DecimalField()),
+        user_owed=Coalesce(Subquery(user_owed_sq), 0, output_field=DecimalField()),
+    )
     return tabs
 
 
