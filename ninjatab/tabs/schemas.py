@@ -1,3 +1,5 @@
+from uuid import UUID
+
 from pydantic import BaseModel, EmailStr, Field, field_validator, model_validator
 from typing import Optional, List, Any
 from datetime import datetime, date as Date
@@ -387,7 +389,8 @@ class TabSchema(BaseModel):
 
 
 class TabListSchema(BaseModel):
-    id: str
+
+    id: UUID = Field(validation_alias="uuid")
     name: str
     description: str
     default_currency: CurrencyEnum
@@ -400,24 +403,6 @@ class TabListSchema(BaseModel):
 
     class Config:
         from_attributes = True
-
-    @model_validator(mode='before')
-    @classmethod
-    def extract_uuid(cls, data: Any) -> Any:
-        if hasattr(data, 'uuid'):
-            return {
-                'id': str(data.uuid),
-                'name': data.name,
-                'description': data.description,
-                'default_currency': data.default_currency,
-                'is_settled': data.is_settled,
-                'is_pro': data.is_pro,
-                'bill_count': data.bill_count,
-                'people_count': data.people_count,
-                'created_at': data.created_at,
-                'updated_at': data.updated_at,
-            }
-        return data
 
 
 class TabCreateSchema(BaseModel):
