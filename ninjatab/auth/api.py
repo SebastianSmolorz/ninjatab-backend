@@ -40,15 +40,15 @@ auth_router = Router(tags=["auth"])
 @auth_router.post("/magic-link", response=MagicLinkSuccessSchema)
 def magic_link(request, payload: MagicLinkSchema):
     user, _ = User.objects.get_or_create(
-        email=payload.email,
-        defaults={"username": payload.email},
+        email=payload.email.lower(),
+        defaults={"username": payload.email.lower()},
     )
     check_magic_link_rate_limit(user)
     token = create_magic_token(user.id)
     magic_url = f"{django_settings.MAGIC_LINK_BASE_URL}?token={token}"
     if payload.skip_email and django_settings.DEBUG:
         return {"success": True, "magic_url": magic_url}
-    send_magic_link(payload.email, token)
+    send_magic_link(payload.email.lower(), token)
     user.before_last_magic_link_sent_dt = user.last_magic_link_sent_dt
     user.last_magic_link_sent_dt = timezone.now()
     user.save(update_fields=["last_magic_link_sent_dt", "before_last_magic_link_sent_dt"])

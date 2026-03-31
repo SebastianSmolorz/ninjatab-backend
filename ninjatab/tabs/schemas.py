@@ -59,7 +59,7 @@ class UserSchema(BaseModel):
             return {
                 'id': str(data.uuid),
                 'username': data.username,
-                'email': data.email,
+                'email': data.email.lower(),
                 'first_name': data.first_name,
                 'last_name': data.last_name,
             }
@@ -515,7 +515,7 @@ class ContactSchema(BaseModel):
                 'user_id': str(data.contact_user.uuid),
                 'first_name': data.contact_user.first_name,
                 'last_name': data.contact_user.last_name,
-                'email': data.contact_user.email,
+                'email': data.contact_user.email.lower(),
             }
         return data
 

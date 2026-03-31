@@ -10,7 +10,7 @@ MAGIC_TOKEN_EXPIRE_MINUTES = 15
 def create_access_token(user_id: int, email: str) -> str:
     payload = {
         "sub": str(user_id),
-        "email": email,
+        "email": email.lower(),
         "type": "access",
         "exp": datetime.now(timezone.utc) + timedelta(hours=ACCESS_TOKEN_EXPIRE_HOURS),
         "iat": datetime.now(timezone.utc),

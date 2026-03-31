@@ -382,10 +382,10 @@ def claim_invite(request, invite_code: str, payload: ClaimInviteSchema):
     if authed_user and tab.people.filter(user=authed_user).exists():
         raise HttpError(400, "You are already on this tab")
 
-    user, _ = User.objects.get_or_create(email=payload.email, defaults={"username": payload.email})
+    user, _ = User.objects.get_or_create(email=payload.email.lower(), defaults={"username": payload.email.lower()})
 
     # Prevent claiming if the email's user is already on this tab
-    if tab.people.filter(user=user).exists():
+    if tab.people.filter(user=user.lower()).exists():
         raise HttpError(400, "This email is already associated with someone on this tab")
     user.first_name = person.name
     user.save(update_fields=["first_name"])

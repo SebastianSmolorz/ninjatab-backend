@@ -15,7 +15,7 @@ def waitlist_pageview(request):
 
 @marketing_router.post("/waitlist", response=WaitlistResponseSchema)
 def join_waitlist(request, payload: WaitlistCreateSchema):
-    if WaitlistEntry.objects.filter(email=payload.email).exists():
+    if WaitlistEntry.objects.filter(email=payload.email.lower()).exists():
         raise HttpError(409, "This email is already on the waitlist.")
     WaitlistEntry.objects.create(email=payload.email, platform=payload.platform)
     return {"success": True}
