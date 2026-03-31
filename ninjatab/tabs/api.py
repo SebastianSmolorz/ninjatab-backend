@@ -26,6 +26,7 @@ tab_router = Router(tags=["tabs"], auth=JWTBearer())
 bill_router = Router(tags=["bills"], auth=JWTBearer())
 
 import logging
+import sentry_sdk
 
 logger = logging.getLogger("app")
 
@@ -84,29 +85,9 @@ def create_tab(request, payload: TabCreateSchema):
 @tab_router.get("/", response=List[TabListSchema])
 def list_tabs(request):
     """List all tabs"""
-    user_owes_sq = (
-        PersonLineItemClaim.objects
-        .filter(person__tab=OuterRef('pk'), person__user=request.auth)
-        .exclude(line_item__bill__paid_by__user=request.auth)
-        .values('person__tab')
-        .annotate(total=Sum('calculated_amount'))
-        .values('total')
-    )
-
-    user_owed_sq = (
-        PersonLineItemClaim.objects
-        .filter(line_item__bill__tab=OuterRef('pk'), line_item__bill__paid_by__user=request.auth)
-        .exclude(person__user=request.auth)
-        .values('line_item__bill__tab')
-        .annotate(total=Sum('calculated_amount'))
-        .values('total')
-    )
-
     tabs = Tab.objects.accessible_by(request.auth).annotate(
         bill_count=Count('bills', distinct=True),
         people_count=Count('people', distinct=True),
-        user_owes=Coalesce(Subquery(user_owes_sq), 0, output_field=DecimalField()),
-        user_owed=Coalesce(Subquery(user_owed_sq), 0, output_field=DecimalField()),
     )
     return tabs
 
@@ -127,11 +108,32 @@ def list_contacts(request, exclude_tab: str = None):
 @tab_router.get("/{tab_id}", response=TabSchema)
 def retrieve_tab(request, tab_id: str):
     """Retrieve a tab with all its people"""
+    user_owes_sq = (
+        PersonLineItemClaim.objects
+        .filter(person__tab=OuterRef('pk'), person__user=request.auth)
+        .exclude(line_item__bill__paid_by__user=request.auth)
+        .values('person__tab')
+        .annotate(total=Sum('settlement_amount'))
+        .values('total')
+    )
+
+    user_owed_sq = (
+        PersonLineItemClaim.objects
+        .filter(line_item__bill__tab=OuterRef('pk'), line_item__bill__paid_by__user=request.auth)
+        .exclude(person__user=request.auth)
+        .values('line_item__bill__tab')
+        .annotate(total=Sum('settlement_amount'))
+        .values('total')
+    )
+
     tab = get_object_or_404(
         Tab.objects.accessible_by(request.auth).prefetch_related(
             'people__user',
             'settlements__from_person__user',
             'settlements__to_person__user'
+        ).annotate(
+            user_owes=Coalesce(Subquery(user_owes_sq), 0, output_field=DecimalField()),
+            user_owed=Coalesce(Subquery(user_owed_sq), 0, output_field=DecimalField()),
         ),
         uuid=tab_id,
     )
@@ -151,13 +153,39 @@ def update_tab(request, tab_id: str, payload: TabUpdateSchema):
         uuid=tab_id,
     )
 
-    # Update fields if provided
-    if payload.settlement_currency is not None:
-        tab.settlement_currency = payload.settlement_currency
+    if payload.settlement_currency is not None and payload.settlement_currency != tab.settlement_currency:
+        new_currency = payload.settlement_currency
+
+        claims = (
+            PersonLineItemClaim.objects
+            .filter(line_item__bill__tab=tab)
+            .select_related('line_item__bill')
+        )
+
+        updated_claims = []
+        for claim in claims:
+            if claim.calculated_amount is None:
+                continue
+            try:
+                claim.settlement_amount = convert_amount(
+                    claim.calculated_amount,
+                    claim.line_item.bill.currency,
+                    new_currency,
+                )
+            except ExchangeRateNotFoundError as e:
+                sentry_sdk.capture_exception(e)
+                logger.error(
+                    "Exchange rate missing during settlement_currency update: "
+                    "tab=%s from=%s to=%s error=%s",
+                    tab.uuid, claim.line_item.bill.currency, new_currency, e,
+                )
+                raise HttpError(422, f"Exchange rate not available: {e}")
+            updated_claims.append(claim)
+
+        PersonLineItemClaim.objects.bulk_update(updated_claims, ['settlement_amount'])
+        tab.settlement_currency = new_currency
 
     tab.save()
-
-    # Refresh to get updated data
     tab.refresh_from_db()
 
     return tab
@@ -273,42 +301,26 @@ def mark_settlement_paid(request, settlement_id: str):
 
 @tab_router.get("/{tab_id}/person-totals", response=List[PersonSpendingTotalSchema])
 def get_tab_person_totals(request, tab_id: str):
-    """Get total spending per person for a tab in settlement currency (with currency conversion)"""
+    """Get total spending per person for a tab in settlement currency"""
 
-    tab = get_object_or_404(
-        Tab.objects.accessible_by(request.auth).prefetch_related(
-            'bills__line_items__person_claims__person'
-        ),
-        uuid=tab_id,
+    tab = get_object_or_404(Tab.objects.accessible_by(request.auth), uuid=tab_id)
+
+    totals = (
+        PersonLineItemClaim.objects
+        .filter(line_item__bill__tab=tab)
+        .exclude(line_item__bill__status=BillStatus.ARCHIVED)
+        .values('person__uuid', 'person__name')
+        .annotate(total=Sum('settlement_amount'))
     )
 
-    settlement_currency = tab.settlement_currency  # Use tab's settlement currency
-    person_totals = {}
-
-    # Sum up all person claims across all non-archived bills, converting to settlement currency
-    for bill in tab.bills.exclude(status=BillStatus.ARCHIVED.value):
-        bill_currency = bill.currency
-        for line_item in bill.line_items.all():
-            for claim in line_item.person_claims.all():
-                person_uuid = str(claim.person.uuid)
-                if person_uuid not in person_totals:
-                    person_totals[person_uuid] = {
-                        'person_id': person_uuid,
-                        'person_name': claim.person.name,
-                        'total': Decimal('0')
-                    }
-
-                amount = claim.calculated_amount or Decimal('0')
-
-                if bill_currency != settlement_currency:
-                    try:
-                        amount = convert_amount(amount, bill_currency, settlement_currency)
-                    except ExchangeRateNotFoundError as e:
-                        raise HttpError(400, f"Currency conversion failed: {str(e)}")
-
-                person_totals[person_uuid]['total'] += amount
-
-    return list(person_totals.values())
+    return [
+        {
+            'person_id': str(row['person__uuid']),
+            'person_name': row['person__name'],
+            'total': row['total'] or Decimal('0'),
+        }
+        for row in totals
+    ]
 
 
 @tab_router.get("/invite/{invite_code}", response=InviteTabInfoSchema, auth=None)
@@ -504,11 +516,23 @@ def _create_person_claims(line_item: LineItem, person_splits: List[PersonSplitCr
             if calculated_amount is not None:
                 calculated_amount = calculated_amount.quantize(Decimal('0.01'))
 
+        settlement_amount = None
+        if calculated_amount is not None:
+            try:
+                settlement_amount = convert_amount(
+                    calculated_amount,
+                    line_item.bill.currency,
+                    tab.settlement_currency,
+                )
+            except ExchangeRateNotFoundError:
+                settlement_amount = None
+
         PersonLineItemClaim.objects.create(
             person=person,
             line_item=line_item,
             split_value=person_split.split_value,
-            calculated_amount=calculated_amount
+            calculated_amount=calculated_amount,
+            settlement_amount=settlement_amount,
         )
 
 
@@ -587,8 +611,40 @@ def update_bill(request, bill_id: str, payload: BillUpdateSchema):
     if payload.description is not None:
         bill.description = payload.description
 
-    if payload.currency is not None:
-        bill.currency = payload.currency
+    if payload.currency is not None and payload.currency != bill.currency:
+        new_currency = payload.currency
+        settlement_currency = bill.tab.settlement_currency
+
+        claims = (
+            PersonLineItemClaim.objects
+            .filter(line_item__bill=bill)
+        )
+
+        updated_claims = []
+        for claim in claims:
+            if claim.calculated_amount is None:
+                continue
+            try:
+                claim.settlement_amount = convert_amount(
+                    claim.calculated_amount,
+                    new_currency,
+                    settlement_currency,
+                )
+            except ExchangeRateNotFoundError as e:
+                sentry_sdk.capture_exception(e)
+                logger.error(
+                    "Exchange rate missing during bill currency update: "
+                    "bill=%s from=%s to=%s error=%s",
+                    bill.uuid, new_currency, settlement_currency, e,
+                )
+                raise HttpError(422, f"Exchange rate not available: {e}")
+            updated_claims.append(claim)
+
+        PersonLineItemClaim.objects.bulk_update(updated_claims, ['settlement_amount'])
+        bill.currency = new_currency
+
+    if payload.description is not None:
+        bill.description = payload.description
 
     if payload.paid_by_id is not None:
         paid_by = get_object_or_404(TabPerson, uuid=payload.paid_by_id, tab=bill.tab)
@@ -598,8 +654,6 @@ def update_bill(request, bill_id: str, payload: BillUpdateSchema):
         bill.date = payload.date
 
     bill.save()
-
-    # Refresh to get updated data
     bill.refresh_from_db()
 
     return bill

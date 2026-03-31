@@ -217,6 +217,13 @@ class PersonLineItemClaim(BaseModel):
         blank=True,
         help_text="The actual currency amount this person owes"
     )
+    settlement_amount = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        help_text="calculated_amount converted to the tab's settlement_currency"
+    )
     has_claimed = models.BooleanField(default=False)
 
     class Meta:
