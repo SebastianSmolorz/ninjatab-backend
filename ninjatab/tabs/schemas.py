@@ -375,7 +375,7 @@ class TabSchema(BaseModel):
                     'is_settled': data.is_settled,
                     'is_pro': data.is_pro,
                     'invite_code': str(data.invite_code),
-                    'bill_count': data.bill_count,
+                    'bill_count': getattr(data, 'bill_count', data.bills.count()),
                     'people': people_list,
                     'settlements': settlements_list,
                     'balances': balances_list,

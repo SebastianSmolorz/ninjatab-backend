@@ -134,6 +134,8 @@ def retrieve_tab(request, tab_id: str):
         ).annotate(
             user_owes=Coalesce(Subquery(user_owes_sq), 0, output_field=DecimalField()),
             user_owed=Coalesce(Subquery(user_owed_sq), 0, output_field=DecimalField()),
+            bill_count=Count('bills', distinct=True),
+            people_count=Count('people', distinct=True),
         ),
         uuid=tab_id,
     )
