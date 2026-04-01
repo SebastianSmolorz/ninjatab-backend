@@ -387,8 +387,9 @@ def claim_invite(request, invite_code: str, payload: ClaimInviteSchema):
     # Prevent claiming if the email's user is already on this tab
     if tab.people.filter(user=user).exists():
         raise HttpError(400, "This email is already associated with someone on this tab")
-    user.first_name = person.name
-    user.save(update_fields=["first_name"])
+    if not user.first_name:
+        user.first_name = person.name
+        user.save(update_fields=["first_name"])
     person.user = user
     person.save()
     _sync_contacts_for_tab(tab)
@@ -576,7 +577,7 @@ def list_bills(request, tab_id: str = None):
     bills = Bill.objects.filter(tab__in=Tab.objects.accessible_by(request.auth))
     if tab_id:
         bills = bills.filter(tab__uuid=tab_id)
-    bills = bills.order_by('-created_at', '-id')
+    bills = bills.order_by('-date', '-created_at', '-id')
     bills = bills.select_related('paid_by__user').prefetch_related('line_items')
     return bills
 
