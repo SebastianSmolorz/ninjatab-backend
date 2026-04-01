@@ -88,7 +88,7 @@ def list_tabs(request):
     tabs = Tab.objects.accessible_by(request.auth).annotate(
         bill_count=Count('bills', distinct=True),
         people_count=Count('people', distinct=True),
-    )
+    ).order_by('-created_at', '-id')
     return tabs
 
 
@@ -385,7 +385,7 @@ def claim_invite(request, invite_code: str, payload: ClaimInviteSchema):
     user, _ = User.objects.get_or_create(email=payload.email.lower(), defaults={"username": payload.email.lower()})
 
     # Prevent claiming if the email's user is already on this tab
-    if tab.people.filter(user=user.lower()).exists():
+    if tab.people.filter(user=user).exists():
         raise HttpError(400, "This email is already associated with someone on this tab")
     user.first_name = person.name
     user.save(update_fields=["first_name"])
@@ -576,6 +576,7 @@ def list_bills(request, tab_id: str = None):
     bills = Bill.objects.filter(tab__in=Tab.objects.accessible_by(request.auth))
     if tab_id:
         bills = bills.filter(tab__uuid=tab_id)
+    bills = bills.order_by('-created_at', '-id')
     bills = bills.select_related('paid_by__user').prefetch_related('line_items')
     return bills
 
