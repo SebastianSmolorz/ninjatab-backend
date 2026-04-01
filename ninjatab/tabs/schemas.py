@@ -203,6 +203,7 @@ class BillSchema(BaseModel):
     date: Date
     line_items: List[LineItemSchema]
     total_amount: Decimal
+    receipt_image_url: str = ''
     created_at: datetime
     updated_at: datetime
 
@@ -228,6 +229,7 @@ class BillSchema(BaseModel):
                     'date': data.date,
                     'line_items': line_items_list,
                     'total_amount': data.total_amount,
+                    'receipt_image_url': data.receipt_image_url,
                     'created_at': data.created_at,
                     'updated_at': data.updated_at,
                 }
