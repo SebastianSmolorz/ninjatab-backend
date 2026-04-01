@@ -7,7 +7,7 @@ from typing import Optional
 import boto3
 from django.conf import settings
 from pydantic import BaseModel
-from mistralai import Mistral, DocumentURLChunk
+from mistralai import Mistral, ImageURLChunk
 from mistralai.extra import response_format_from_pydantic_model
 
 import sentry_sdk
@@ -158,8 +158,7 @@ def scan_receipt(image_url: str, tab_id: str) -> dict:
 
     response = client.ocr.process(
         model="mistral-ocr-latest",
-        pages=list(range(8)),
-        document=DocumentURLChunk(document_url=image_url),
+        document=ImageURLChunk(image_url=image_url),
         document_annotation_format=response_format_from_pydantic_model(_Document),
         document_annotation_prompt=DOCUMENT_ANNOTATION_PROMPT,
         include_image_base64=True,
