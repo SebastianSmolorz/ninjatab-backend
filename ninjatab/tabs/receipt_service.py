@@ -6,6 +6,7 @@ from typing import Optional
 
 import boto3
 from django.conf import settings
+from django.db.models import F
 from pydantic import BaseModel
 from mistralai import Mistral, ImageURLChunk
 from mistralai.extra import response_format_from_pydantic_model
@@ -110,8 +111,8 @@ def check_scan_limit(tab):
 
 def increment_scan_count(tab):
     """Increment the receipt scan count on the tab."""
-    tab.receipt_scan_count += 1
-    tab.save(update_fields=["receipt_scan_count"])
+    from ninjatab.tabs.models import Tab
+    Tab.objects.filter(pk=tab.pk).update(receipt_scan_count=F('receipt_scan_count') + 1)
 
 
 def validate_upload(file):

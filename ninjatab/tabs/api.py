@@ -396,7 +396,7 @@ def claim_invite(request, invite_code: str, payload: ClaimInviteSchema):
     return {"success": True}
 
 
-@tab_router.post("/{tab_id}/upload-receipt", auth=None)
+@tab_router.post("/{tab_id}/upload-receipt")
 def upload_receipt(request, tab_id: str, file: UploadedFile = File(...)):
     """Upload a receipt image, run OCR, and return parsed annotation."""
     from ninjatab.tabs.receipt_service import (
@@ -404,7 +404,7 @@ def upload_receipt(request, tab_id: str, file: UploadedFile = File(...)):
         check_scan_limit, increment_scan_count, ScanLimitExceeded,
     )
 
-    tab = get_object_or_404(Tab, uuid=tab_id)
+    tab = get_object_or_404(Tab.objects.accessible_by(request.auth), uuid=tab_id)
 
     try:
         check_scan_limit(tab)
