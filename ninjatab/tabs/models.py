@@ -81,6 +81,9 @@ class Tab(BaseModel):
 
     class Meta:
         ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['-created_at', '-id']),
+        ]
 
     def __str__(self):
         return self.name
@@ -109,6 +112,9 @@ class TabPerson(BaseModel):
     class Meta:
         ordering = ['created_at']
         unique_together = [['tab', 'name']]
+        indexes = [
+            models.Index(fields=['tab', 'user']),
+        ]
 
     def __str__(self):
         return f"{self.name} on {self.tab.name}"
@@ -148,6 +154,9 @@ class Bill(BaseModel):
 
     class Meta:
         ordering = ['-date', '-created_at']
+        indexes = [
+            models.Index(fields=['-created_at', '-id']),
+        ]
 
     def __str__(self):
         return f"{self.description} on {self.tab.name}"
