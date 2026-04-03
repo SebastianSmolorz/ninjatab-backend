@@ -32,7 +32,7 @@ import sentry_sdk
 
 logger = logging.getLogger("app")
 
-PAGE_SIZE = 20
+PAGE_SIZE = 25
 
 
 CURSOR_ORDER = '-created_at,-id'
@@ -514,6 +514,8 @@ def create_bill(request, payload: BillCreateSchema):
     check_bill_limit(tab)
     if len(payload.line_items) > 1:
         check_itemised_limit(tab)
+    if len(payload.line_items) > 150:
+        raise HttpError(400, "A bill cannot have more than 150 line items")
     creator = get_object_or_404(TabPerson, tab=tab, user=request.auth)
 
     paid_by = None
