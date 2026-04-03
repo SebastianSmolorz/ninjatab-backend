@@ -1,5 +1,6 @@
 import uuid
 from datetime import datetime
+from decimal import Decimal
 
 from ninja import Router, UploadedFile, File
 from ninja.errors import HttpError
@@ -214,10 +215,20 @@ def close_tab(request, tab_id: str):
         uuid=tab_id,
     )
     # Prevent settling a tab with no bills
-    if not tab.bills.exclude(status=BillStatus.ARCHIVED.value).exists():
+    bills = list(tab.bills.prefetch_related('line_items').exclude(status=BillStatus.ARCHIVED.value))
+    if not bills:
         raise HttpError(400, "Cannot settle a tab with no bills")
 
+    # Snapshot total spent in settlement currency
+    total = Decimal('0')
+    for bill in bills:
+        bill_total = sum((li.value or Decimal('0')) for li in bill.line_items.all())
+        if bill.currency != tab.settlement_currency:
+            bill_total = convert_amount(bill_total, bill.currency, tab.settlement_currency)
+        total += bill_total
+
     tab.is_settled = True
+    tab.settlement_currency_settled_total = total
     tab.save()
 
     # Refresh to get updated data

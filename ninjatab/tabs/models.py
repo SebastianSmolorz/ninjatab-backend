@@ -69,6 +69,10 @@ class Tab(BaseModel):
         help_text="Currency used for calculating settlements"
     )
     is_settled = models.BooleanField(default=False)
+    settlement_currency_settled_total = models.DecimalField(
+        max_digits=12, decimal_places=2, null=True, blank=True,
+        help_text="Total spent in settlement currency, snapshotted at settlement time"
+    )
     is_pro = models.BooleanField(default=False)
     receipt_scan_count = models.PositiveIntegerField(default=0)
     invite_code = models.UUIDField(default=uuid.uuid4, unique=True)

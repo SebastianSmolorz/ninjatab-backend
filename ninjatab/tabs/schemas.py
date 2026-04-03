@@ -313,8 +313,7 @@ class TabSchema(BaseModel):
     bill_count: int
     people: List[TabPersonSchema]
     settlements: List['SettlementSchema']
-    balances: List['PersonBalanceSchema'] = []
-    total_spent_gbp: Optional[Decimal] = None
+    settlement_currency_settled_total: Optional[Decimal] = None
     user_owes: Decimal = Decimal('0')
     user_owed: Decimal = Decimal('0')
     created_at: datetime
@@ -333,42 +332,6 @@ class TabSchema(BaseModel):
                 people_list = list(data.people.all())
                 settlements_list = list(data.settlements.all()) if hasattr(data, 'settlements') else []
 
-                # Calculate balances and total spent if tab is settled
-                balances_list = []
-                total_spent_gbp = None
-                if data.is_settled and hasattr(data, 'settlement_currency'):
-                    from .simp import calculate_tab_balances
-                    from ninjatab.currencies.exchange import convert_amount
-                    from decimal import Decimal
-                    try:
-                        balances = calculate_tab_balances(data, data.settlement_currency)
-                        # Convert Balance objects to dicts with person names
-                        # simp uses internal integer PKs, map back to UUIDs
-                        person_map = {p.id: p for p in people_list}
-                        balances_list = [
-                            {
-                                'person_id': str(person_map[bal.person_id].uuid) if bal.person_id in person_map else 'unknown',
-                                'person_name': person_map[bal.person_id].name if bal.person_id in person_map else 'Unknown',
-                                'balance': bal.balance
-                            }
-                            for bal in balances
-                        ]
-
-                        # Calculate total spent in settlement currency
-                        total = Decimal('0')
-                        bills = [b for b in data.bills.all() if b.status != 'archived']
-                        for bill in bills:
-                            bill_total = sum(
-                                (li.value or Decimal('0')) for li in bill.line_items.all()
-                            )
-                            if bill.currency != data.settlement_currency:
-                                bill_total = convert_amount(bill_total, bill.currency, data.settlement_currency)
-                            total += bill_total
-                        total_spent_gbp = total
-                    except Exception:
-                        # If calculation fails, just return empty list and None
-                        pass
-
                 # Create a dict with all fields
                 return {
                     'id': str(data.uuid),
@@ -382,8 +345,7 @@ class TabSchema(BaseModel):
                     'bill_count': getattr(data, 'bill_count', data.bills.count()),
                     'people': people_list,
                     'settlements': settlements_list,
-                    'balances': balances_list,
-                    'total_spent_gbp': total_spent_gbp,
+                    'settlement_currency_settled_total': data.settlement_currency_settled_total,
                     'user_owes': getattr(data, 'user_owes', 0),
                     'user_owed': getattr(data, 'user_owed', 0),
                     'created_at': data.created_at,
@@ -456,14 +418,6 @@ class SimplifyResultSchema(BaseModel):
     settlements: List[SettlementSchema]
     message: str
 
-
-class PersonBalanceSchema(BaseModel):
-    person_id: str
-    person_name: str
-    balance: Decimal
-
-    class Config:
-        from_attributes = True
 
 
 class PersonSpendingTotalSchema(BaseModel):
