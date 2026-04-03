@@ -1,3 +1,4 @@
+import base64
 import uuid
 from datetime import datetime
 from decimal import Decimal
@@ -30,6 +31,43 @@ import logging
 import sentry_sdk
 
 logger = logging.getLogger("app")
+
+PAGE_SIZE = 20
+
+
+def _apply_cursor(qs, cursor: str | None, order_fields: tuple[str, ...]):
+    """
+    Apply cursor-based pagination to a queryset.
+    Cursor is base64-encoded "created_at|id".
+    order_fields should be the descending order fields, e.g. ('-created_at', '-id').
+    Returns (page_items, next_cursor).
+    """
+    if cursor:
+        try:
+            decoded = base64.b64decode(cursor).decode()
+            ts_str, obj_id = decoded.rsplit('|', 1)
+            cursor_ts = datetime.fromisoformat(ts_str)
+            cursor_id = int(obj_id)
+            # For descending order: get rows where (created_at, id) < cursor
+            qs = qs.filter(
+                Q(created_at__lt=cursor_ts) |
+                Q(created_at=cursor_ts, id__lt=cursor_id)
+            )
+        except (ValueError, TypeError):
+            raise HttpError(400, "Invalid cursor")
+
+    qs = qs.order_by(*order_fields)
+    items = list(qs[:PAGE_SIZE + 1])
+
+    next_cursor = None
+    if len(items) > PAGE_SIZE:
+        items = items[:PAGE_SIZE]
+        last = items[-1]
+        raw = f"{last.created_at.isoformat()}|{last.id}"
+        next_cursor = base64.b64encode(raw.encode()).decode()
+
+    return items, next_cursor
+
 
 def _sync_contacts_for_tab(tab):
     """Create bidirectional Contact records for every user pair on a tab."""
@@ -83,14 +121,15 @@ def create_tab(request, payload: TabCreateSchema):
     return tab
 
 
-@tab_router.get("/", response=List[TabListSchema])
-def list_tabs(request):
+@tab_router.get("/", response=CursorPageSchema[TabListSchema])
+def list_tabs(request, cursor: str = None):
     """List all tabs"""
-    tabs = Tab.objects.accessible_by(request.auth).annotate(
+    qs = Tab.objects.accessible_by(request.auth).annotate(
         bill_count=Count('bills', distinct=True),
         people_count=Count('people', distinct=True),
-    ).order_by('-created_at', '-id')
-    return tabs
+    )
+    items, next_cursor = _apply_cursor(qs, cursor, ('-created_at', '-id'))
+    return {"items": items, "next_cursor": next_cursor}
 
 
 @tab_router.get("/contacts", response=List[ContactSchema])
@@ -582,15 +621,15 @@ def submit_bill_splits(request, bill_id: str, payload: BillSplitSubmitSchema):
     return bill
 
 
-@bill_router.get("/", response=List[BillListSchema])
-def list_bills(request, tab_id: str = None):
+@bill_router.get("/", response=CursorPageSchema[BillListSchema])
+def list_bills(request, tab_id: str = None, cursor: str = None):
     """List all bills, optionally filtered by tab"""
-    bills = Bill.objects.filter(tab__in=Tab.objects.accessible_by(request.auth))
+    qs = Bill.objects.filter(tab__in=Tab.objects.accessible_by(request.auth))
     if tab_id:
-        bills = bills.filter(tab__uuid=tab_id)
-    bills = bills.order_by('-date', '-created_at', '-id')
-    bills = bills.select_related('paid_by__user').prefetch_related('line_items')
-    return bills
+        qs = qs.filter(tab__uuid=tab_id)
+    qs = qs.select_related('paid_by__user').prefetch_related('line_items')
+    items, next_cursor = _apply_cursor(qs, cursor, ('-created_at', '-id'))
+    return {"items": items, "next_cursor": next_cursor}
 
 
 @bill_router.get("/{bill_id}", response=BillSchema)

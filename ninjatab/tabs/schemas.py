@@ -1,10 +1,18 @@
 from uuid import UUID
 
 from pydantic import BaseModel, EmailStr, Field, field_validator, model_validator
-from typing import Optional, List, Any
+from typing import Optional, List, Any, Generic, TypeVar
 from datetime import datetime, date as Date
 from decimal import Decimal
 from enum import Enum
+
+
+T = TypeVar('T')
+
+
+class CursorPageSchema(BaseModel, Generic[T]):
+    items: List[T]
+    next_cursor: Optional[str] = None
 
 
 class CurrencyEnum(str, Enum):
