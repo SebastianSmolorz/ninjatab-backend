@@ -173,13 +173,12 @@ def retrieve_tab(request, tab_id: str):
     tab = get_object_or_404(
         Tab.objects.accessible_by(request.auth).prefetch_related(
             'people__user',
+            'bills__line_items',
             'settlements__from_person__user',
             'settlements__to_person__user'
         ).annotate(
             user_owes=Coalesce(Subquery(user_owes_sq), 0, output_field=DecimalField()),
             user_owed=Coalesce(Subquery(user_owed_sq), 0, output_field=DecimalField()),
-            bill_count=Count('bills', distinct=True),
-            people_count=Count('people', distinct=True),
         ),
         uuid=tab_id,
     )
@@ -193,6 +192,7 @@ def update_tab(request, tab_id: str, payload: TabUpdateSchema):
     tab = get_object_or_404(
         Tab.objects.accessible_by(request.auth).prefetch_related(
             'people__user',
+            'bills__line_items',
             'settlements__from_person__user',
             'settlements__to_person__user'
         ),
@@ -232,7 +232,14 @@ def update_tab(request, tab_id: str, payload: TabUpdateSchema):
         tab.settlement_currency = new_currency
 
     tab.save()
-    tab.refresh_from_db()
+
+    # Re-fetch with prefetches for serialization
+    tab = Tab.objects.prefetch_related(
+        'people__user',
+        'bills__line_items',
+        'settlements__from_person__user',
+        'settlements__to_person__user'
+    ).get(id=tab.id)
 
     return tab
 
@@ -252,6 +259,7 @@ def close_tab(request, tab_id: str):
     tab = get_object_or_404(
         Tab.objects.accessible_by(request.auth).prefetch_related(
             'people__user',
+            'bills__line_items',
             'settlements__from_person__user',
             'settlements__to_person__user'
         ),
@@ -278,6 +286,7 @@ def close_tab(request, tab_id: str):
     tab.refresh_from_db()
     tab = Tab.objects.prefetch_related(
         'people__user',
+        'bills__line_items',
         'settlements__from_person__user',
         'settlements__to_person__user'
     ).get(id=tab.id)

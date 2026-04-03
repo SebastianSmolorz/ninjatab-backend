@@ -322,6 +322,8 @@ class TabSchema(BaseModel):
     people: List[TabPersonSchema]
     settlements: List['SettlementSchema']
     settlement_currency_settled_total: Optional[Decimal] = None
+    totals_by_currency: dict[str, Decimal] = {}
+    group_spend: Optional[Decimal] = None
     user_owes: Decimal = Decimal('0')
     user_owed: Decimal = Decimal('0')
     created_at: datetime
@@ -340,6 +342,29 @@ class TabSchema(BaseModel):
                 people_list = list(data.people.all())
                 settlements_list = list(data.settlements.all()) if hasattr(data, 'settlements') else []
 
+                # Calculate totals by currency and group spend
+                from ninjatab.currencies.exchange import convert_amount
+                from decimal import Decimal
+
+                totals_by_currency = {}
+                group_spend = Decimal('0')
+                conversion_ok = True
+                bills = [b for b in data.bills.all() if b.status != 'archived']
+                for bill in bills:
+                    bill_total = sum(
+                        (li.value or Decimal('0')) for li in bill.line_items.all()
+                    )
+                    totals_by_currency[bill.currency] = (
+                        totals_by_currency.get(bill.currency, Decimal('0')) + bill_total
+                    )
+                    if conversion_ok:
+                        try:
+                            if bill.currency != data.settlement_currency:
+                                bill_total = convert_amount(bill_total, bill.currency, data.settlement_currency)
+                            group_spend += bill_total
+                        except Exception:
+                            conversion_ok = False
+
                 # Create a dict with all fields
                 return {
                     'id': str(data.uuid),
@@ -350,10 +375,12 @@ class TabSchema(BaseModel):
                     'is_settled': data.is_settled,
                     'is_pro': data.is_pro,
                     'invite_code': str(data.invite_code),
-                    'bill_count': getattr(data, 'bill_count', data.bills.count()),
+                    'bill_count': len(list(data.bills.all())),
                     'people': people_list,
                     'settlements': settlements_list,
                     'settlement_currency_settled_total': data.settlement_currency_settled_total,
+                    'totals_by_currency': totals_by_currency,
+                    'group_spend': group_spend if conversion_ok else None,
                     'user_owes': getattr(data, 'user_owes', 0),
                     'user_owed': getattr(data, 'user_owed', 0),
                     'created_at': data.created_at,
