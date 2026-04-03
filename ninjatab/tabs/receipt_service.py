@@ -7,6 +7,7 @@ from typing import Optional
 import boto3
 from django.conf import settings
 from django.db.models import F
+from django.utils import timezone
 from pydantic import BaseModel
 from mistralai import Mistral, ImageURLChunk
 from mistralai.extra import response_format_from_pydantic_model
@@ -178,7 +179,7 @@ def scan_receipt(image_url: str, tab_id: str) -> dict:
         annotation = json.loads(raw)
 
     # Parse date from annotation, default to today
-    receipt_date = datetime.now().strftime("%Y-%m-%d")
+    receipt_date = timezone.now().strftime("%Y-%m-%d")
     if annotation and annotation.get("datetime_of_receipt"):
         raw_dt = annotation["datetime_of_receipt"].strip()
         try:
