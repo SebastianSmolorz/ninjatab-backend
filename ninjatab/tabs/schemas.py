@@ -356,9 +356,11 @@ class TabSchema(BaseModel):
 
                         # Calculate total spent in settlement currency
                         total = Decimal('0')
-                        bills = data.bills.exclude(status='archived')
+                        bills = [b for b in data.bills.all() if b.status != 'archived']
                         for bill in bills:
-                            bill_total = bill.total_amount or Decimal('0')
+                            bill_total = sum(
+                                (li.value or Decimal('0')) for li in bill.line_items.all()
+                            )
                             if bill.currency != data.settlement_currency:
                                 bill_total = convert_amount(bill_total, bill.currency, data.settlement_currency)
                             total += bill_total

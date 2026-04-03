@@ -37,8 +37,8 @@ def calculate_tab_balances(tab, settlement_currency: str = None) -> List[Balance
     """
     balances_by_person = {}
 
-    # Filter out archived bills
-    bills = tab.bills.exclude(status='archived')
+    # Filter out archived bills in Python to preserve prefetch_related
+    bills = [b for b in tab.bills.all() if b.status != 'archived']
 
     for bill in bills:
         if not bill.paid_by:
