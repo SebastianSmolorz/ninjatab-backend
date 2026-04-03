@@ -51,3 +51,10 @@ class LogoutResponseSchema(BaseModel):
 
 class UpdateProfileSchema(BaseModel):
     first_name: str
+
+
+class SocialLoginSchema(BaseModel):
+    provider: str
+    id_token: str
+    first_name: str | None = None
+    last_name: str | None = None

@@ -13,6 +13,7 @@ from ninjatab.auth.schemas import (
     RefreshResponseSchema,
     LogoutResponseSchema,
     UpdateProfileSchema,
+    SocialLoginSchema,
 )
 from ninjatab.auth.jwt_utils import (
     create_access_token,
@@ -31,6 +32,7 @@ from ninjatab.auth.cookies import (
     set_auth_cookies,
     clear_auth_cookies,
 )
+from ninjatab.auth.social import verify_google_id_token, verify_apple_id_token
 
 User = get_user_model()
 
@@ -66,6 +68,50 @@ def verify_magic_link(request, payload: VerifyMagicLinkSchema):
         raise HttpError(401, "Invalid or expired magic link")
     except User.DoesNotExist:
         raise HttpError(401, "User not found")
+
+    if not user.is_active:
+        raise HttpError(403, "Account is blocked")
+
+    access_token = create_access_token(user.id, user.email)
+    refresh_token = create_refresh_token(user.id)
+
+    user_schema = AuthUserSchema.model_validate(user)
+    response = JsonResponse({"user": user_schema.model_dump()})
+    set_auth_cookies(response, access_token, refresh_token)
+    return response
+
+
+@auth_router.post("/social-login", response=TokenResponseSchema)
+def social_login(request, payload: SocialLoginSchema):
+    if payload.provider not in ("google", "apple"):
+        raise HttpError(400, "Unsupported provider")
+
+    try:
+        if payload.provider == "google":
+            provider_data = verify_google_id_token(payload.id_token)
+        else:
+            provider_data = verify_apple_id_token(payload.id_token)
+    except (ValueError, Exception):
+        raise HttpError(401, "Invalid or expired token")
+
+    email = provider_data["email"].lower()
+    user, created = User.objects.get_or_create(
+        email=email,
+        defaults={"username": email},
+    )
+
+    # Populate name if available and not already set
+    first_name = provider_data.get("first_name") or payload.first_name or ""
+    last_name = provider_data.get("last_name") or payload.last_name or ""
+    updated_fields = []
+    if first_name and not user.first_name:
+        user.first_name = first_name
+        updated_fields.append("first_name")
+    if last_name and not user.last_name:
+        user.last_name = last_name
+        updated_fields.append("last_name")
+    if updated_fields:
+        user.save(update_fields=updated_fields)
 
     if not user.is_active:
         raise HttpError(403, "Account is blocked")

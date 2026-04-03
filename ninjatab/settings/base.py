@@ -131,6 +131,10 @@ OPEN_EXCHANGE_RATES_APP_ID = env.str("OPEN_EXCHANGE_RATES_APP_ID", default="")
 BREVO_API_KEY = env.str("BREVO_API_KEY", default="")
 MAGIC_LINK_BASE_URL = env.str("MAGIC_LINK_BASE_URL", default="http://localhost:3000/auth/verify")
 
+# Social auth
+GOOGLE_OAUTH_CLIENT_IDS = env.list("GOOGLE_OAUTH_CLIENT_IDS", default=[])
+APPLE_SIGN_IN_AUDIENCE = env.str("APPLE_SIGN_IN_AUDIENCE", default="")
+
 # Auth cookies
 AUTH_COOKIE_SECURE = True
 
