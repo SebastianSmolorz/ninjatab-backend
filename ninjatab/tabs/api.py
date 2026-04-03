@@ -97,7 +97,7 @@ def list_contacts(request, exclude_tab: str = None):
     """List the authenticated user's contacts, optionally excluding those already on a tab"""
     contacts = Contact.objects.filter(owner=request.auth).select_related('contact_user')
     if exclude_tab:
-        tab = get_object_or_404(Tab, uuid=exclude_tab)
+        tab = get_object_or_404(Tab.objects.accessible_by(request.auth), uuid=exclude_tab)
         existing_user_ids = TabPerson.objects.filter(
             tab=tab, user__isnull=False
         ).values_list('user_id', flat=True)
