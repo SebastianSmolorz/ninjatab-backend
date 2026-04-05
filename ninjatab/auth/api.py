@@ -33,6 +33,9 @@ from ninjatab.auth.cookies import (
     clear_auth_cookies,
 )
 from ninjatab.auth.social import verify_google_id_token, verify_apple_id_token
+import logging
+
+logger = logging.getLogger("app")
 
 User = get_user_model()
 
@@ -86,12 +89,16 @@ def social_login(request, payload: SocialLoginSchema):
     if payload.provider not in ("google", "apple"):
         raise HttpError(400, "Unsupported provider")
 
+    logger.info("Social login attempt: provider=%s", payload.provider)
+
     try:
         if payload.provider == "google":
             provider_data = verify_google_id_token(payload.id_token)
         else:
             provider_data = verify_apple_id_token(payload.id_token)
-    except (ValueError, Exception):
+        logger.info("Token verified: email=%s", provider_data.get("email"))
+    except Exception as e:
+        logger.error("Social login token verification failed: provider=%s, error=%s", payload.provider, str(e))
         raise HttpError(401, "Invalid or expired token")
 
     email = provider_data["email"].lower()
