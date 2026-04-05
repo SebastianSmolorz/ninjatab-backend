@@ -24,6 +24,7 @@ def verify_google_id_token(token_str: str) -> dict:
     )
 
     if idinfo["aud"] not in settings.GOOGLE_OAUTH_CLIENT_IDS:
+        logger.error("Google aud mismatch: token_aud=%s, allowed=%s", idinfo["aud"], settings.GOOGLE_OAUTH_CLIENT_IDS)
         raise ValueError("Invalid audience")
 
     if not idinfo.get("email_verified", False):
