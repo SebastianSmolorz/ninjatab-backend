@@ -3,6 +3,7 @@
 
 from decimal import Decimal
 from datetime import datetime
+from functools import lru_cache
 from django.utils import timezone
 from .models import ExchangeRate
 
@@ -10,6 +11,14 @@ from .models import ExchangeRate
 class ExchangeRateNotFoundError(Exception):
     """Raised when no exchange rate is found for a currency pair"""
     pass
+
+
+_rate_cache = {}
+
+
+def clear_rate_cache():
+    """Clear the in-memory exchange rate cache. Call at the start of a request or operation."""
+    _rate_cache.clear()
 
 
 def get_latest_exchange_rate(from_currency: str, to_currency: str, as_of_date: datetime = None) -> Decimal:
@@ -34,6 +43,11 @@ def get_latest_exchange_rate(from_currency: str, to_currency: str, as_of_date: d
     if as_of_date is None:
         as_of_date = timezone.now()
 
+    # Check in-memory cache (avoids repeated DB hits within the same operation)
+    cache_key = (from_currency, to_currency, as_of_date.date())
+    if cache_key in _rate_cache:
+        return _rate_cache[cache_key]
+
     # Try to find direct rate (from -> to)
     try:
         rate = ExchangeRate.objects.filter(
@@ -43,6 +57,7 @@ def get_latest_exchange_rate(from_currency: str, to_currency: str, as_of_date: d
         ).order_by('-effective_date').first()
 
         if rate:
+            _rate_cache[cache_key] = rate.rate
             return rate.rate
     except ExchangeRate.DoesNotExist:
         pass
@@ -61,7 +76,9 @@ def get_latest_exchange_rate(from_currency: str, to_currency: str, as_of_date: d
                 raise ExchangeRateNotFoundError(
                     f"Exchange rate for {to_currency} to {from_currency} is too small to invert"
                 )
-            return Decimal('1.0') / rate.rate
+            inverse = Decimal('1.0') / rate.rate
+            _rate_cache[cache_key] = inverse
+            return inverse
     except ExchangeRate.DoesNotExist:
         pass
 

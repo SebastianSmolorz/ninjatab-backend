@@ -15,7 +15,7 @@ from django.contrib.auth import get_user_model
 from ninjatab.tabs.models import *
 from ninjatab.tabs.schemas import *
 from ninjatab.tabs.simp import simp_tab
-from ninjatab.currencies.exchange import convert_amount, ExchangeRateNotFoundError
+from ninjatab.currencies.exchange import convert_amount, ExchangeRateNotFoundError, clear_rate_cache
 from ninjatab.auth.bearer import JWTBearer
 from ninjatab.auth.schemas import MagicLinkSuccessSchema
 from ninjatab.auth.jwt_utils import create_magic_token
@@ -303,11 +303,17 @@ def simplify_tab(request, tab_id: str):
     Tab remains open and settlements can be regenerated.
     """
     tab = get_object_or_404(
-        Tab.objects.accessible_by(request.auth).prefetch_related(
-            'people__user', 'bills__line_items__person_claims__person'
-        ),
+        Tab.objects.accessible_by(request.auth),
         uuid=tab_id,
     )
+
+    # Lock the tab row to prevent concurrent simplify calls
+    Tab.objects.select_for_update().filter(id=tab.id).first()
+
+    # Re-fetch with prefetch after lock
+    tab = Tab.objects.prefetch_related(
+        'people__user', 'bills__line_items__person_claims__person'
+    ).get(id=tab.id)
 
     # Check if there are any non-archived bills
     bills = tab.bills.exclude(status=BillStatus.ARCHIVED)
@@ -321,6 +327,8 @@ def simplify_tab(request, tab_id: str):
     Settlement.objects.filter(tab=tab).delete()
 
     try:
+        # Clear rate cache so lookups within this operation are cached but fresh
+        clear_rate_cache()
         # Calculate simplified transactions with currency conversion
         transactions = simp_tab(tab, settlement_currency=settlement_currency)
     except ExchangeRateNotFoundError as e:
