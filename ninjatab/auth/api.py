@@ -98,7 +98,7 @@ def social_login(request, payload: SocialLoginSchema):
             provider_data = verify_apple_id_token(payload.id_token)
         logger.info("Token verified: email=%s", provider_data.get("email"))
     except Exception as e:
-        logger.error("Social login token verification failed: provider=%s, error=%s", payload.provider, str(e))
+        logger.error("Social login token verification failed: provider=%s, error_type=%s, error=%s", payload.provider, type(e).__name__, str(e), exc_info=True)
         raise HttpError(401, "Invalid or expired token")
 
     email = provider_data["email"].lower()

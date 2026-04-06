@@ -21,6 +21,7 @@ def verify_google_id_token(token_str: str) -> dict:
     idinfo = google_id_token.verify_oauth2_token(
         token_str,
         google_requests.Request(),
+        clock_skew_in_seconds=10,
     )
 
     if idinfo["aud"] not in settings.GOOGLE_OAUTH_CLIENT_IDS:
