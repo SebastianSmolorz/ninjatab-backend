@@ -1,6 +1,7 @@
 from django.contrib import admin
 from django.utils.html import format_html
 from .models import Tab, TabPerson, Bill, LineItem, PersonLineItemClaim, Settlement, Contact
+from ninjatab.currencies.currency_utils import minor_to_decimal
 
 
 class TabPersonInline(admin.TabularInline):
@@ -78,7 +79,7 @@ class LineItemInline(admin.TabularInline):
                 claim.calculated_amount or 0
                 for claim in obj.person_claims.all()
             )
-            return f"£{total:.2f}"
+            return str(minor_to_decimal(total, obj.bill.currency))
         return "-"
 
     total_claimed.short_description = 'Total Claimed'
@@ -172,7 +173,7 @@ class LineItemAdmin(admin.ModelAdmin):
             claim.calculated_amount or 0
             for claim in obj.person_claims.all()
         )
-        return f"£{total:.2f}"
+        return str(minor_to_decimal(total, obj.bill.currency))
 
     total_claimed_amount.short_description = 'Total Claimed'
 

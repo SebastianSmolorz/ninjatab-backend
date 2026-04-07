@@ -3,7 +3,6 @@
 
 from decimal import Decimal
 from datetime import datetime
-from functools import lru_cache
 from django.utils import timezone
 from .models import ExchangeRate
 from .currency_utils import minor_to_minor

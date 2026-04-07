@@ -390,6 +390,7 @@ def get_tab_person_totals(request, tab_id: str):
             'person_id': str(row['person__uuid']),
             'person_name': row['person__name'],
             'total': row['total'] or 0,
+            'currency': tab.settlement_currency,
         }
         for row in totals
     ]
