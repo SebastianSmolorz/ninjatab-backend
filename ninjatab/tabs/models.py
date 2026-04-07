@@ -69,9 +69,9 @@ class Tab(BaseModel):
         help_text="Currency used for calculating settlements"
     )
     is_settled = models.BooleanField(default=False)
-    settlement_currency_settled_total = models.DecimalField(
-        max_digits=12, decimal_places=2, null=True, blank=True,
-        help_text="Total spent in settlement currency, snapshotted at settlement time"
+    settlement_currency_settled_total = models.IntegerField(
+        null=True, blank=True,
+        help_text="Total spent in settlement currency (minor units), snapshotted at settlement time"
     )
     is_pro = models.BooleanField(default=False)
     receipt_scan_count = models.PositiveIntegerField(default=0)
@@ -182,7 +182,7 @@ class LineItem(BaseModel):
     )
     description = models.CharField(max_length=255)
     translated_name = models.CharField(max_length=255, blank=True, default='')
-    value = models.DecimalField(max_digits=10, decimal_places=2)
+    value = models.IntegerField()
     split_type = models.CharField(
         max_length=10,
         choices=SplitType.choices,
@@ -208,26 +208,20 @@ class PersonLineItemClaim(BaseModel):
         on_delete=models.CASCADE,
         related_name='person_claims'
     )
-    split_value = models.DecimalField(
-        max_digits=10,
-        decimal_places=2,
+    split_value = models.IntegerField(
         null=True,
         blank=True,
-        help_text="Number of shares or direct value depending on split_type"
+        help_text="Number of shares (SHARES mode) or minor currency units (VALUE mode)"
     )
-    calculated_amount = models.DecimalField(
-        max_digits=10,
-        decimal_places=2,
+    calculated_amount = models.IntegerField(
         null=True,
         blank=True,
-        help_text="The actual currency amount this person owes"
+        help_text="The actual currency amount this person owes, in minor units"
     )
-    settlement_amount = models.DecimalField(
-        max_digits=10,
-        decimal_places=2,
+    settlement_amount = models.IntegerField(
         null=True,
         blank=True,
-        help_text="calculated_amount converted to the tab's settlement_currency"
+        help_text="calculated_amount converted to the tab's settlement_currency, in minor units"
     )
     has_claimed = models.BooleanField(default=False)
 
@@ -276,7 +270,7 @@ class Settlement(BaseModel):
         on_delete=models.CASCADE,
         related_name='settlements_as_payee'
     )
-    amount = models.DecimalField(max_digits=10, decimal_places=2)
+    amount = models.IntegerField()
     currency = models.CharField(
         max_length=3,
         choices=Currency.choices

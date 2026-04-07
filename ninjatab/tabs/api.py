@@ -1,14 +1,13 @@
 import base64
 import uuid
 from datetime import datetime
-from decimal import Decimal
 
 from ninja import Router, UploadedFile, File
 from ninja.errors import HttpError
 from django.conf import settings
 from django.shortcuts import get_object_or_404
 from django.db import transaction
-from django.db.models import Q, Count, OuterRef, Subquery, Sum, DecimalField
+from django.db.models import Q, Count, OuterRef, Subquery, Sum, IntegerField
 from django.db.models.functions import Coalesce
 from django.contrib.auth import get_user_model
 
@@ -177,8 +176,8 @@ def retrieve_tab(request, tab_id: str):
             'settlements__from_person__user',
             'settlements__to_person__user'
         ).annotate(
-            user_owes=Coalesce(Subquery(user_owes_sq), 0, output_field=DecimalField()),
-            user_owed=Coalesce(Subquery(user_owed_sq), 0, output_field=DecimalField()),
+            user_owes=Coalesce(Subquery(user_owes_sq), 0, output_field=IntegerField()),
+            user_owed=Coalesce(Subquery(user_owed_sq), 0, output_field=IntegerField()),
         ),
         uuid=tab_id,
     )
@@ -270,10 +269,10 @@ def close_tab(request, tab_id: str):
     if not bills:
         raise HttpError(400, "Cannot settle a tab with no bills")
 
-    # Snapshot total spent in settlement currency
-    total = Decimal('0')
+    # Snapshot total spent in settlement currency (minor units)
+    total = 0
     for bill in bills:
-        bill_total = sum((li.value or Decimal('0')) for li in bill.line_items.all())
+        bill_total = sum((li.value or 0) for li in bill.line_items.all())
         if bill.currency != tab.settlement_currency:
             bill_total = convert_amount(bill_total, bill.currency, tab.settlement_currency)
         total += bill_total
@@ -390,7 +389,7 @@ def get_tab_person_totals(request, tab_id: str):
         {
             'person_id': str(row['person__uuid']),
             'person_name': row['person__name'],
-            'total': row['total'] or Decimal('0'),
+            'total': row['total'] or 0,
         }
         for row in totals
     ]
@@ -568,7 +567,7 @@ def create_bill(request, payload: BillCreateSchema):
 
 def _create_person_claims(line_item: LineItem, person_splits: List[PersonSplitCreateSchema], tab: Tab):
     """Helper to create PersonLineItemClaim records"""
-    total_shares = Decimal(0)
+    total_shares = 0
 
     # Calculate total shares if needed
     if line_item.split_type == SplitType.SHARES:
@@ -583,14 +582,11 @@ def _create_person_claims(line_item: LineItem, person_splits: List[PersonSplitCr
         if person_split.split_value is not None:
             if line_item.split_type == SplitType.SHARES:
                 if total_shares > 0:
-                    calculated_amount = (line_item.value * person_split.split_value) / total_shares
+                    calculated_amount = round(line_item.value * person_split.split_value / total_shares)
                 else:
-                    calculated_amount = Decimal(0)
-            else:  # VALUE
+                    calculated_amount = 0
+            else:  # VALUE — split_value is already minor units
                 calculated_amount = person_split.split_value
-
-            if calculated_amount is not None:
-                calculated_amount = calculated_amount.quantize(Decimal('0.01'))
 
         settlement_amount = None
         if calculated_amount is not None:
