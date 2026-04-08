@@ -152,17 +152,10 @@ def refresh(request):
         raise HttpError(403, "Account is blocked")
 
     new_access_token = create_access_token(user.id, user.email)
+    new_refresh_token = create_refresh_token(user.id)
 
     response = JsonResponse({"success": True})
-    response.set_cookie(
-        ACCESS_COOKIE,
-        new_access_token,
-        httponly=True,
-        secure=django_settings.AUTH_COOKIE_SECURE,
-        samesite="Lax",
-        max_age=24 * 3600,
-        path="/api/",
-    )
+    set_auth_cookies(response, new_access_token, new_refresh_token)
     return response
 
 

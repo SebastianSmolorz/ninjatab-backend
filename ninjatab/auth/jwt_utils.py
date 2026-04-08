@@ -3,7 +3,7 @@ from datetime import datetime, timedelta, timezone
 from django.conf import settings
 
 ACCESS_TOKEN_EXPIRE_HOURS = 24
-REFRESH_TOKEN_EXPIRE_DAYS = 30
+REFRESH_TOKEN_EXPIRE_DAYS = 120
 MAGIC_TOKEN_EXPIRE_MINUTES = 15
 
 
