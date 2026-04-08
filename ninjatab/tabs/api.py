@@ -514,8 +514,8 @@ def upload_receipt(request, tab_id: str, file: UploadedFile = File(...)):
     except ValueError as e:
         raise HttpError(400, str(e))
 
-    image_url = upload_to_spaces(file, tab_id)
-    result = scan_receipt(image_url, tab_id)
+    image_key = upload_to_spaces(file, tab_id)
+    result = scan_receipt(image_key, tab_id)
     increment_scan_count(tab)
     return result
 
@@ -573,7 +573,7 @@ def create_bill(request, payload: BillCreateSchema):
         creator=creator,
         paid_by=paid_by,
         date=payload.date if payload.date else date.today(),
-        receipt_image_url=payload.receipt_image_url
+        receipt_image_key=payload.receipt_image_key
     )
 
     # Create line items with splits

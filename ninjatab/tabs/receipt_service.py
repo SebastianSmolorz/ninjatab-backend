@@ -130,33 +130,45 @@ def validate_upload(file):
         )
 
 
-def upload_to_spaces(file, tab_id: str) -> str:
-    """Upload file to S3-compatible storage and return its public URL."""
-    ext = file.name.rsplit(".", 1)[-1] if "." in file.name else "jpg"
-    key = f"receipts/{tab_id}/{uuid.uuid4()}.{ext}"
-
-    s3 = boto3.client(
+def _s3_client():
+    return boto3.client(
         "s3",
         endpoint_url=settings.S3_ENDPOINT,
         aws_access_key_id=settings.AWS_ACCESS_KEY_ID,
         aws_secret_access_key=settings.AWS_SECRET_ACCESS_KEY,
     )
-    s3.upload_fileobj(
+
+
+def upload_to_spaces(file, tab_id: str) -> str:
+    """Upload file to S3-compatible storage (private) and return the object key."""
+    ext = file.name.rsplit(".", 1)[-1] if "." in file.name else "jpg"
+    key = f"receipts/{tab_id}/{uuid.uuid4()}.{ext}"
+
+    _s3_client().upload_fileobj(
         file,
         settings.S3_BUCKET,
         key,
-        ExtraArgs={"ACL": "public-read", "ContentType": file.content_type},
+        ExtraArgs={"ACL": "private", "ContentType": file.content_type},
     )
-    url = "https://tab-ninja-receipt-scans.lon1.digitaloceanspaces.com"
-    return f"{url}/{key}"
+    return key
 
 
-def scan_receipt(image_url: str, tab_id: str) -> dict:
+def generate_presigned_url(key: str, expiry: int = 3600) -> str:
+    """Generate a pre-signed URL for a private S3 object. Expires in `expiry` seconds."""
+    return _s3_client().generate_presigned_url(
+        "get_object",
+        Params={"Bucket": settings.S3_BUCKET, "Key": key},
+        ExpiresIn=expiry,
+    )
+
+
+def scan_receipt(image_key: str, tab_id: str) -> dict:
     """
-    Run Mistral OCR on the image and return parsed annotation + date.
-    Returns {"document_annotation": dict | None, "date": str}.
+    Run Mistral OCR on the image and return parsed annotation + date + presigned URL.
+    Returns {"document_annotation": dict | None, "date": str, "image_url": str, "image_key": str}.
     """
     client = Mistral(api_key=settings.MISTRAL_API_KEY)
+    image_url = generate_presigned_url(image_key)
 
     response = client.ocr.process(
         model="mistral-ocr-latest",
@@ -193,4 +205,4 @@ def scan_receipt(image_url: str, tab_id: str) -> dict:
             except (ValueError, TypeError):
                 pass
 
-    return {"document_annotation": annotation, "date": receipt_date, "image_url": image_url}
+    return {"document_annotation": annotation, "date": receipt_date, "image_url": image_url, "image_key": image_key}

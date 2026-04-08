@@ -244,6 +244,15 @@ class LineItemCreateSchema(BaseModel):
         return v
 
 
+def _receipt_image_url(bill) -> str:
+    """Return a presigned URL for the bill's receipt image, or fall back to the legacy URL."""
+    key = getattr(bill, 'receipt_image_key', '') or ''
+    if key:
+        from ninjatab.tabs.receipt_service import generate_presigned_url
+        return generate_presigned_url(key)
+    return getattr(bill, 'receipt_image_url', '') or ''
+
+
 class BillSchema(BaseModel):
     id: str
     description: str
@@ -294,7 +303,7 @@ class BillSchema(BaseModel):
                     'line_items': line_items_list,
                     'total_amount': total_amount,
                     'total_amount_display': minor_to_decimal(total_amount, currency),
-                    'receipt_image_url': data.receipt_image_url,
+                    'receipt_image_url': _receipt_image_url(data),
                     'created_at': data.created_at,
                     'updated_at': data.updated_at,
                 }
@@ -307,7 +316,7 @@ class BillCreateSchema(BaseModel):
     currency: CurrencyEnum
     paid_by_id: Optional[str] = None
     date: Optional[Date] = None
-    receipt_image_url: str = ''
+    receipt_image_key: str = ''
     line_items: List[LineItemCreateSchema] = []
 
 
