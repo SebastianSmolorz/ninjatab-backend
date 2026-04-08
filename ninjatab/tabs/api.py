@@ -34,39 +34,40 @@ logger = logging.getLogger("app")
 PAGE_SIZE = 25
 
 
-CURSOR_ORDER = '-created_at,-id'
+CURSOR_ORDER = '-date,-id'
 
 
 def _apply_cursor(qs, cursor: str | None):
     """
     Apply cursor-based pagination to a queryset.
-    Orders by (-created_at, -id). Cursor is base64-encoded "order|created_at|id".
+    Orders by (-date, -id). Cursor is base64-encoded "order|date|id".
     The order contract is embedded in the cursor and validated on decode.
     Returns (page_items, next_cursor).
     """
     if cursor:
         try:
             decoded = base64.urlsafe_b64decode(cursor).decode()
-            order, ts_str, obj_id = decoded.split('|', 2)
+            order, date_str, obj_id = decoded.split('|', 2)
             if order != CURSOR_ORDER:
                 raise ValueError("cursor order mismatch")
-            cursor_ts = datetime.fromisoformat(ts_str)
+            from datetime import date as date_type
+            cursor_date = date_type.fromisoformat(date_str)
             cursor_id = int(obj_id)
             qs = qs.filter(
-                Q(created_at__lt=cursor_ts) |
-                Q(created_at=cursor_ts, id__lt=cursor_id)
+                Q(date__lt=cursor_date) |
+                Q(date=cursor_date, id__lt=cursor_id)
             )
         except (ValueError, TypeError):
             raise HttpError(400, "Invalid cursor")
 
-    qs = qs.order_by('-created_at', '-id')
+    qs = qs.order_by('-date', '-id')
     items = list(qs[:PAGE_SIZE + 1])
 
     next_cursor = None
     if len(items) > PAGE_SIZE:
         items = items[:PAGE_SIZE]
         last = items[-1]
-        raw = f"{CURSOR_ORDER}|{last.created_at.isoformat()}|{last.id}"
+        raw = f"{CURSOR_ORDER}|{last.date.isoformat()}|{last.id}"
         next_cursor = base64.urlsafe_b64encode(raw.encode()).decode()
 
     return items, next_cursor

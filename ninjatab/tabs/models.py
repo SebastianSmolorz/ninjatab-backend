@@ -154,9 +154,9 @@ class Bill(BaseModel):
     receipt_image_url = models.URLField(max_length=500, blank=True, default='')
 
     class Meta:
-        ordering = ['-date', '-created_at']
+        ordering = ['-date', '-id']
         indexes = [
-            models.Index(fields=['-created_at', '-id']),
+            models.Index(fields=['-date', '-id']),
         ]
 
     def __str__(self):
