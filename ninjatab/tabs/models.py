@@ -6,6 +6,7 @@ from django.conf import settings
 from enum import Enum
 from datetime import date
 from uuid6 import uuid7
+from ninjatab.currencies.currency_utils import minor_to_decimal
 
 
 class Currency(models.TextChoices):
@@ -193,7 +194,8 @@ class LineItem(BaseModel):
         ordering = ['created_at']
 
     def __str__(self):
-        return f"{self.description} - {self.value}"
+        amount = minor_to_decimal(self.value, self.bill.currency)
+        return f"{self.description} - {amount} {self.bill.currency}"
 
 
 class PersonLineItemClaim(BaseModel):
@@ -229,6 +231,10 @@ class PersonLineItemClaim(BaseModel):
         unique_together = [['person', 'line_item']]
 
     def __str__(self):
+        if self.calculated_amount is not None:
+            currency = self.line_item.bill.currency
+            amount = minor_to_decimal(self.calculated_amount, currency)
+            return f"{self.person.name} - {self.line_item.description} ({amount} {currency})"
         return f"{self.person.name} - {self.line_item.description}"
 
 
@@ -281,6 +287,7 @@ class Settlement(BaseModel):
         ordering = ['-created_at']
 
     def __str__(self):
-        return f"{self.from_person.name} pays {self.to_person.name} {self.amount} {self.currency}"
+        amount = minor_to_decimal(self.amount, self.currency)
+        return f"{self.from_person.name} pays {self.to_person.name} {amount} {self.currency}"
 
 
