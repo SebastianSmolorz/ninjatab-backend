@@ -1,4 +1,6 @@
 from django.contrib import admin
+from django.contrib.admin import RelatedOnlyFieldListFilter
+from django.db.models import Count, Sum
 from django.utils.html import format_html
 from .models import Tab, TabPerson, Bill, LineItem, PersonLineItemClaim, Settlement, Contact, SplitType
 from ninjatab.currencies.currency_utils import minor_to_decimal
@@ -17,7 +19,10 @@ class TabPersonInline(admin.TabularInline):
     extra = 1
     fields = ['uuid', 'name', 'user', 'created_at']
     readonly_fields = ['uuid', 'created_at']
-    autocomplete_fields = ['user']
+    raw_id_fields = ['user']
+
+    def get_queryset(self, request):
+        return super().get_queryset(request).select_related('user')
 
 
 @admin.register(Tab)
@@ -26,6 +31,8 @@ class TabAdmin(admin.ModelAdmin):
     list_filter = ['is_pro', 'is_settled', 'default_currency', 'settlement_currency', 'created_at']
     search_fields = ['name', 'description', 'uuid']
     readonly_fields = ['uuid', 'created_at', 'updated_at']
+    raw_id_fields = ['created_by']
+    show_full_result_count = False
     inlines = [TabPersonInline]
 
     fieldsets = (
@@ -41,14 +48,17 @@ class TabAdmin(admin.ModelAdmin):
         }),
     )
 
+    def get_queryset(self, request):
+        return super().get_queryset(request).select_related('created_by')
+
 
 @admin.register(TabPerson)
 class TabPersonAdmin(admin.ModelAdmin):
     list_display = ['name', 'uuid', 'tab', 'user_link', 'created_at']
-    list_filter = ['tab', 'created_at']
+    list_filter = [('tab', RelatedOnlyFieldListFilter), 'created_at']
     search_fields = ['name', 'uuid', 'user__username', 'user__email']
     readonly_fields = ['uuid', 'created_at', 'updated_at']
-    autocomplete_fields = ['tab', 'user']
+    raw_id_fields = ['tab', 'user']
 
     fieldsets = (
         ('Person Information', {
@@ -74,6 +84,9 @@ class TabPersonAdmin(admin.ModelAdmin):
 
     user_link.short_description = 'User'
 
+    def get_queryset(self, request):
+        return super().get_queryset(request).select_related('tab', 'user')
+
 
 class LineItemInline(MoneyAdminMixin, admin.TabularInline):
     model = LineItem
@@ -92,15 +105,19 @@ class LineItemInline(MoneyAdminMixin, admin.TabularInline):
 
     total_claimed.short_description = 'Total Claimed'
 
+    def get_queryset(self, request):
+        return super().get_queryset(request).select_related('bill').prefetch_related('person_claims')
+
 
 @admin.register(Bill)
 class BillAdmin(MoneyAdminMixin, admin.ModelAdmin):
-    list_display = ['description', 'uuid', 'tab', 'currency', 'display_total_amount', 'is_itemised', 'status', 'date', 'has_receipt']
+    list_display = ['description', 'uuid', 'tab', 'currency', 'display_total_amount', 'display_is_itemised', 'status', 'date', 'has_receipt']
     list_filter = ['status', 'currency', 'date', 'created_at']
     search_fields = ['description', 'uuid', 'tab__name', 'tab__uuid']
     readonly_fields = ['uuid', 'display_total_amount', 'receipt_image_link', 'created_at', 'updated_at']
-    autocomplete_fields = ['tab', 'creator', 'paid_by']
+    raw_id_fields = ['tab', 'creator', 'paid_by']
     date_hierarchy = 'date'
+    show_full_result_count = False
     inlines = [LineItemInline]
 
     fieldsets = (
@@ -123,8 +140,13 @@ class BillAdmin(MoneyAdminMixin, admin.ModelAdmin):
     )
 
     def display_total_amount(self, obj):
-        return self.format_money(obj.total_amount, obj.currency)
+        return self.format_money(obj._total_amount, obj.currency)
     display_total_amount.short_description = 'Total Amount'
+
+    def display_is_itemised(self, obj):
+        return (obj._line_items_count or 0) > 1
+    display_is_itemised.boolean = True
+    display_is_itemised.short_description = 'Itemised'
 
     def has_receipt(self, obj):
         return bool(obj.receipt_image_url)
@@ -141,8 +163,14 @@ class BillAdmin(MoneyAdminMixin, admin.ModelAdmin):
     receipt_image_link.short_description = 'Receipt Image'
 
     def get_queryset(self, request):
-        qs = super().get_queryset(request)
-        return qs.select_related('tab', 'creator', 'paid_by').prefetch_related('line_items')
+        return (
+            super().get_queryset(request)
+            .select_related('tab', 'creator', 'paid_by')
+            .annotate(
+                _total_amount=Sum('line_items__value'),
+                _line_items_count=Count('line_items'),
+            )
+        )
 
 
 class PersonLineItemClaimInline(MoneyAdminMixin, admin.TabularInline):
@@ -150,7 +178,7 @@ class PersonLineItemClaimInline(MoneyAdminMixin, admin.TabularInline):
     extra = 0
     fields = ['uuid', 'person', 'split_value', 'display_calculated_amount', 'has_claimed']
     readonly_fields = ['uuid', 'display_calculated_amount']
-    autocomplete_fields = ['person']
+    raw_id_fields = ['person']
 
     def display_calculated_amount(self, obj):
         if obj.pk:
@@ -158,14 +186,18 @@ class PersonLineItemClaimInline(MoneyAdminMixin, admin.TabularInline):
         return '-'
     display_calculated_amount.short_description = 'Calculated Amount'
 
+    def get_queryset(self, request):
+        return super().get_queryset(request).select_related('line_item', 'line_item__bill')
+
 
 @admin.register(LineItem)
 class LineItemAdmin(MoneyAdminMixin, admin.ModelAdmin):
     list_display = ['description', 'uuid', 'bill', 'display_value', 'split_type', 'total_claimed_amount', 'claims_count', 'created_at']
-    list_filter = ['split_type', 'bill__tab', 'created_at']
-    search_fields = ['description', 'uuid', 'bill__description', 'bill__uuid', 'bill__tab__name']
+    list_filter = ['split_type', ('bill__tab', RelatedOnlyFieldListFilter), 'created_at']
+    search_fields = ['description', 'uuid', 'bill__description', 'bill__uuid']
     readonly_fields = ['uuid', 'created_at', 'updated_at', 'claims_count', 'total_claimed_amount']
-    autocomplete_fields = ['bill']
+    raw_id_fields = ['bill']
+    show_full_result_count = False
     inlines = [PersonLineItemClaimInline]
 
     fieldsets = (
@@ -186,7 +218,7 @@ class LineItemAdmin(MoneyAdminMixin, admin.ModelAdmin):
     display_value.short_description = 'Value'
 
     def claims_count(self, obj):
-        return obj.person_claims.count()
+        return len(obj.person_claims.all())
     claims_count.short_description = 'Number of Claims'
 
     def total_claimed_amount(self, obj):
@@ -213,7 +245,7 @@ class PersonLineItemClaimAdmin(MoneyAdminMixin, admin.ModelAdmin):
         'has_claimed',
         'created_at'
     ]
-    list_filter = ['has_claimed', 'line_item__split_type', 'created_at']
+    list_filter = ['has_claimed', 'created_at']
     search_fields = [
         'uuid',
         'person__name',
@@ -221,10 +253,10 @@ class PersonLineItemClaimAdmin(MoneyAdminMixin, admin.ModelAdmin):
         'line_item__description',
         'line_item__uuid',
         'line_item__bill__description',
-        'line_item__bill__tab__name'
     ]
     readonly_fields = ['uuid', 'created_at', 'updated_at']
-    autocomplete_fields = ['person', 'line_item']
+    show_full_result_count = False
+    raw_id_fields = ['person', 'line_item']
 
     fieldsets = (
         ('Claim Information', {
@@ -266,10 +298,11 @@ class PersonLineItemClaimAdmin(MoneyAdminMixin, admin.ModelAdmin):
 @admin.register(Settlement)
 class SettlementAdmin(MoneyAdminMixin, admin.ModelAdmin):
     list_display = ['uuid', 'tab', 'from_person', 'to_person', 'display_amount', 'currency', 'created_at']
-    list_filter = ['currency', 'tab', 'created_at']
+    list_filter = ['currency', ('tab', RelatedOnlyFieldListFilter), 'created_at']
     search_fields = ['uuid', 'tab__name', 'tab__uuid', 'from_person__name', 'to_person__name']
     readonly_fields = ['uuid', 'created_at', 'updated_at']
-    autocomplete_fields = ['tab', 'from_person', 'to_person']
+    show_full_result_count = False
+    raw_id_fields = ['tab', 'from_person', 'to_person']
 
     fieldsets = (
         ('Settlement Information', {
@@ -296,7 +329,7 @@ class ContactAdmin(admin.ModelAdmin):
     list_filter = ['created_at']
     search_fields = ['uuid', 'owner__email', 'owner__first_name', 'contact_user__email', 'contact_user__first_name']
     readonly_fields = ['uuid', 'created_at', 'updated_at']
-    autocomplete_fields = ['owner', 'contact_user']
+    raw_id_fields = ['owner', 'contact_user']
 
     def get_queryset(self, request):
         qs = super().get_queryset(request)
