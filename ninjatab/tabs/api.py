@@ -34,23 +34,49 @@ logger = logging.getLogger("app")
 PAGE_SIZE = 25
 
 
-CURSOR_ORDER = '-date,-id'
+TAB_CURSOR_ORDER = '-created_at,-id'
+BILL_CURSOR_ORDER = '-date,-id'
 
 
-def _apply_cursor(qs, cursor: str | None):
-    """
-    Apply cursor-based pagination to a queryset.
-    Orders by (-date, -id). Cursor is base64-encoded "order|date|id".
-    The order contract is embedded in the cursor and validated on decode.
-    Returns (page_items, next_cursor).
-    """
+def _apply_tab_cursor(qs, cursor: str | None):
+    """Cursor pagination for tabs, ordered by (-created_at, -id)."""
+    if cursor:
+        try:
+            decoded = base64.urlsafe_b64decode(cursor).decode()
+            order, ts_str, obj_id = decoded.split('|', 2)
+            if order != TAB_CURSOR_ORDER:
+                raise ValueError("cursor order mismatch")
+            cursor_ts = datetime.fromisoformat(ts_str)
+            cursor_id = int(obj_id)
+            qs = qs.filter(
+                Q(created_at__lt=cursor_ts) |
+                Q(created_at=cursor_ts, id__lt=cursor_id)
+            )
+        except (ValueError, TypeError):
+            raise HttpError(400, "Invalid cursor")
+
+    qs = qs.order_by('-created_at', '-id')
+    items = list(qs[:PAGE_SIZE + 1])
+
+    next_cursor = None
+    if len(items) > PAGE_SIZE:
+        items = items[:PAGE_SIZE]
+        last = items[-1]
+        raw = f"{TAB_CURSOR_ORDER}|{last.created_at.isoformat()}|{last.id}"
+        next_cursor = base64.urlsafe_b64encode(raw.encode()).decode()
+
+    return items, next_cursor
+
+
+def _apply_bill_cursor(qs, cursor: str | None):
+    """Cursor pagination for bills, ordered by (-date, -id)."""
+    from datetime import date as date_type
     if cursor:
         try:
             decoded = base64.urlsafe_b64decode(cursor).decode()
             order, date_str, obj_id = decoded.split('|', 2)
-            if order != CURSOR_ORDER:
+            if order != BILL_CURSOR_ORDER:
                 raise ValueError("cursor order mismatch")
-            from datetime import date as date_type
             cursor_date = date_type.fromisoformat(date_str)
             cursor_id = int(obj_id)
             qs = qs.filter(
@@ -67,7 +93,7 @@ def _apply_cursor(qs, cursor: str | None):
     if len(items) > PAGE_SIZE:
         items = items[:PAGE_SIZE]
         last = items[-1]
-        raw = f"{CURSOR_ORDER}|{last.date.isoformat()}|{last.id}"
+        raw = f"{BILL_CURSOR_ORDER}|{last.date.isoformat()}|{last.id}"
         next_cursor = base64.urlsafe_b64encode(raw.encode()).decode()
 
     return items, next_cursor
@@ -132,7 +158,7 @@ def list_tabs(request, cursor: str = None):
         bill_count=Count('bills', distinct=True),
         people_count=Count('people', distinct=True),
     )
-    items, next_cursor = _apply_cursor(qs, cursor)
+    items, next_cursor = _apply_tab_cursor(qs, cursor)
     return {"items": items, "next_cursor": next_cursor}
 
 
@@ -649,7 +675,7 @@ def list_bills(request, tab_id: str = None, cursor: str = None):
     if tab_id:
         qs = qs.filter(tab__uuid=tab_id)
     qs = qs.select_related('paid_by__user').prefetch_related('line_items')
-    items, next_cursor = _apply_cursor(qs, cursor)
+    items, next_cursor = _apply_bill_cursor(qs, cursor)
     return {"items": items, "next_cursor": next_cursor}
 
 
