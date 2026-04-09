@@ -31,7 +31,7 @@ import sentry_sdk
 
 logger = logging.getLogger("app")
 
-PAGE_SIZE = 25
+PAGE_SIZE = 5
 
 
 TAB_CURSOR_ORDER = '-created_at,-id'
