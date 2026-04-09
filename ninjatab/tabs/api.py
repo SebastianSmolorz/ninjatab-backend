@@ -646,6 +646,9 @@ def submit_bill_splits(request, bill_id: str, payload: BillSplitSubmitSchema):
         tab__in=Tab.objects.accessible_by(request.auth)
     )
 
+    if bill.tab.is_settled:
+        raise HttpError(400, "Cannot edit a bill from a settled tab")
+
     if str(bill.uuid) != payload.bill_id:
         return {"error": "Bill ID mismatch"}, 400
 
@@ -699,7 +702,7 @@ def retrieve_bill(request, bill_id: str):
 def update_bill(request, bill_id: str, payload: BillUpdateSchema):
     """Update bill fields (description, currency, paid_by)"""
     bill = get_object_or_404(
-        Bill.objects.prefetch_related(
+        Bill.objects.select_related('tab').prefetch_related(
             'line_items__person_claims__person__user',
             'creator__user',
             'paid_by__user'
@@ -707,6 +710,9 @@ def update_bill(request, bill_id: str, payload: BillUpdateSchema):
         uuid=bill_id,
         tab__in=Tab.objects.accessible_by(request.auth)
     )
+
+    if bill.tab.is_settled:
+        raise HttpError(400, "Cannot edit a bill from a settled tab")
 
     # Update fields if provided
     if payload.description is not None:
