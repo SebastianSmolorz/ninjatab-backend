@@ -1,6 +1,6 @@
 from uuid import UUID
 
-from pydantic import BaseModel, EmailStr, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator, model_validator
 from typing import Optional, List, Any, Generic, TypeVar
 from datetime import datetime, date as Date
 from decimal import Decimal
@@ -58,8 +58,7 @@ class UserSchema(BaseModel):
     first_name: str
     last_name: str
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
     @model_validator(mode='before')
     @classmethod
@@ -82,8 +81,7 @@ class TabPersonSchema(BaseModel):
     created_at: datetime
     updated_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
     @model_validator(mode='before')
     @classmethod
@@ -117,8 +115,7 @@ class PersonLineItemClaimSchema(BaseModel):
     created_at: datetime
     updated_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
     @model_validator(mode='before')
     @classmethod
@@ -159,8 +156,7 @@ class LineItemSchema(BaseModel):
     created_at: datetime
     updated_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
     @model_validator(mode='before')
     @classmethod
@@ -268,8 +264,7 @@ class BillSchema(BaseModel):
     created_at: datetime
     updated_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
     @model_validator(mode='before')
     @classmethod
@@ -356,8 +351,7 @@ class BillListSchema(BaseModel):
     paid_by: Optional[TabPersonSchema] = None
     created_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
     @model_validator(mode='before')
     @classmethod
@@ -405,8 +399,7 @@ class TabSchema(BaseModel):
     created_at: datetime
     updated_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
     @model_validator(mode='before')
     @classmethod
@@ -489,8 +482,7 @@ class TabListSchema(BaseModel):
     created_at: datetime
     updated_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class TabCreateSchema(BaseModel):
@@ -516,8 +508,7 @@ class SettlementSchema(BaseModel):
     created_at: datetime
     updated_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
     @model_validator(mode='before')
     @classmethod
@@ -550,8 +541,7 @@ class PersonSpendingTotalSchema(BaseModel):
     total: int
     total_display: Optional[Decimal] = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
     @model_validator(mode='before')
     @classmethod
@@ -566,8 +556,7 @@ class InvitePersonSchema(BaseModel):
     id: str
     name: str
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
     @model_validator(mode='before')
     @classmethod
@@ -594,8 +583,7 @@ class ContactSchema(BaseModel):
     last_name: str
     email: str
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
     @model_validator(mode='before')
     @classmethod
