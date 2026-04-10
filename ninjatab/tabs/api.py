@@ -154,7 +154,7 @@ def create_tab(request, payload: TabCreateSchema):
 @tab_router.get("/", response=CursorPageSchema[TabListSchema])
 def list_tabs(request, cursor: str = None):
     """List all tabs"""
-    qs = Tab.objects.accessible_by(request.auth).annotate(
+    qs = Tab.objects.accessible_by(request.auth).filter(is_archived=False).annotate(
         bill_count=Count('bills', distinct=True),
         people_count=Count('people', distinct=True),
     )
@@ -318,6 +318,15 @@ def close_tab(request, tab_id: str):
     ).get(id=tab.id)
 
     return tab
+
+
+@tab_router.post("/{tab_id}/archive")
+def archive_tab(request, tab_id: str):
+    """Soft-delete a tab — hides it from the tab list without affecting any data."""
+    tab = get_object_or_404(Tab.objects.accessible_by(request.auth), uuid=tab_id)
+    tab.is_archived = True
+    tab.save(update_fields=["is_archived"])
+    return {"success": True}
 
 
 @tab_router.post("/{tab_id}/simplify", response=SimplifyResultSchema)

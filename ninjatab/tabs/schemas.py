@@ -386,6 +386,7 @@ class TabSchema(BaseModel):
     default_currency: CurrencyEnum
     settlement_currency: CurrencyEnum
     is_settled: bool
+    is_archived: bool
     is_pro: bool
     invite_code: str
     bill_count: int
@@ -481,6 +482,7 @@ class TabListSchema(BaseModel):
     description: str
     default_currency: CurrencyEnum
     is_settled: bool
+    is_archived: bool
     is_pro: bool
     bill_count: int
     people_count: int

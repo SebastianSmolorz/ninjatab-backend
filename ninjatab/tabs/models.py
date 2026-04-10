@@ -70,6 +70,7 @@ class Tab(BaseModel):
         help_text="Currency used for calculating settlements"
     )
     is_settled = models.BooleanField(default=False)
+    is_archived = models.BooleanField(default=False)
     settlement_currency_settled_total = models.IntegerField(
         null=True, blank=True,
         help_text="Total spent in settlement currency (minor units), snapshotted at settlement time"
