@@ -7,7 +7,13 @@ from ninja.errors import HttpError
 logger = logging.getLogger("ninjatab.auth.rate_limit")
 
 
+DEMO_EMAIL = "demo@tab.ninja"
+
+
 def check_magic_link_rate_limit(user):
+    if user.email.lower() == DEMO_EMAIL:
+        return
+
     min_interval = getattr(settings, "MAGIC_LINK_MIN_INTERVAL", None)
     extended_cooldown = getattr(settings, "MAGIC_LINK_EXTENDED_COOLDOWN", None)
 
@@ -25,7 +31,7 @@ def check_magic_link_rate_limit(user):
 
     if (
         user.before_last_magic_link_sent_dt is not None
-        and (user.last_magic_link_sent_dt - user.before_last_magic_link_sent_dt).total_seconds() < 60
+        and (user.last_magic_link_sent_dt - user.before_last_magic_link_sent_dt).total_seconds() < 45
         and elapsed < extended_cooldown
     ):
         logger.warning(
