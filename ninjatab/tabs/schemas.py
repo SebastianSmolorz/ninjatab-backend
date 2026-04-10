@@ -447,6 +447,7 @@ class TabSchema(BaseModel):
                     'default_currency': data.default_currency,
                     'settlement_currency': settlement_currency,
                     'is_settled': data.is_settled,
+                    'is_archived': data.is_archived,
                     'is_pro': data.is_pro,
                     'invite_code': str(data.invite_code),
                     'bill_count': len(list(data.bills.all())),
