@@ -51,7 +51,8 @@ def magic_link(request, payload: MagicLinkSchema):
     check_magic_link_rate_limit(user)
     token = create_magic_token(user.id)
     magic_url = f"{django_settings.MAGIC_LINK_BASE_URL}?token={token}"
-    if payload.skip_email and django_settings.DEBUG:
+    is_demo = payload.email.lower() == 'demo@tab.ninja'
+    if payload.skip_email and (django_settings.DEBUG or is_demo):
         return {"success": True, "magic_url": magic_url}
     send_magic_link(payload.email.lower(), token)
     user.before_last_magic_link_sent_dt = user.last_magic_link_sent_dt
