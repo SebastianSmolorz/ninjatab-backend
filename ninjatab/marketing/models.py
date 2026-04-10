@@ -9,6 +9,7 @@ class WaitlistEntry(models.Model):
     email = models.EmailField(unique=True)
     platform = models.CharField(max_length=10, choices=Platform.choices)
     created_at = models.DateTimeField(auto_now_add=True)
+    invite_sent = models.BooleanField(default=False)
 
     class Meta:
         ordering = ["-created_at"]
