@@ -239,4 +239,23 @@ def create_demo_tab(user) -> Tab:
                 settlement_amount=None,  # TRY bill, GBP settlement — left for simplify
             )
 
+    # Bill 5: Drinks at the hotel — €80.00, shares split
+    bill5 = Bill.objects.create(
+        tab=tab, description="Drinks at the hotel", currency="EUR",
+        creator=you, paid_by=you,
+    )
+    li5 = LineItem.objects.create(
+        bill=bill5, description="Local Beer", value=8000, split_type="shares",
+    )
+    for person, shares, amount in [
+        (you, 3, 3000),
+        (alex, 2, 2000),
+        (sam, 2, 2000),
+        (jordan, 1, 1000),
+    ]:
+        PersonLineItemClaim.objects.create(
+            person=person, line_item=li5,
+            split_value=shares, calculated_amount=amount, settlement_amount=amount,
+        )
+
     return tab
