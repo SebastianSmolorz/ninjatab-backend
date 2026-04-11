@@ -173,6 +173,7 @@ def _create_demo_tab(user) -> 'Tab':
         settlement_currency="GBP",
         created_by=user,
         is_demo=True,
+        is_pro=True,
         invite_code=None,
     )
 
