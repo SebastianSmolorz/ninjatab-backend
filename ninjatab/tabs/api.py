@@ -20,6 +20,7 @@ from ninjatab.auth.schemas import MagicLinkSuccessSchema
 from ninjatab.auth.jwt_utils import create_magic_token
 from ninjatab.auth.email import send_magic_link
 from ninjatab.tabs.limits import check_bill_limit, check_itemised_limit
+from ninjatab.tabs.demo import create_demo_tab as _create_demo_tab
 
 User = get_user_model()
 
@@ -160,72 +161,6 @@ def list_tabs(request, cursor: str = None):
     )
     items, next_cursor = _apply_tab_cursor(qs, cursor)
     return {"items": items, "next_cursor": next_cursor}
-
-
-def _create_demo_tab(user) -> 'Tab':
-    """Factory that builds a pre-populated demo tab for the given user."""
-    user_name = user.get_full_name().strip() or user.username or "You"
-
-    tab = Tab.objects.create(
-        name="Camping Weekend",
-        description="A demo tab — feel free to explore and edit!",
-        default_currency="GBP",
-        settlement_currency="GBP",
-        created_by=user,
-        is_demo=True,
-        is_pro=True,
-        invite_code=None,
-    )
-
-    you = TabPerson.objects.create(tab=tab, name=user_name, user=user)
-    alex = TabPerson.objects.create(tab=tab, name="Alex")
-    sam = TabPerson.objects.create(tab=tab, name="Sam")
-    jordan = TabPerson.objects.create(tab=tab, name="Jordan")
-    all_people = [you, alex, sam, jordan]
-
-    # Bill 1: Groceries — £48.00, equal 4-way split (£12.00 each)
-    bill1 = Bill.objects.create(
-        tab=tab, description="Groceries", currency="GBP",
-        creator=you, paid_by=you,
-    )
-    li1 = LineItem.objects.create(
-        bill=bill1, description="Groceries", value=4800, split_type="shares",
-    )
-    for person in all_people:
-        PersonLineItemClaim.objects.create(
-            person=person, line_item=li1,
-            split_value=1, calculated_amount=1200, settlement_amount=1200,
-        )
-
-    # Bill 2: Campsite fees — £80.00, equal 4-way split (£20.00 each)
-    bill2 = Bill.objects.create(
-        tab=tab, description="Campsite fees", currency="GBP",
-        creator=alex, paid_by=alex,
-    )
-    li2 = LineItem.objects.create(
-        bill=bill2, description="Campsite fees", value=8000, split_type="shares",
-    )
-    for person in all_people:
-        PersonLineItemClaim.objects.create(
-            person=person, line_item=li2,
-            split_value=1, calculated_amount=2000, settlement_amount=2000,
-        )
-
-    # Bill 3: Firewood & supplies — £24.00, equal 4-way split (£6.00 each)
-    bill3 = Bill.objects.create(
-        tab=tab, description="Firewood & supplies", currency="GBP",
-        creator=sam, paid_by=sam,
-    )
-    li3 = LineItem.objects.create(
-        bill=bill3, description="Firewood & supplies", value=2400, split_type="shares",
-    )
-    for person in all_people:
-        PersonLineItemClaim.objects.create(
-            person=person, line_item=li3,
-            split_value=1, calculated_amount=600, settlement_amount=600,
-        )
-
-    return tab
 
 
 @tab_router.post("/demo", response=TabSchema)
