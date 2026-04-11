@@ -161,7 +161,7 @@ def create_demo_tab(user) -> Tab:
         creator=you, paid_by=you,
     )
     li1 = LineItem.objects.create(
-        bill=bill1, description="Groceries", value=4800, split_type="shares",
+        bill=bill1, description="Fuel", value=4800, split_type="shares",
     )
     for person in all_people:
         PersonLineItemClaim.objects.create(

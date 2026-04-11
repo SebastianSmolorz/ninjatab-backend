@@ -3,8 +3,8 @@ from decimal import Decimal
 
 from django.core.management.base import BaseCommand, CommandError
 
-from ...models import Tab
-from ...exchange import convert_amount, ExchangeRateNotFoundError
+from ninjatab.tabs.models import Tab
+from ninjatab.currencies.exchange import convert_amount, ExchangeRateNotFoundError
 
 
 class Command(BaseCommand):
