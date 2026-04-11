@@ -382,7 +382,8 @@ class TabSchema(BaseModel):
     is_settled: bool
     is_archived: bool
     is_pro: bool
-    invite_code: str
+    is_demo: bool
+    invite_code: Optional[str] = None
     bill_count: int
     people: List[TabPersonSchema]
     settlements: List['SettlementSchema']
@@ -449,7 +450,8 @@ class TabSchema(BaseModel):
                     'is_settled': data.is_settled,
                     'is_archived': data.is_archived,
                     'is_pro': data.is_pro,
-                    'invite_code': str(data.invite_code),
+                    'is_demo': data.is_demo,
+                    'invite_code': str(data.invite_code) if data.invite_code else None,
                     'bill_count': len(list(data.bills.all())),
                     'people': people_list,
                     'settlements': settlements_list,
@@ -478,6 +480,7 @@ class TabListSchema(BaseModel):
     is_settled: bool
     is_archived: bool
     is_pro: bool
+    is_demo: bool
     bill_count: int
     people_count: int
     created_at: datetime

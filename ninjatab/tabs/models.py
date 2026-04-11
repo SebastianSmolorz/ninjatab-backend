@@ -76,8 +76,9 @@ class Tab(BaseModel):
         help_text="Total spent in settlement currency (minor units), snapshotted at settlement time"
     )
     is_pro = models.BooleanField(default=False)
+    is_demo = models.BooleanField(default=False)
     receipt_scan_count = models.PositiveIntegerField(default=0)
-    invite_code = models.UUIDField(default=uuid.uuid4, unique=True)
+    invite_code = models.UUIDField(default=uuid.uuid4, unique=True, null=True, blank=True)
 
     objects = TabManager()
 
