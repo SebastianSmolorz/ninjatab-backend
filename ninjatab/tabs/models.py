@@ -155,6 +155,10 @@ class Bill(BaseModel):
     date = models.DateField(default=date.today)
     receipt_image_url = models.URLField(max_length=500, blank=True, default='')
     receipt_image_key = models.CharField(max_length=500, blank=True, default='')
+    settlement_total = models.IntegerField(
+        null=True, blank=True,
+        help_text="Sum of all claim settlement_amounts for this bill, in the tab's settlement currency (minor units)"
+    )
 
     class Meta:
         ordering = ['-date', '-id']

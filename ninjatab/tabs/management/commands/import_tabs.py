@@ -215,6 +215,7 @@ class Command(BaseCommand):
         # Post-import: calculate settlement_amount for all imported claims
         self.stdout.write("\nCalculating settlement_amount for imported claims...")
         self._backfill_settlement_amounts()
+        self._backfill_bill_settlement_totals()
 
     def _backfill_settlement_amounts(self):
         claims = (
@@ -252,3 +253,16 @@ class Command(BaseCommand):
                     "or run manage.py import_tabs again to retry."
                 )
             )
+
+    def _backfill_bill_settlement_totals(self):
+        from django.db.models import OuterRef, Subquery, Sum
+        updated = Bill.objects.filter(settlement_total__isnull=True).update(
+            settlement_total=Subquery(
+                PersonLineItemClaim.objects
+                .filter(line_item__bill=OuterRef('pk'))
+                .values('line_item__bill')
+                .annotate(total=Sum('settlement_amount'))
+                .values('total')
+            )
+        )
+        self.stdout.write(self.style.SUCCESS(f"  settlement_total set on {updated} bills"))

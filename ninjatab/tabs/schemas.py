@@ -111,6 +111,7 @@ class PersonLineItemClaimSchema(BaseModel):
     split_value_display: Optional[Decimal] = None
     calculated_amount: Optional[int] = None
     calculated_amount_display: Optional[Decimal] = None
+    settlement_amount: Optional[int] = None
     has_claimed: bool
     created_at: datetime
     updated_at: datetime
@@ -129,6 +130,7 @@ class PersonLineItemClaimSchema(BaseModel):
                 'split_value_display': None,  # computed below if currency provided
                 'calculated_amount': data.calculated_amount,
                 'calculated_amount_display': None,  # computed below if currency provided
+                'settlement_amount': data.settlement_amount,
                 'has_claimed': data.has_claimed,
                 'created_at': data.created_at,
                 'updated_at': data.updated_at,
@@ -260,6 +262,7 @@ class BillSchema(BaseModel):
     line_items: List[LineItemSchema]
     total_amount: int
     total_amount_display: Optional[Decimal] = None
+    settlement_total: Optional[int] = None
     receipt_image_url: str = ''
     created_at: datetime
     updated_at: datetime
@@ -298,6 +301,7 @@ class BillSchema(BaseModel):
                     'line_items': line_items_list,
                     'total_amount': total_amount,
                     'total_amount_display': minor_to_decimal(total_amount, currency),
+                    'settlement_total': data.settlement_total,
                     'receipt_image_url': _receipt_image_url(data),
                     'created_at': data.created_at,
                     'updated_at': data.updated_at,
@@ -348,6 +352,7 @@ class BillListSchema(BaseModel):
     date: Date
     total_amount: int
     total_amount_display: Optional[Decimal] = None
+    settlement_total: Optional[int] = None
     paid_by: Optional[TabPersonSchema] = None
     created_at: datetime
 
@@ -367,6 +372,7 @@ class BillListSchema(BaseModel):
                 'date': data.date,
                 'total_amount': total_amount,
                 'total_amount_display': minor_to_decimal(total_amount, currency),
+                'settlement_total': data.settlement_total,
                 'paid_by': data.paid_by,
                 'created_at': data.created_at,
             }
