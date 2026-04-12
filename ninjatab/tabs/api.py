@@ -196,6 +196,7 @@ def retrieve_tab(request, tab_id: str):
     user_owes_sq = (
         PersonLineItemClaim.objects
         .filter(person__tab=OuterRef('pk'), person__user=request.auth)
+        .filter(line_item__bill__paid_by__isnull=False)
         .exclude(line_item__bill__paid_by__user=request.auth)
         .values('person__tab')
         .annotate(total=Sum('settlement_amount'))

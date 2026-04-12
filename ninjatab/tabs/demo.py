@@ -1,6 +1,17 @@
 from datetime import date
 
 from ninjatab.tabs.models import Tab, TabPerson, Bill, LineItem, PersonLineItemClaim
+from ninjatab.currencies.exchange import convert_amount, ExchangeRateNotFoundError
+
+
+def _sa(calculated_amount, from_currency, settlement_currency):
+    """Convert calculated_amount to settlement currency, returning None on failure."""
+    if calculated_amount is None:
+        return None
+    try:
+        return convert_amount(calculated_amount, from_currency, settlement_currency)
+    except ExchangeRateNotFoundError:
+        return None
 
 _DEMO_RECEIPT_URL = "https://tab-ninja-receipt-scans.lon1.cdn.digitaloceanspaces.com/demo/demo1.jpg"
 
@@ -166,7 +177,8 @@ def create_demo_tab(user) -> Tab:
     for person in all_people:
         PersonLineItemClaim.objects.create(
             person=person, line_item=li1,
-            split_value=1, calculated_amount=1200, settlement_amount=1200,
+            split_value=1, calculated_amount=1200,
+            settlement_amount=_sa(1200, bill1.currency, tab.settlement_currency),
         )
 
     # Bill 2: Campsite fees — £80.00, equal 4-way split (£20.00 each)
@@ -180,7 +192,8 @@ def create_demo_tab(user) -> Tab:
     for person in all_people:
         PersonLineItemClaim.objects.create(
             person=person, line_item=li2,
-            split_value=1, calculated_amount=2000, settlement_amount=2000,
+            split_value=1, calculated_amount=2000,
+            settlement_amount=_sa(2000, bill2.currency, tab.settlement_currency),
         )
 
     # Bill 3: Activities in Poland
@@ -197,12 +210,14 @@ def create_demo_tab(user) -> Tab:
     for person in [you, alex]:
         PersonLineItemClaim.objects.create(
             person=person, line_item=li3,
-            split_value=1, calculated_amount=25000, settlement_amount=25000,
+            split_value=1, calculated_amount=25000,
+            settlement_amount=_sa(25000, bill3.currency, tab.settlement_currency),
         )
     for person in [sam, jordan]:
         PersonLineItemClaim.objects.create(
             person=person, line_item=li4,
-            split_value=1, calculated_amount=21500, settlement_amount=21500,
+            split_value=1, calculated_amount=21500,
+            settlement_amount=_sa(21500, bill3.currency, tab.settlement_currency),
         )
 
     # Bill 4: Restaurant receipt
@@ -236,7 +251,7 @@ def create_demo_tab(user) -> Tab:
                 line_item=li,
                 split_value=claim_data['split_value'],
                 calculated_amount=claim_data['calculated_amount'],
-                settlement_amount=None,  # TRY bill, GBP settlement — left for simplify
+                settlement_amount=_sa(claim_data['calculated_amount'], receipt_bill.currency, tab.settlement_currency),
             )
 
     # Bill 5: Drinks at the hotel — €80.00, shares split
@@ -255,7 +270,8 @@ def create_demo_tab(user) -> Tab:
     ]:
         PersonLineItemClaim.objects.create(
             person=person, line_item=li5,
-            split_value=shares, calculated_amount=amount, settlement_amount=amount,
+            split_value=shares, calculated_amount=amount,
+            settlement_amount=_sa(amount, bill5.currency, tab.settlement_currency),
         )
 
     return tab
