@@ -225,17 +225,6 @@ def retrieve_tab(request, tab_id: str):
         uuid=tab_id,
     )
 
-    if tab.is_settled:
-        user_person_ids = {p.id for p in tab.people.all() if p.user_id == request.auth.id}
-        tab.user_owes = sum(
-            s.amount for s in tab.settlements.all()
-            if s.from_person_id in user_person_ids
-        )
-        tab.user_owed = sum(
-            s.amount for s in tab.settlements.all()
-            if s.to_person_id in user_person_ids
-        )
-
     return tab
 
 
