@@ -428,38 +428,23 @@ def get_tab_person_totals(request, tab_id: str):
     """Get total spending per person for a tab in settlement currency"""
 
     tab = get_object_or_404(Tab.objects.accessible_by(request.auth), uuid=tab_id)
-    settlement_currency = tab.settlement_currency
 
-    rows = (
+    totals = (
         PersonLineItemClaim.objects
         .filter(line_item__bill__tab=tab)
         .exclude(line_item__bill__status=BillStatus.ARCHIVED)
-        .values('person__uuid', 'person__name', 'line_item__bill__currency')
-        .annotate(total=Sum('calculated_amount'))
+        .values('person__uuid', 'person__name')
+        .annotate(total=Sum('settlement_amount'))
     )
-
-    # Re-aggregate per person, converting each bill-currency group at request time
-    person_totals: dict[str, dict] = {}
-    for row in rows:
-        person_id = str(row['person__uuid'])
-        amount = row['total'] or 0
-        bill_currency = row['line_item__bill__currency']
-        try:
-            converted = convert_amount(amount, bill_currency, settlement_currency)
-        except ExchangeRateNotFoundError:
-            converted = 0
-        if person_id not in person_totals:
-            person_totals[person_id] = {'person_name': row['person__name'], 'total': 0}
-        person_totals[person_id]['total'] += converted
 
     return [
         {
-            'person_id': person_id,
-            'person_name': data['person_name'],
-            'total': data['total'],
-            'currency': settlement_currency,
+            'person_id': str(row['person__uuid']),
+            'person_name': row['person__name'],
+            'total': row['total'] or 0,
+            'currency': tab.settlement_currency,
         }
-        for person_id, data in person_totals.items()
+        for row in totals
     ]
 
 

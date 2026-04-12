@@ -139,12 +139,20 @@ class PersonLineItemClaimSchema(BaseModel):
         if isinstance(data, dict):
             currency = data.get('currency')
             split_type = data.get('split_type')
+            settlement_currency = data.get('settlement_currency')
             if currency:
                 # Only show split_value_display when it's a currency amount (VALUE mode)
                 if split_type == 'value' and data.get('split_value') is not None:
                     data['split_value_display'] = minor_to_decimal(data['split_value'], currency)
                 if data.get('calculated_amount') is not None:
                     data['calculated_amount_display'] = minor_to_decimal(data['calculated_amount'], currency)
+            if settlement_currency and currency and settlement_currency != currency:
+                calculated = data.get('calculated_amount')
+                if calculated is not None:
+                    try:
+                        data['settlement_amount'] = convert_amount(calculated, currency, settlement_currency)
+                    except ExchangeRateNotFoundError:
+                        data['settlement_amount'] = None
         return data
 
 
@@ -181,6 +189,7 @@ class LineItemSchema(BaseModel):
         if isinstance(data, dict):
             currency = data.get('currency')
             split_type = data.get('split_type')
+            settlement_currency = data.get('settlement_currency')
             if currency and data.get('value') is not None:
                 data['value_display'] = minor_to_decimal(data['value'], currency)
             # Enrich each claim dict with currency and split_type for display computation
@@ -200,11 +209,13 @@ class LineItemSchema(BaseModel):
                             'updated_at': claim.updated_at,
                             'currency': currency,
                             'split_type': split_type,
+                            'settlement_currency': settlement_currency,
                         })
                     elif isinstance(claim, dict):
                         claim = dict(claim)
                         claim.setdefault('currency', currency)
                         claim.setdefault('split_type', split_type)
+                        claim.setdefault('settlement_currency', settlement_currency)
                         enriched_claims.append(claim)
                     else:
                         enriched_claims.append(claim)
@@ -276,6 +287,7 @@ class BillSchema(BaseModel):
         if hasattr(data, 'line_items'):
             if hasattr(data.line_items, 'all'):
                 currency = data.currency
+                settlement_currency = getattr(getattr(data, 'tab', None), 'settlement_currency', None)
                 line_items_list = [
                     {
                         'id': str(li.uuid),
@@ -287,13 +299,13 @@ class BillSchema(BaseModel):
                         'created_at': li.created_at,
                         'updated_at': li.updated_at,
                         'currency': currency,
+                        'settlement_currency': settlement_currency,
                     }
                     for li in data.line_items.all()
                 ]
                 total_amount = data.total_amount
-                settlement_currency = getattr(getattr(data, 'tab', None), 'settlement_currency', None)
                 settlement_total = None
-                if settlement_currency:
+                if settlement_currency and settlement_currency != currency:
                     try:
                         settlement_total = convert_amount(total_amount, currency, settlement_currency)
                     except ExchangeRateNotFoundError:
