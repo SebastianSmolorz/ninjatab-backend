@@ -374,7 +374,7 @@ class BillListSchema(BaseModel):
             total_amount = data.total_amount
             settlement_currency = getattr(getattr(data, 'tab', None), 'settlement_currency', None)
             settlement_total = None
-            if settlement_currency:
+            if settlement_currency and settlement_currency != currency:
                 try:
                     settlement_total = convert_amount(total_amount, currency, settlement_currency)
                 except ExchangeRateNotFoundError:
