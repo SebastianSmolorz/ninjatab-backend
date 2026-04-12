@@ -271,18 +271,6 @@ def update_tab(request, tab_id: str, payload: TabUpdateSchema):
             updated_claims.append(claim)
 
         PersonLineItemClaim.objects.bulk_update(updated_claims, ['settlement_amount'])
-
-        # Recompute settlement_total for every bill in this tab
-        Bill.objects.filter(tab=tab).update(
-            settlement_total=Subquery(
-                PersonLineItemClaim.objects
-                .filter(line_item__bill=OuterRef('pk'))
-                .values('line_item__bill')
-                .annotate(total=Sum('settlement_amount'))
-                .values('total')
-            )
-        )
-
         tab.settlement_currency = new_currency
 
     tab.save()
@@ -627,17 +615,7 @@ def create_bill(request, payload: BillCreateSchema):
         if line_item_data.person_splits:
             _create_person_claims(line_item, line_item_data.person_splits, tab)
 
-    bill.settlement_total = _compute_bill_settlement_total(bill)
-    bill.save(update_fields=['settlement_total'])
     return bill
-
-
-def _compute_bill_settlement_total(bill: Bill):
-    """Return the sum of settlement_amounts across all claims for a bill."""
-    result = PersonLineItemClaim.objects.filter(
-        line_item__bill=bill
-    ).aggregate(total=Sum('settlement_amount'))
-    return result['total']
 
 
 def _create_person_claims(line_item: LineItem, person_splits: List[PersonSplitCreateSchema], tab: Tab):
@@ -713,8 +691,6 @@ def submit_bill_splits(request, bill_id: str, payload: BillSplitSubmitSchema):
         # Create new claims
         _create_person_claims(line_item, line_item_split.person_splits, bill.tab)
 
-    bill.settlement_total = _compute_bill_settlement_total(bill)
-    bill.save(update_fields=['settlement_total'])
     # Refresh the bill to get updated data
     bill.refresh_from_db()
     return bill
@@ -726,7 +702,7 @@ def list_bills(request, tab_id: str = None, cursor: str = None):
     qs = Bill.objects.filter(tab__in=Tab.objects.accessible_by(request.auth))
     if tab_id:
         qs = qs.filter(tab__uuid=tab_id)
-    qs = qs.select_related('paid_by__user').prefetch_related('line_items')
+    qs = qs.select_related('paid_by__user', 'tab').prefetch_related('line_items')
     items, next_cursor = _apply_bill_cursor(qs, cursor)
     return {"items": items, "next_cursor": next_cursor}
 
@@ -735,7 +711,7 @@ def list_bills(request, tab_id: str = None, cursor: str = None):
 def retrieve_bill(request, bill_id: str):
     """Retrieve a bill with all its line items and claims"""
     bill = get_object_or_404(
-        Bill.objects.prefetch_related(
+        Bill.objects.select_related('tab').prefetch_related(
             'line_items__person_claims__person__user',
             'creator__user',
             'paid_by__user'
@@ -798,7 +774,6 @@ def update_bill(request, bill_id: str, payload: BillUpdateSchema):
 
         PersonLineItemClaim.objects.bulk_update(updated_claims, ['settlement_amount'])
         bill.currency = new_currency
-        bill.settlement_total = _compute_bill_settlement_total(bill)
 
     if payload.description is not None:
         bill.description = payload.description

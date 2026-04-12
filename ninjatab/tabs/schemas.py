@@ -7,6 +7,7 @@ from decimal import Decimal
 from enum import Enum
 
 from ninjatab.currencies.currency_utils import minor_to_decimal
+from ninjatab.currencies.exchange import convert_amount, ExchangeRateNotFoundError
 
 T = TypeVar('T')
 
@@ -290,6 +291,13 @@ class BillSchema(BaseModel):
                     for li in data.line_items.all()
                 ]
                 total_amount = data.total_amount
+                settlement_currency = getattr(getattr(data, 'tab', None), 'settlement_currency', None)
+                settlement_total = None
+                if settlement_currency:
+                    try:
+                        settlement_total = convert_amount(total_amount, currency, settlement_currency)
+                    except ExchangeRateNotFoundError:
+                        pass
                 return {
                     'id': str(data.uuid),
                     'description': data.description,
@@ -301,7 +309,7 @@ class BillSchema(BaseModel):
                     'line_items': line_items_list,
                     'total_amount': total_amount,
                     'total_amount_display': minor_to_decimal(total_amount, currency),
-                    'settlement_total': data.settlement_total,
+                    'settlement_total': settlement_total,
                     'receipt_image_url': _receipt_image_url(data),
                     'created_at': data.created_at,
                     'updated_at': data.updated_at,
@@ -364,6 +372,13 @@ class BillListSchema(BaseModel):
         if hasattr(data, 'uuid'):
             currency = data.currency
             total_amount = data.total_amount
+            settlement_currency = getattr(getattr(data, 'tab', None), 'settlement_currency', None)
+            settlement_total = None
+            if settlement_currency:
+                try:
+                    settlement_total = convert_amount(total_amount, currency, settlement_currency)
+                except ExchangeRateNotFoundError:
+                    pass
             return {
                 'id': str(data.uuid),
                 'description': data.description,
@@ -372,7 +387,7 @@ class BillListSchema(BaseModel):
                 'date': data.date,
                 'total_amount': total_amount,
                 'total_amount_display': minor_to_decimal(total_amount, currency),
-                'settlement_total': data.settlement_total,
+                'settlement_total': settlement_total,
                 'paid_by': data.paid_by,
                 'created_at': data.created_at,
             }
