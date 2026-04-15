@@ -71,6 +71,7 @@ target/
 
 # Local development
 local_settings.py
+.claude/
 
 # Temporary files
 *.tmp

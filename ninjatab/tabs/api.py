@@ -29,6 +29,7 @@ bill_router = Router(tags=["bills"], auth=JWTBearer())
 
 import logging
 import sentry_sdk
+import posthog
 
 logger = logging.getLogger("app")
 
@@ -148,6 +149,12 @@ def create_tab(request, payload: TabCreateSchema):
         'settlements__from_person__user',
         'settlements__to_person__user'
     ).get(id=tab.id)
+
+    posthog.capture("$anon", "tab_created", properties={
+        "people_count": len(payload.people),
+        "default_currency": payload.default_currency,
+        "settlement_currency": payload.settlement_currency,
+    })
 
     return tab
 
@@ -325,6 +332,12 @@ def close_tab(request, tab_id: str):
     tab.settlement_currency_settled_total = total
     tab.save()
 
+    posthog.capture("$anon", "tab_settled", properties={
+        "bill_count": len(bills),
+        "settlement_currency": tab.settlement_currency,
+        "total_minor_units": total,
+    })
+
     # Refresh to get updated data
     tab.refresh_from_db()
     tab = Tab.objects.prefetch_related(
@@ -404,6 +417,11 @@ def simplify_tab(request, tab_id: str):
     # Prefetch related data for response
     settlements = Settlement.objects.filter(tab=tab).select_related('from_person__user', 'to_person__user')
 
+    posthog.capture("$anon", "tab_simplified", properties={
+        "settlement_count": len(settlements),
+        "settlement_currency": settlement_currency,
+    })
+
     return {
         "settlements": list(settlements),
         "message": f"Created {len(settlements)} simplified settlement(s) in {settlement_currency}"
@@ -421,6 +439,12 @@ def mark_settlement_paid(request, settlement_id: str):
     )
     settlement.paid = True
     settlement.save()
+
+    posthog.capture("$anon", "settlement_marked_paid", properties={
+        "amount_minor_units": settlement.amount,
+        "currency": settlement.currency,
+    })
+
     return settlement
 
 
@@ -517,6 +541,7 @@ def claim_invite(request, invite_code: str, payload: ClaimInviteSchema):
     person.user = user
     person.save()
     _sync_contacts_for_tab(tab)
+
     return {"success": True}
 
 
@@ -543,6 +568,9 @@ def upload_receipt(request, tab_id: str, file: UploadedFile = File(...)):
     image_key = upload_to_spaces(file, tab_id)
     result = scan_receipt(image_key, tab_id)
     increment_scan_count(tab)
+
+    posthog.capture("$anon", "receipt_scanned")
+
     return result
 
 
@@ -615,6 +643,11 @@ def create_bill(request, payload: BillCreateSchema):
         # Create person claims if provided
         if line_item_data.person_splits:
             _create_person_claims(line_item, line_item_data.person_splits, tab)
+
+    posthog.capture("$anon", "bill_created", properties={
+        "line_item_count": len(payload.line_items),
+        "currency": payload.currency,
+    })
 
     return bill
 
@@ -691,6 +724,10 @@ def submit_bill_splits(request, bill_id: str, payload: BillSplitSubmitSchema):
 
         # Create new claims
         _create_person_claims(line_item, line_item_split.person_splits, bill.tab)
+
+    posthog.capture("$anon", "bill_splits_submitted", properties={
+        "line_item_count": len(payload.line_item_splits),
+    })
 
     # Refresh the bill to get updated data
     bill.refresh_from_db()

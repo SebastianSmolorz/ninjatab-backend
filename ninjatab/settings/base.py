@@ -43,6 +43,7 @@ MIDDLEWARE = [
     "django.contrib.auth.middleware.AuthenticationMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
+    "posthog.integrations.django.PosthogContextMiddleware",
 ]
 
 ROOT_URLCONF = "ninjatab.urls"
@@ -114,6 +115,11 @@ CORS_ALLOW_HEADERS = [
     "x-csrftoken",
     "x-requested-with",
 ]
+
+# PostHog analytics
+POSTHOG_PROJECT_TOKEN = env.str("POSTHOG_PROJECT_TOKEN", default="")
+POSTHOG_HOST = env.str("POSTHOG_HOST", default="https://us.i.posthog.com")
+POSTHOG_DISABLED = env.bool("POSTHOG_DISABLED", default=False)
 
 # S3 / DigitalOcean Spaces
 AWS_ACCESS_KEY_ID = env.str("AWS_ACCESS_KEY_ID", default="")
