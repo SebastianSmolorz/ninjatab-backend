@@ -1,6 +1,6 @@
 from ninja import Router
 from ninja.errors import HttpError
-import posthog
+from posthog import new_context, identify_context, capture as ph_capture
 
 from ninjatab.marketing.models import WaitlistEntry, WaitlistPageView
 from ninjatab.marketing.schemas import WaitlistCreateSchema, WaitlistResponseSchema, AppInstallSchema
@@ -20,12 +20,16 @@ def join_waitlist(request, payload: WaitlistCreateSchema):
         raise HttpError(409, "This email is already on the waitlist.")
     WaitlistEntry.objects.create(email=payload.email, platform=payload.platform)
 
-    posthog.capture("$anon", "waitlist_joined", properties={"platform": payload.platform})
+    with new_context():
+        identify_context("$anon")
+        ph_capture("waitlist_joined", properties={"platform": payload.platform})
 
     return {"success": True}
 
 
 @marketing_router.post("/install", response=WaitlistResponseSchema)
 def app_install(request, payload: AppInstallSchema):
-    posthog.capture("$anon", "app_installed", properties={"platform": payload.platform})
+    with new_context():
+        identify_context("$anon")
+        ph_capture("app_installed", properties={"platform": payload.platform})
     return {"success": True}
