@@ -28,7 +28,7 @@ MAX_UPLOAD_SIZE = 10 * 1024 * 1024  # 10 MB
 class _Item(BaseModel):
     name: str
     translated_name: str
-    total: float
+    total: Optional[float] = None
     quantity: Optional[int] = None
     price_per_quantity: Optional[float] = None
 
@@ -69,7 +69,7 @@ Include all purchasable items as well as any service charges if they contribute 
 Only include price_per_quantity and quantity if clearly on the receipt. 
 quantity: number of instanced of this item purchased. Set to 1 if it is not clear
 price_per_quantity: the price of this item per quantity
-total: the final price paid for that line item so quantity * price_per_quantity
+total: the final price paid for that line item so quantity * price_per_quantity. If this is not visible leave it as null.
 
 Do not include subtotal, tax, VAT, payment method, change, balance, or loyalty adjustments as items unless they clearly affect the grand total as a receipt-level charge described above.
 
