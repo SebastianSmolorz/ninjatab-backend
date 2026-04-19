@@ -554,6 +554,10 @@ def claim_invite(request, invite_code: str, payload: ClaimInviteSchema):
     person.save()
     _sync_contacts_for_tab(tab)
 
+    with new_context():
+        identify_context(str(user.uuid))
+        ph_capture("invite_claimed", properties={"tab_id": str(tab.uuid)})
+
     return {"success": True}
 
 
@@ -597,6 +601,11 @@ def upgrade_tab(request, tab_id: str):
         raise HttpError(400, "Tab is already Pro")
     tab.is_pro = True
     tab.save(update_fields=["is_pro"])
+
+    with new_context():
+        identify_context(str(request.auth.uuid))
+        ph_capture("tab_upgraded", properties={"tab_id": str(tab.uuid)})
+
     return {"success": True}
 
 

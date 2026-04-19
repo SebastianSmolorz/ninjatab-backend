@@ -34,6 +34,8 @@ from ninjatab.auth.cookies import (
 )
 from ninjatab.auth.social import verify_google_id_token, verify_apple_id_token
 import logging
+from datetime import timedelta
+from posthog import new_context, identify_context, capture as ph_capture
 
 logger = logging.getLogger("app")
 
@@ -82,6 +84,14 @@ def verify_magic_link(request, payload: VerifyMagicLinkSchema):
     user_schema = AuthUserSchema.model_validate(user)
     response = JsonResponse({"user": user_schema.model_dump()})
     set_auth_cookies(response, access_token, refresh_token)
+
+    with new_context():
+        identify_context(str(user.uuid))
+        is_new = (timezone.now() - user.date_joined) < timedelta(minutes=5)
+        ph_capture("user_signed_up" if is_new else "user_logged_in", properties={
+            "method": "magic_link",
+        })
+
     return response
 
 
@@ -130,6 +140,13 @@ def social_login(request, payload: SocialLoginSchema):
     user_schema = AuthUserSchema.model_validate(user)
     response = JsonResponse({"user": user_schema.model_dump()})
     set_auth_cookies(response, access_token, refresh_token)
+
+    with new_context():
+        identify_context(str(user.uuid))
+        ph_capture("user_signed_up" if created else "user_logged_in", properties={
+            "method": payload.provider,
+        })
+
     return response
 
 
