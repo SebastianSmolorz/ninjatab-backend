@@ -1,0 +1,20 @@
+{
+  "document_annotation": {
+    "receipt_language": "Polish",
+    "receipt_language_code": "pl",
+    "items": [
+      {
+        "name": "GUB: G/D BUT: G (GUB: Normalny)",
+        "translated_name": "GUB: G/D BUT: G (GUB: Normal)",
+        "total": 49.0,
+        "quantity": 1,
+        "price_per_quantity": 49.0
+      }
+    ],
+    "receipt_total": 49.0,
+    "items_total": 49.0,
+    "receipt_establishment_name": "POLSKIE KOLEJE LINOWE S.A.",
+    "currency_code": "PLN",
+    "datetime_of_receipt": "2026-04-09T14:05:00"
+  }
+}

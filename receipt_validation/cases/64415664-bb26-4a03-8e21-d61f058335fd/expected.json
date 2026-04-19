@@ -1,0 +1,19 @@
+{
+    "document_annotation": {
+      "receipt_language": "English",
+      "items": [
+        {
+          "name": "Elf Bar 600 Refillable Pod Banana Ice 20mg/ml 2 X 2ml",
+          "translated_name": "Elf Bar 600 Refillable Pod Banana Ice 20mg/ml 2 X 2ml",
+          "total": 5.99,
+          "quantity": 1,
+          "price_per_quantity": 5.99
+        }
+      ],
+      "receipt_total": 5.99,
+      "items_total": 5.99,
+      "receipt_establishment_name": "TESCO",
+      "currency_code": "GBP",
+      "datetime_of_receipt": "2026-02-16"
+    }
+  }

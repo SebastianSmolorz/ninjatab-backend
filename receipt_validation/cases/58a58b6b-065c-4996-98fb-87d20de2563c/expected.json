@@ -1,0 +1,97 @@
+{
+  "document_annotation": {
+    "receipt_language": "Turkish",
+    "receipt_language_code": "tr",
+    "items": [
+      {
+        "name": "5 X ALFA 1919",
+        "translated_name": "5 X ALFA 1919",
+        "total": 3500,
+        "quantity": 5,
+        "price_per_quantity": 700
+      },
+      {
+        "name": "3 X IZGARA KOFTE",
+        "translated_name": "3 X IZGARA KOFTE",
+        "total": 2220,
+        "quantity": 3,
+        "price_per_quantity": 740
+      },
+      {
+        "name": "YUNAN SALATA",
+        "translated_name": "GREEK SALAD",
+        "total": 520,
+        "quantity": 1,
+        "price_per_quantity": 520
+      },
+      {
+        "name": "COCOA OAT SMOOTHIE",
+        "translated_name": "COCOA OAT SMOOTHIE",
+        "total": 400,
+        "quantity": 1,
+        "price_per_quantity": 400
+      },
+      {
+        "name": "\u00c7ITIR TAVUK",
+        "translated_name": "CRISPY CHICKEN",
+        "total": 560,
+        "quantity": 1,
+        "price_per_quantity": 560
+      },
+      {
+        "name": "SOCIETY BURGER",
+        "translated_name": "SOCIETY BURGER",
+        "total": 670,
+        "quantity": 1,
+        "price_per_quantity": 670
+      },
+      {
+        "name": "MANGO VIBE",
+        "translated_name": "MANGO VIBE",
+        "total": 350,
+        "quantity": 1,
+        "price_per_quantity": 350
+      },
+      {
+        "name": "BELFAST 50cl",
+        "translated_name": "BELFAST 50cl",
+        "total": 375,
+        "quantity": 1,
+        "price_per_quantity": 375
+      },
+      {
+        "name": "MATCHA BERRY",
+        "translated_name": "MATCHA BERRY",
+        "total": 350,
+        "quantity": 1,
+        "price_per_quantity": 350
+      },
+      {
+        "name": "RED BULL CLASSIC",
+        "translated_name": "RED BULL CLASSIC",
+        "total": 250,
+        "quantity": 1,
+        "price_per_quantity": 250
+      },
+      {
+        "name": "CORONA 35CL",
+        "translated_name": "CORONA 35CL",
+        "total": 450,
+        "quantity": 1,
+        "price_per_quantity": 450
+      },
+      {
+        "name": "EFES SISE 50 CL",
+        "translated_name": "EFES BOTTLE 50 CL",
+        "total": 320,
+        "quantity": 1,
+        "price_per_quantity": 320
+      }
+    ],
+    "receipt_total": 9965,
+    "items_total": 9965,
+    "receipt_establishment_name": "RED & WHITE",
+    "currency_code": "TRY",
+    "datetime_of_receipt": "2025-10-25T13:14:00"
+  }
+}

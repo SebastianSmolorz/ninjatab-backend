@@ -1,0 +1,19 @@
+{
+  "document_annotation": {
+    "receipt_language": "English",
+    "items": [
+      {
+        "name": "1 CYLINDER KEY",
+        "translated_name": "1 CYLINDER KEY",
+        "total": 5.5,
+        "quantity": 1,
+        "price_per_quantity": 5.5
+      }
+    ],
+    "receipt_total": 5.5,
+    "items_total": 5.5,
+    "receipt_establishment_name": "MABZ",
+    "currency_code": null,
+    "datetime_of_receipt": "2026-04-15"
+  }
+}

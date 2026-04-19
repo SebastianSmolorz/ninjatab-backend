@@ -1,0 +1,26 @@
+{
+  "document_annotation": {
+    "receipt_language": "English",
+    "items": [
+      {
+        "name": "ShortsSummerWomensAAADenlm-U",
+        "translated_name": "ShortsSummerWomensAAADenlm-U",
+        "total": 26.95,
+        "quantity": 1,
+        "price_per_quantity": 26.95
+      },
+      {
+        "name": "ShirtsNeutralMensAAA1990's-U",
+        "translated_name": "ShirtsNeutralMensAAA1990's-U",
+        "total": 25.16,
+        "quantity": 1,
+        "price_per_quantity": 25.16
+      }
+    ],
+    "receipt_total": 52.11,
+    "items_total": 52.11,
+    "receipt_establishment_name": "Beyond Retro Limited",
+    "currency_code": "GBP",
+    "datetime_of_receipt": "2025-04-03"
+  }
+}

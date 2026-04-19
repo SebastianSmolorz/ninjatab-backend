@@ -1,0 +1,90 @@
+{
+  "document_annotation": {
+    "receipt_language": "Polish",
+    "receipt_language_code": "pl",
+    "items": [
+      {
+        "name": "EDM SALAT JARZYNOWA 830G",
+        "translated_name": "EDM VEGETABLE SALAD 830G",
+        "quantity": 1,
+        "total": 1.49,
+        "price_per_quantity": 1.49
+      },
+      {
+        "name": "EDM BUR ZASMAZ 480G",
+        "translated_name": "EDM SMOOTH BUTTER 480G",
+        "total": 1.39,
+        "quantity": 1,
+        "price_per_quantity": 1.39
+      },
+      {
+        "name": "HIGH PROTEIN SEREK 200G",
+        "translated_name": "HIGH PROTEIN CHEESE 200G",
+        "quantity": 1,
+        "total": 0.89,
+        "price_per_quantity": 0.89
+      },
+      {
+        "name": "MASLANKA MLEKOVITA 1L",
+        "translated_name": "MASLANKA MLEKOVITA 1L",
+        "quantity": 1,
+        "total": 1.69,
+        "price_per_quantity": 1.69
+      },
+      {
+        "name": "HIGH PROTEIN SEREK 200G",
+        "translated_name": "HIGH PROTEIN CHEESE 200G",
+        "quantity": 1,
+        "total": 0.89,
+        "price_per_quantity": 0.89
+      },
+      {
+        "name": "SOK Z BURAKA SLON 500ML",
+        "translated_name": "BEETROOT JUICE 500ML",
+        "quantity": 1,
+        "total": 2.69,
+        "price_per_quantity": 2.69
+      },
+      {
+        "name": "SOURED CREAM 18% PT 200G",
+        "translated_name": "SOURED CREAM 18% FAT 200G",
+        "quantity": 1,
+        "total": 0.89,
+        "price_per_quantity": 0.89
+      },
+      {
+        "name": "HIGH PROTEIN SEREK 200G",
+        "translated_name": "HIGH PROTEIN CHEESE 200G",
+        "quantity": 1,
+        "total": 0.89,
+        "price_per_quantity": 0.89
+      },
+      {
+        "name": "BUTCHER ITEMS",
+        "translated_name": "BUTCHER ITEMS",
+        "quantity": 1,
+        "total": 6.76,
+        "price_per_quantity": 6.76
+      },
+      {
+        "name": "RUMIANEK HERBAPOL",
+        "translated_name": "RUMIANEK HERBAPOL",
+        "quantity": 1,
+        "total": 1.29,
+        "price_per_quantity": 1.29
+      },
+      {
+        "name": "GROCERY VAT",
+        "translated_name": "GROCERY VAT",
+        "quantity": 2,
+        "total": 9.98,
+        "price_per_quantity": 4.99
+      }
+    ],
+    "receipt_total": 28.85,
+    "items_total": 28.85,
+    "receipt_establishment_name": "TYMBARK SUPERMARKET",
+    "currency_code": "GBP",
+    "datetime_of_receipt": "2026-02-07T15:22:00"
+  }
+}

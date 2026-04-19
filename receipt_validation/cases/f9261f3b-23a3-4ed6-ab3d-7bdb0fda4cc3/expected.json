@@ -1,0 +1,27 @@
+{
+  "document_annotation": {
+    "receipt_language": "Slovak",
+    "receipt_language_code": "sk",
+    "items": [
+      {
+        "name": "Aqua Family Packet 3os",
+        "translated_name": "Aqua Family Packet 3os",
+        "total": 78,
+        "quantity": 3,
+        "price_per_quantity": 26
+      },
+      {
+        "name": "AP3h - Dospely",
+        "translated_name": "AP3h - Adult",
+        "total": 62,
+        "quantity": 2,
+        "price_per_quantity": 31
+      }
+    ],
+    "receipt_total": 140,
+    "items_total": 140,
+    "receipt_establishment_name": "AQUAPARK Poprad, s.r.o.",
+    "currency_code": "EUR",
+    "datetime_of_receipt": "2026-02-13T17:52:48"
+  }
+}
