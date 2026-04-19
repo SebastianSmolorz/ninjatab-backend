@@ -43,7 +43,7 @@ MIDDLEWARE = [
     "django.contrib.auth.middleware.AuthenticationMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
-    "posthog.integrations.django.PosthogContextMiddleware",
+    "ninjatab.middleware.AnonymousAwarePosthogMiddleware",
 ]
 
 ROOT_URLCONF = "ninjatab.urls"
