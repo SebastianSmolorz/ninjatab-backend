@@ -1,0 +1,55 @@
+{
+  "document_annotation": {
+    "receipt_language": "English",
+    "receipt_language_code": "en",
+    "items": [
+      {
+        "name": "IMIT.JEWELLER",
+        "translated_name": "IMIT.JEWELLER",
+        "total": 17.99,
+        "quantity": 1,
+        "price_per_quantity": 17.99
+      },
+      {
+        "name": "T-SHIRT",
+        "translated_name": "T-SHIRT",
+        "total": 17.99,
+        "quantity": 1,
+        "price_per_quantity": 17.99
+      },
+      {
+        "name": "HAT",
+        "translated_name": "HAT",
+        "total": 12.99,
+        "quantity": 1,
+        "price_per_quantity": 12.99
+      },
+      {
+        "name": "ACCESSORIES",
+        "translated_name": "ACCESSORIES",
+        "total": 8.99,
+        "quantity": 1,
+        "price_per_quantity": 8.99
+      },
+      {
+        "name": "IMIT.JEWELLER",
+        "translated_name": "IMIT.JEWELLER",
+        "total": 9.99,
+        "quantity": 1,
+        "price_per_quantity": 9.99
+      },
+      {
+        "name": "Bag L",
+        "translated_name": "Bag L",
+        "total": 0.15,
+        "quantity": 1,
+        "price_per_quantity": 0.15
+      }
+    ],
+    "receipt_total": 68.1,
+    "items_total": 68.1,
+    "receipt_establishment_name": "Pull & Bear Bristol",
+    "currency_code": "GBP",
+    "datetime_of_receipt": "2025-04-03T19:01:00"
+  }
+}

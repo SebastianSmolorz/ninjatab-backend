@@ -28,6 +28,12 @@ class Command(BaseCommand):
             help="Number of runs per strategy per case (default: 1)",
         )
         parser.add_argument(
+            "--sleep",
+            type=int,
+            default=0,
+            help="Seconds to sleep between runs (default: 0)",
+        )
+        parser.add_argument(
             "--output",
             default=None,
             help="Path to save full JSON output",
@@ -51,6 +57,7 @@ class Command(BaseCommand):
             strategy_names=strategy_names,
             runs_per_strategy=runs,
             strategies=STRATEGIES,
+            sleep_between_runs=options["sleep"],
         )
 
         if not results["cases"]:
@@ -82,6 +89,7 @@ class Command(BaseCommand):
             ("mean_currency_match", "Currency"),
             ("mean_language_match", "Language"),
             ("mean_date_match", "Date"),
+            ("stability_score", "Stability"),
             ("success_rate", "Success"),
         ]
         header = f"{'Establishment':<20}  {'Strategy':<28}  " + "  ".join(f"{label:<10}" for _, label in score_keys)

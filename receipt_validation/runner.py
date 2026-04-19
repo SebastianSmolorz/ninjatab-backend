@@ -1,6 +1,7 @@
 import base64
 import json
 import mimetypes
+import time
 import traceback
 from datetime import datetime, timezone
 from pathlib import Path
@@ -71,6 +72,14 @@ def run_strategy(strategy: dict, image_path: Path, case_uuid: str) -> dict:
     raise ValueError(f"Unknown api: {api!r}")
 
 
+def _stdev(values: list) -> Optional[float]:
+    filtered = [v for v in values if v is not None]
+    if len(filtered) < 2:
+        return None
+    mean = sum(filtered) / len(filtered)
+    return (sum((v - mean) ** 2 for v in filtered) / len(filtered)) ** 0.5
+
+
 def _mean(values: list) -> Optional[float]:
     filtered = [v for v in values if v is not None]
     return sum(filtered) / len(filtered) if filtered else None
@@ -81,6 +90,7 @@ def run_pipeline(
     strategy_names: Optional[list[str]],
     runs_per_strategy: int,
     strategies: list[dict],
+    sleep_between_runs: int = 0,
 ) -> dict:
     from receipt_validation.strategies import STRATEGIES_BY_NAME
 
@@ -96,21 +106,25 @@ def run_pipeline(
         "cases": {},
     }
 
+    # Initialise output structure
     for case_uuid, case_data in cases.items():
-        image_path = case_data["image_path"]
         expected = case_data["expected"]
         establishment = (expected.get("document_annotation") or {}).get("receipt_establishment_name")
-        case_out: dict = {
-            "image_path": str(image_path.relative_to(Path(__file__).parent.parent)),
+        output["cases"][case_uuid] = {
+            "image_path": str(case_data["image_path"].relative_to(Path(__file__).parent.parent)),
             "receipt_establishment_name": establishment,
-            "strategies": {},
+            "strategies": {s["name"]: {"runs": []} for s in selected_strategies},
         }
 
-        for strategy in selected_strategies:
-            strategy_name = strategy["name"]
-            runs_out = []
-
-            for run_idx in range(1, runs_per_strategy + 1):
+    # runs × cases × strategies so consecutive runs are spread apart
+    for run_idx in range(1, runs_per_strategy + 1):
+        if run_idx > 1 and sleep_between_runs > 0:
+            time.sleep(sleep_between_runs)
+        for case_uuid, case_data in cases.items():
+            image_path = case_data["image_path"]
+            expected = case_data["expected"]
+            for strategy in selected_strategies:
+                strategy_name = strategy["name"]
                 error = None
                 result = None
                 scores = None
@@ -119,26 +133,30 @@ def run_pipeline(
                     scores = score_result(result, expected)
                 except Exception:
                     error = traceback.format_exc()
+                print(".", end="", flush=True)
 
-                runs_out.append({
+                output["cases"][case_uuid]["strategies"][strategy_name]["runs"].append({
                     "run": run_idx,
                     "result": result,
                     "scores": scores,
                     "error": error,
                 })
 
-            score_keys = ["total_score", "receipt_total_accuracy", "items_total_accuracy", "item_count_match", "items_sum_vs_receipt_total", "items_sum_vs_items_total", "item_name_fuzzy_match", "item_translated_name_fuzzy_match", "currency_match", "language_match", "date_match"]
+    # Compute aggregates after all runs complete
+    print()
+    score_keys = ["total_score", "receipt_total_accuracy", "items_total_accuracy", "item_count_match", "items_sum_vs_receipt_total", "items_sum_vs_items_total", "item_name_fuzzy_match", "item_translated_name_fuzzy_match", "currency_match", "language_match", "date_match"]
+    for case_uuid, case_out in output["cases"].items():
+        for strategy_name, strategy_out in case_out["strategies"].items():
+            runs_out = strategy_out["runs"]
             aggregate = {
                 f"mean_{k}": _mean([r["scores"][k] for r in runs_out if r["scores"]])
                 for k in score_keys
             }
             aggregate["success_rate"] = sum(1 for r in runs_out if r["error"] is None) / runs_per_strategy
-
-            case_out["strategies"][strategy_name] = {
-                "runs": runs_out,
-                "aggregate": aggregate,
-            }
-
-        output["cases"][case_uuid] = case_out
+            total_scores = [r["scores"]["total_score"] for r in runs_out if r["scores"]]
+            sd = _stdev(total_scores)
+            aggregate["stability_score"] = max(0.0, 1.0 - sd) if sd is not None else None
+            strategy_out["aggregate"] = aggregate
+    print()
 
     return output

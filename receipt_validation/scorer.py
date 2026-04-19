@@ -62,7 +62,7 @@ def score_result(result: dict, expected: dict) -> dict:
 
     # Sum of result item totals vs receipt_total and items_total
     result_item_totals = [i["total"] for i in result_items if i.get("total") is not None]
-    result_items_sum = sum(result_item_totals) if result_item_totals else None
+    result_items_sum = sum(result_item_totals) if result_item_totals else 0.0
     items_sum_vs_receipt_total = _total_accuracy(result_items_sum, expected_ann.get("receipt_total"))
     items_sum_vs_items_total = _total_accuracy(result_items_sum, expected_ann.get("items_total"))
 
