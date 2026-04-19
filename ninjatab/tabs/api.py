@@ -151,8 +151,9 @@ def create_tab(request, payload: TabCreateSchema):
     ).get(id=tab.id)
 
     with new_context():
-        identify_context("$anon")
+        identify_context(str(request.auth.uuid))
         ph_capture("tab_created", properties={
+            "tab_id": str(tab.uuid),
             "people_count": len(payload.people),
             "default_currency": payload.default_currency,
             "settlement_currency": payload.settlement_currency,
@@ -335,8 +336,9 @@ def close_tab(request, tab_id: str):
     tab.save()
 
     with new_context():
-        identify_context("$anon")
+        identify_context(str(request.auth.uuid))
         ph_capture("tab_settled", properties={
+            "tab_id": str(tab.uuid),
             "bill_count": len(bills),
             "settlement_currency": tab.settlement_currency,
             "total_minor_units": total,
@@ -422,8 +424,9 @@ def simplify_tab(request, tab_id: str):
     settlements = Settlement.objects.filter(tab=tab).select_related('from_person__user', 'to_person__user')
 
     with new_context():
-        identify_context("$anon")
+        identify_context(str(request.auth.uuid))
         ph_capture("tab_simplified", properties={
+            "tab_id": str(tab.uuid),
             "settlement_count": len(settlements),
             "settlement_currency": settlement_currency,
         })
@@ -439,7 +442,7 @@ def simplify_tab(request, tab_id: str):
 def mark_settlement_paid(request, settlement_id: str):
     """Mark a settlement as paid"""
     settlement = get_object_or_404(
-        Settlement.objects.select_related('from_person__user', 'to_person__user'),
+        Settlement.objects.select_related('tab', 'from_person__user', 'to_person__user'),
         uuid=settlement_id,
         tab__in=Tab.objects.accessible_by(request.auth)
     )
@@ -447,8 +450,9 @@ def mark_settlement_paid(request, settlement_id: str):
     settlement.save()
 
     with new_context():
-        identify_context("$anon")
+        identify_context(str(request.auth.uuid))
         ph_capture("settlement_marked_paid", properties={
+            "tab_id": str(settlement.tab.uuid),
             "amount_minor_units": settlement.amount,
             "currency": settlement.currency,
         })
@@ -578,8 +582,8 @@ def upload_receipt(request, tab_id: str, file: UploadedFile = File(...)):
     increment_scan_count(tab)
 
     with new_context():
-        identify_context("$anon")
-        ph_capture("receipt_scanned")
+        identify_context(str(request.auth.uuid))
+        ph_capture("receipt_scanned", properties={"tab_id": str(tab.uuid)})
 
     return result
 
@@ -655,8 +659,10 @@ def create_bill(request, payload: BillCreateSchema):
             _create_person_claims(line_item, line_item_data.person_splits, tab)
 
     with new_context():
-        identify_context("$anon")
+        identify_context(str(request.auth.uuid))
         ph_capture("bill_created", properties={
+            "tab_id": str(tab.uuid),
+            "bill_id": str(bill.uuid),
             "line_item_count": len(payload.line_items),
             "currency": payload.currency,
         })
@@ -738,8 +744,10 @@ def submit_bill_splits(request, bill_id: str, payload: BillSplitSubmitSchema):
         _create_person_claims(line_item, line_item_split.person_splits, bill.tab)
 
     with new_context():
-        identify_context("$anon")
+        identify_context(str(request.auth.uuid))
         ph_capture("bill_splits_submitted", properties={
+            "tab_id": str(bill.tab.uuid),
+            "bill_id": str(bill.uuid),
             "line_item_count": len(payload.line_item_splits),
         })
 
