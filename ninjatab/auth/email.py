@@ -97,3 +97,24 @@ def send_magic_link(email: str, token: str) -> None:
         },
     )
     resp.raise_for_status()
+
+
+def send_deletion_request_email(user_id: int, email: str) -> None:
+    if settings.DEBUG:
+        print(f"\n[DELETION REQUEST] user_id={user_id} email={email}\n")
+        return
+
+    resp = requests.post(
+        "https://api.brevo.com/v3/smtp/email",
+        headers={
+            "api-key": settings.BREVO_API_KEY,
+            "Content-Type": "application/json",
+        },
+        json={
+            "sender": {"name": "Tab Ninja", "email": "seb@tab.ninja"},
+            "to": [{"email": "seb@tab.ninja"}],
+            "subject": f"Account deletion request: {email}",
+            "textContent": f"User {email} (id={user_id}) has requested account deletion.",
+        },
+    )
+    resp.raise_for_status()

@@ -22,7 +22,7 @@ from ninjatab.auth.jwt_utils import (
     decode_token,
 )
 from ninjatab.auth.bearer import JWTBearer
-from ninjatab.auth.email import send_magic_link
+from ninjatab.auth.email import send_magic_link, send_deletion_request_email
 from ninjatab.auth.rate_limit import check_magic_link_rate_limit
 from django.conf import settings as django_settings
 from django.utils import timezone
@@ -38,6 +38,7 @@ from datetime import timedelta
 from posthog import new_context, identify_context, capture as ph_capture
 
 logger = logging.getLogger("app")
+gdpr_logger = logging.getLogger("gdpr")
 
 User = get_user_model()
 
@@ -195,3 +196,11 @@ def update_me(request, payload: UpdateProfileSchema):
     user.first_name = payload.first_name.strip()
     user.save(update_fields=["first_name"])
     return user
+
+
+@auth_router.post("/me/request-deletion", response=LogoutResponseSchema, auth=JWTBearer())
+def request_deletion(request):
+    user = request.auth
+    gdpr_logger.info("account_deletion_requested user_id=%s email=%s", user.id, user.email)
+    send_deletion_request_email(user.id, user.email)
+    return {"success": True}

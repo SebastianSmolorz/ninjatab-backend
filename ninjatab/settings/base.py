@@ -172,10 +172,21 @@ LOGGING = {
             "filename": LOG_DIR / "app.log",
             "formatter": "verbose",
         },
+        "gdpr_file": {
+            "level": "INFO",
+            "class": "logging.FileHandler",
+            "filename": LOG_DIR / "gdpr.log",
+            "formatter": "verbose",
+        },
     },
     "loggers": {
         "app": {
             "handlers": ["app_file"],
+            "level": "INFO",
+            "propagate": False,
+        },
+        "gdpr": {
+            "handlers": ["gdpr_file"],
             "level": "INFO",
             "propagate": False,
         },
