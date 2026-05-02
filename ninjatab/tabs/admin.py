@@ -30,8 +30,8 @@ class BillInline(MoneyAdminMixin, admin.TabularInline):
     extra = 0
     can_delete = False
     show_change_link = True
-    fields = ['uuid', 'description', 'date', 'currency', 'display_total', 'status', 'paid_by']
-    readonly_fields = ['uuid', 'description', 'date', 'currency', 'display_total', 'status', 'paid_by']
+    fields = ['uuid', 'description', 'date', 'currency', 'display_total', 'status', 'paid_by', 'line_item_count']
+    readonly_fields = ['uuid', 'description', 'date', 'currency', 'display_total', 'status', 'paid_by', 'line_item_count']
     ordering = ['-date']
 
     def has_add_permission(self, request, obj=None):
@@ -41,23 +41,58 @@ class BillInline(MoneyAdminMixin, admin.TabularInline):
         return self.format_money(obj._total_amount, obj.currency)
     display_total.short_description = 'Total'
 
+    def line_item_count(self, obj):
+        from django.urls import reverse
+        count = obj._line_item_count
+        url = reverse('admin:tabs_lineitem_changelist') + f'?bill__id__exact={obj.pk}'
+        return format_html('<a href="{}">{} item{}</a>', url, count, '' if count == 1 else 's')
+    line_item_count.short_description = 'Line Items'
+
     def get_queryset(self, request):
         return (
             super().get_queryset(request)
             .select_related('paid_by')
-            .annotate(_total_amount=Sum('line_items__value'))
+            .annotate(
+                _total_amount=Sum('line_items__value'),
+                _line_item_count=Count('line_items'),
+            )
         )
+
+
+class SettlementInline(MoneyAdminMixin, admin.TabularInline):
+    model = Settlement
+    extra = 0
+    can_delete = False
+    show_change_link = True
+    fields = ['from_person', 'to_person', 'display_amount']
+    readonly_fields = ['from_person', 'to_person', 'display_amount']
+
+    def has_add_permission(self, request, obj=None):
+        return False
+
+    def display_amount(self, obj):
+        return self.format_money(obj.amount, obj.currency)
+    display_amount.short_description = 'Amount'
+
+    def get_queryset(self, request):
+        return super().get_queryset(request).select_related('from_person', 'to_person')
 
 
 @admin.register(Tab)
 class TabAdmin(admin.ModelAdmin):
     list_display = ['name', 'uuid', 'default_currency', 'settlement_currency', 'is_pro', 'is_settled', 'is_archived', 'created_by', 'created_at']
     list_filter = ['is_pro', 'is_settled', 'is_archived', 'default_currency', 'settlement_currency', 'created_at']
-    search_fields = ['name', 'description', 'uuid']
+    search_fields = ['name', 'description', 'uuid', 'created_by__uuid']
     readonly_fields = ['uuid', 'created_at', 'updated_at']
     raw_id_fields = ['created_by']
     show_full_result_count = False
-    inlines = [TabPersonInline, BillInline]
+    inlines = [TabPersonInline, BillInline, SettlementInline]
+
+    def get_inline_instances(self, request, obj=None):
+        instances = super().get_inline_instances(request, obj)
+        if obj is None or not obj.settlements.exists():
+            return [i for i in instances if not isinstance(i, SettlementInline)]
+        return instances
 
     fieldsets = (
         ('Basic Information', {
@@ -80,7 +115,7 @@ class TabAdmin(admin.ModelAdmin):
 class TabPersonAdmin(admin.ModelAdmin):
     list_display = ['name', 'uuid', 'tab', 'user_link', 'created_at']
     list_filter = [('tab', RelatedOnlyFieldListFilter), 'created_at']
-    search_fields = ['name', 'uuid', 'user__username', 'user__email']
+    search_fields = ['name', 'uuid', 'user__username', 'user__email', 'user__uuid']
     readonly_fields = ['uuid', 'created_at', 'updated_at']
     raw_id_fields = ['tab', 'user']
 
@@ -354,6 +389,16 @@ class ContactAdmin(admin.ModelAdmin):
     search_fields = ['uuid', 'owner__email', 'owner__first_name', 'contact_user__email', 'contact_user__first_name']
     readonly_fields = ['uuid', 'created_at', 'updated_at']
     raw_id_fields = ['owner', 'contact_user']
+
+    fieldsets = (
+        ('Contact Information', {
+            'fields': ('uuid', 'owner', 'contact_user')
+        }),
+        ('Timestamps', {
+            'fields': ('created_at', 'updated_at'),
+            'classes': ('collapse',)
+        }),
+    )
 
     def get_queryset(self, request):
         qs = super().get_queryset(request)

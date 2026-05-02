@@ -9,6 +9,7 @@ class TabsConfig(AppConfig):
     name = "ninjatab.tabs"
 
     def ready(self):
+        import ninjatab.tabs.signals  # noqa: F401
         import posthog
 
         posthog.api_key = settings.POSTHOG_PROJECT_TOKEN
