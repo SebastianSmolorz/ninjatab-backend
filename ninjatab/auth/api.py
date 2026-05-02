@@ -61,6 +61,11 @@ def magic_link(request, payload: MagicLinkSchema):
     user.before_last_magic_link_sent_dt = user.last_magic_link_sent_dt
     user.last_magic_link_sent_dt = timezone.now()
     user.save(update_fields=["last_magic_link_sent_dt", "before_last_magic_link_sent_dt"])
+
+    with new_context():
+        identify_context(str(user.uuid))
+        ph_capture("magic_link_requested", properties={"method": "magic_link"})
+
     return {"success": True}
 
 
@@ -111,6 +116,12 @@ def social_login(request, payload: SocialLoginSchema):
         logger.info("Token verified: email=%s", provider_data.get("email"))
     except Exception as e:
         logger.error("Social login token verification failed: provider=%s, error_type=%s, error=%s", payload.provider, type(e).__name__, str(e), exc_info=True)
+        with new_context():
+            identify_context("$anon")
+            ph_capture("social_login_failed", properties={
+                "provider": payload.provider,
+                "reason_bucket": type(e).__name__,
+            })
         raise HttpError(401, "Invalid or expired token")
 
     email = provider_data["email"].lower()
@@ -163,8 +174,14 @@ def refresh(request):
             raise HttpError(401, "Invalid token type")
         user = User.objects.get(id=int(token_data["sub"]))
     except (jwt.ExpiredSignatureError, jwt.InvalidTokenError):
+        with new_context():
+            identify_context("$anon")
+            ph_capture("auth_refresh_failed", properties={"reason": "invalid_token"})
         raise HttpError(401, "Invalid or expired refresh token")
     except User.DoesNotExist:
+        with new_context():
+            identify_context("$anon")
+            ph_capture("auth_refresh_failed", properties={"reason": "user_not_found"})
         raise HttpError(401, "User not found")
 
     if not user.is_active:
