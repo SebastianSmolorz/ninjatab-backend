@@ -25,6 +25,30 @@ class TabPersonInline(admin.TabularInline):
         return super().get_queryset(request).select_related('user')
 
 
+class BillInline(MoneyAdminMixin, admin.TabularInline):
+    model = Bill
+    extra = 0
+    can_delete = False
+    show_change_link = True
+    fields = ['uuid', 'description', 'date', 'currency', 'display_total', 'status', 'paid_by']
+    readonly_fields = ['uuid', 'description', 'date', 'currency', 'display_total', 'status', 'paid_by']
+    ordering = ['-date']
+
+    def has_add_permission(self, request, obj=None):
+        return False
+
+    def display_total(self, obj):
+        return self.format_money(obj._total_amount, obj.currency)
+    display_total.short_description = 'Total'
+
+    def get_queryset(self, request):
+        return (
+            super().get_queryset(request)
+            .select_related('paid_by')
+            .annotate(_total_amount=Sum('line_items__value'))
+        )
+
+
 @admin.register(Tab)
 class TabAdmin(admin.ModelAdmin):
     list_display = ['name', 'uuid', 'default_currency', 'settlement_currency', 'is_pro', 'is_settled', 'is_archived', 'created_by', 'created_at']
@@ -33,7 +57,7 @@ class TabAdmin(admin.ModelAdmin):
     readonly_fields = ['uuid', 'created_at', 'updated_at']
     raw_id_fields = ['created_by']
     show_full_result_count = False
-    inlines = [TabPersonInline]
+    inlines = [TabPersonInline, BillInline]
 
     fieldsets = (
         ('Basic Information', {
