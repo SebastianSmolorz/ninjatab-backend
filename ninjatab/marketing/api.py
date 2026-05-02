@@ -3,7 +3,7 @@ from ninja.errors import HttpError
 from posthog import new_context, identify_context, capture as ph_capture
 
 from ninjatab.marketing.models import WaitlistEntry, WaitlistPageView
-from ninjatab.marketing.schemas import WaitlistCreateSchema, WaitlistResponseSchema, AppInstallSchema
+from ninjatab.marketing.schemas import WaitlistCreateSchema, WaitlistResponseSchema
 
 marketing_router = Router(tags=["marketing"])
 
@@ -24,12 +24,4 @@ def join_waitlist(request, payload: WaitlistCreateSchema):
         identify_context("$anon")
         ph_capture("waitlist_joined", properties={"platform": payload.platform})
 
-    return {"success": True}
-
-
-@marketing_router.post("/install", response=WaitlistResponseSchema)
-def app_install(request, payload: AppInstallSchema):
-    with new_context():
-        identify_context("$anon")
-        ph_capture("app_installed", properties={"platform": payload.platform})
     return {"success": True}
