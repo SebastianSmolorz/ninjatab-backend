@@ -28,13 +28,13 @@ def send_magic_link(email: str, token: str) -> None:
               <!-- Logo -->
               <tr>
                 <td align="center" style="padding: 32px 40px 16px;">
-                  <img src="{logo_url}" alt="Tab Ninja" width="80" style="display: block;" />
+                  <img src="{logo_url}" alt="Ninja Tab" width="80" style="display: block;" />
                 </td>
               </tr>
               <!-- Heading -->
               <tr>
                 <td align="center" style="padding: 0 40px 8px;">
-                  <h1 style="margin: 0; font-size: 22px; font-weight: 700; color: #111827;">Sign in to Tab Ninja</h1>
+                  <h1 style="margin: 0; font-size: 22px; font-weight: 700; color: #111827;">Sign in to Ninja Tab</h1>
                 </td>
               </tr>
               <!-- Body text -->
@@ -90,9 +90,9 @@ def send_magic_link(email: str, token: str) -> None:
             "Content-Type": "application/json",
         },
         json={
-            "sender": {"name": "Tab Ninja", "email": "seb@tab.ninja"},
+            "sender": {"name": "Ninja Tab", "email": "seb@tab.ninja"},
             "to": [{"email": email}],
-            "subject": "Your Tab Ninja sign-in link",
+            "subject": "Your Ninja Tab sign-in link",
             "htmlContent": html,
         },
     )
@@ -111,7 +111,7 @@ def send_deletion_request_email(user_id: int, email: str) -> None:
             "Content-Type": "application/json",
         },
         json={
-            "sender": {"name": "Tab Ninja", "email": "seb@tab.ninja"},
+            "sender": {"name": "Ninja Tab", "email": "seb@tab.ninja"},
             "to": [{"email": "seb@tab.ninja"}],
             "subject": f"Account deletion request: {email}",
             "textContent": f"User {email} (id={user_id}) has requested account deletion.",
