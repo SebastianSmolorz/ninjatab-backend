@@ -574,6 +574,10 @@ def claim_invite(request, invite_code: str, payload: ClaimInviteSchema):
     person.save()
     _sync_contacts_for_tab(tab)
 
+    if not authed_user:
+        token = create_magic_token(user.id)
+        send_magic_link(payload.email.lower(), token)
+
     with new_context():
         identify_context(str(user.uuid))
         ph_capture("invite_claimed", properties={"tab_id": str(tab.uuid)})
