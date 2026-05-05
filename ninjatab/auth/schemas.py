@@ -1,3 +1,4 @@
+from django.conf import settings as django_settings
 from pydantic import BaseModel, ConfigDict, EmailStr, model_validator
 
 
@@ -20,6 +21,7 @@ class AuthUserSchema(BaseModel):
     email: str
     first_name: str
     last_name: str
+    minimum_app_version: str
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -32,6 +34,7 @@ class AuthUserSchema(BaseModel):
                 'email': data.email,
                 'first_name': data.first_name,
                 'last_name': data.last_name,
+                'minimum_app_version': django_settings.MINIMUM_APP_VERSION,
             }
         return data
 

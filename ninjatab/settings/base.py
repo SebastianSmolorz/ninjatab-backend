@@ -152,6 +152,9 @@ MAGIC_LINK_EXTENDED_COOLDOWN = 120   # seconds
 FREE_TAB_MAX_BILLS = 7
 FREE_TAB_MAX_ITEMISED_BILLS = 1
 
+# Minimum mobile app version required (set to e.g. "2.0.0" to force update on older clients)
+MINIMUM_APP_VERSION = env.str("MINIMUM_APP_VERSION", default="0.0.0")
+
 # Logging
 LOG_DIR = BASE_DIR.parent / "logs"
 LOG_DIR.mkdir(exist_ok=True)
