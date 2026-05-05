@@ -40,6 +40,7 @@ class BaseModel(models.Model):
         abstract = True
 
 
+
 class TabManager(models.Manager):
     def accessible_by(self, user):
         return self.filter(

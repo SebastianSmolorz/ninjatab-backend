@@ -1,8 +1,12 @@
 import base64
 import uuid
+import logging
+import sentry_sdk
+
 from datetime import datetime
 
-from ninja import Router, UploadedFile, File
+
+from ninja import Router, Schema, UploadedFile, File
 from ninja.errors import HttpError
 from django.conf import settings
 from django.shortcuts import get_object_or_404
@@ -21,15 +25,13 @@ from ninjatab.auth.jwt_utils import create_magic_token
 from ninjatab.auth.email import send_magic_link
 from ninjatab.tabs.limits import check_bill_limit, check_itemised_limit
 from ninjatab.tabs.demo import create_demo_tab as _create_demo_tab
+from posthog import new_context, identify_context, capture as ph_capture
+
 
 User = get_user_model()
 
 tab_router = Router(tags=["tabs"], auth=JWTBearer())
 bill_router = Router(tags=["bills"], auth=JWTBearer())
-
-import logging
-import sentry_sdk
-from posthog import new_context, identify_context, capture as ph_capture
 
 logger = logging.getLogger("app")
 
@@ -977,3 +979,5 @@ def delete_bill(request, bill_id: str):
         })
 
     return {"success": True}
+
+

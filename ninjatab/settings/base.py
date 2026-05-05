@@ -30,6 +30,7 @@ INSTALLED_APPS = [
     "ninjatab.currencies",
     "ninjatab.tabs",
     "ninjatab.marketing",
+    "ninjatab.utilities",
 ]
 
 AUTH_USER_MODEL = "ninjatab_auth.User"
