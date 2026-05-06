@@ -150,7 +150,7 @@ def social_login(request, payload: SocialLoginSchema):
     refresh_token = create_refresh_token(user.id)
 
     user_schema = AuthUserSchema.model_validate(user)
-    response = JsonResponse({"user": user_schema.model_dump()})
+    response = JsonResponse({"user": user_schema.model_dump(), "is_new": created})
     set_auth_cookies(response, access_token, refresh_token)
 
     with new_context():

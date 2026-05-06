@@ -41,6 +41,7 @@ class AuthUserSchema(BaseModel):
 
 class TokenResponseSchema(BaseModel):
     user: AuthUserSchema
+    is_new: bool = False
 
 
 class RefreshResponseSchema(BaseModel):
