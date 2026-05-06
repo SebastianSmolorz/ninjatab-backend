@@ -21,6 +21,7 @@ class AuthUserSchema(BaseModel):
     email: str
     first_name: str
     last_name: str
+    analytics_opted_in: bool
     minimum_app_version: str
 
     model_config = ConfigDict(from_attributes=True)
@@ -34,6 +35,7 @@ class AuthUserSchema(BaseModel):
                 'email': data.email,
                 'first_name': data.first_name,
                 'last_name': data.last_name,
+                'analytics_opted_in': data.analytics_opted_in,
                 'minimum_app_version': django_settings.MINIMUM_APP_VERSION,
             }
         return data
@@ -54,6 +56,7 @@ class LogoutResponseSchema(BaseModel):
 
 class UpdateProfileSchema(BaseModel):
     first_name: str
+    analytics_opted_in: bool | None = None
 
 
 class SocialLoginSchema(BaseModel):

@@ -211,7 +211,11 @@ def me(request):
 def update_me(request, payload: UpdateProfileSchema):
     user = request.auth
     user.first_name = payload.first_name.strip()
-    user.save(update_fields=["first_name"])
+    update_fields = ["first_name"]
+    if payload.analytics_opted_in is not None:
+        user.analytics_opted_in = payload.analytics_opted_in
+        update_fields.append("analytics_opted_in")
+    user.save(update_fields=update_fields)
     return user
 
 
