@@ -289,6 +289,9 @@ class Settlement(BaseModel):
 
     class Meta:
         ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['tab', 'paid']),
+        ]
 
     def __str__(self):
         amount = minor_to_decimal(self.amount, self.currency)

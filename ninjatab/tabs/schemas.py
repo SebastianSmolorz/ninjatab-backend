@@ -516,6 +516,7 @@ class TabListSchema(BaseModel):
     is_demo: bool
     bill_count: int
     people_count: int
+    all_settlements_paid: bool = True
     created_at: datetime
     updated_at: datetime
 

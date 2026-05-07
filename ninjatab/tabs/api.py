@@ -11,7 +11,7 @@ from ninja.errors import HttpError
 from django.conf import settings
 from django.shortcuts import get_object_or_404
 from django.db import transaction
-from django.db.models import Q, Count, OuterRef, Subquery, Sum, IntegerField
+from django.db.models import Q, Count, Exists, OuterRef, Subquery, Sum, IntegerField
 from django.db.models.functions import Coalesce
 from django.contrib.auth import get_user_model
 
@@ -167,9 +167,11 @@ def create_tab(request, payload: TabCreateSchema):
 @tab_router.get("/", response=CursorPageSchema[TabListSchema])
 def list_tabs(request, cursor: str = None, archived: bool = False):
     """List tabs. Pass ?archived=true to list archived (deleted) tabs instead of active ones."""
+    unpaid_settlements = Settlement.objects.filter(tab=OuterRef('pk'), paid=False)
     qs = Tab.objects.accessible_by(request.auth).filter(is_archived=archived).annotate(
         bill_count=Count('bills', distinct=True),
         people_count=Count('people', distinct=True),
+        all_settlements_paid=~Exists(unpaid_settlements),
     )
     items, next_cursor = _apply_tab_cursor(qs, cursor)
     return {"items": items, "next_cursor": next_cursor}
