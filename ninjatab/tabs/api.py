@@ -165,9 +165,9 @@ def create_tab(request, payload: TabCreateSchema):
 
 
 @tab_router.get("/", response=CursorPageSchema[TabListSchema])
-def list_tabs(request, cursor: str = None):
-    """List all tabs"""
-    qs = Tab.objects.accessible_by(request.auth).filter(is_archived=False).annotate(
+def list_tabs(request, cursor: str = None, archived: bool = False):
+    """List tabs. Pass ?archived=true to list archived (deleted) tabs instead of active ones."""
+    qs = Tab.objects.accessible_by(request.auth).filter(is_archived=archived).annotate(
         bill_count=Count('bills', distinct=True),
         people_count=Count('people', distinct=True),
     )
@@ -309,8 +309,10 @@ def update_tab(request, tab_id: str, payload: TabUpdateSchema):
 
 @tab_router.delete("/{tab_id}")
 def delete_tab(request, tab_id: str):
-    """Delete a tab"""
+    """Hard-delete a tab. Only allowed for demo tabs — real tabs must be archived instead."""
     tab = get_object_or_404(Tab.objects.accessible_by(request.auth), uuid=tab_id)
+    if not tab.is_demo:
+        raise HttpError(400, "Only demo tabs can be deleted. Archive the tab instead.")
     tab.delete()
     return {"success": True}
 
