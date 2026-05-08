@@ -14,3 +14,7 @@ class WaitlistCreateSchema(BaseModel):
 
 class WaitlistResponseSchema(BaseModel):
     success: bool
+
+
+class AppInstallSchema(BaseModel):
+    platform: Platform
