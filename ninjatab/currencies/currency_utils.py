@@ -1,8 +1,23 @@
 from decimal import Decimal
 
 CURRENCY_DECIMAL_PLACES: dict[str, int] = {
+    # Zero-decimal currencies (ISO 4217 + project convention)
     'JPY': 0,
+    'KRW': 0,
+    'VND': 0,
+    'ISK': 0,
     'HUF': 0,
+    'CLP': 0,
+    'PYG': 0,
+    'RWF': 0,
+    'UGX': 0,
+    'XAF': 0,
+    'XOF': 0,
+    'XPF': 0,
+    # Three-decimal currencies (ISO 4217)
+    'JOD': 3,
+    'OMR': 3,
+    'TND': 3,
 }
 
 

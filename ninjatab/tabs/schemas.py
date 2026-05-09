@@ -8,6 +8,7 @@ from enum import Enum
 
 from ninjatab.currencies.currency_utils import minor_to_decimal
 from ninjatab.currencies.exchange import convert_amount, ExchangeRateNotFoundError
+from ninjatab.currencies.models import Currency
 
 T = TypeVar('T')
 
@@ -17,21 +18,13 @@ class CursorPageSchema(BaseModel, Generic[T]):
     next_cursor: Optional[str] = None
 
 
-class CurrencyEnum(str, Enum):
-    USD = 'USD'
-    EUR = 'EUR'
-    GBP = 'GBP'
-    JPY = 'JPY'
-    CAD = 'CAD'
-    TRY = 'TRY'
-    PLN = 'PLN'
-    CZK = 'CZK'
-    AUD = 'AUD'
-    CHF = 'CHF'
-    HUF = 'HUF'
-    BGN = 'BGN'
-    MXN = 'MXN'
-    TBH = 'THB'
+# Mirror of currencies.models.Currency for Pydantic schemas. Generated from the
+# canonical Django enum so the two stay in sync automatically.
+CurrencyEnum = Enum(  # type: ignore[misc]
+    'CurrencyEnum',
+    {code: code for code in Currency.values},
+    type=str,
+)
 
 
 class SplitTypeEnum(str, Enum):

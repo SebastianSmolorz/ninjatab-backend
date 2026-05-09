@@ -7,17 +7,7 @@ from enum import Enum
 from datetime import date
 from uuid6 import uuid7
 from ninjatab.currencies.currency_utils import minor_to_decimal
-
-
-class Currency(models.TextChoices):
-    USD = 'USD', 'US Dollar'
-    EUR = 'EUR', 'Euro'
-    GBP = 'GBP', 'British Pound'
-    JPY = 'JPY', 'Japanese Yen'
-    CAD = 'CAD', 'Canadian Dollar'
-    TRY = 'TRY', 'Turkish Lira'
-    PLN = 'PLN', 'Polish Złoty'
-    CZK = 'CZK', 'Czech Crown'
+from ninjatab.currencies.models import Currency  # re-exported for backward compatibility
 
 
 class SplitType(models.TextChoices):
