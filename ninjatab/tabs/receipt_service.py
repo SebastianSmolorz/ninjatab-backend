@@ -9,7 +9,8 @@ from django.conf import settings
 from django.db.models import F
 from django.utils import timezone
 from pydantic import BaseModel
-from mistralai import Mistral, ImageURLChunk
+from mistralai.client import Mistral
+from mistralai.client.models import ImageURLChunk
 from mistralai.extra import response_format_from_pydantic_model
 
 import sentry_sdk

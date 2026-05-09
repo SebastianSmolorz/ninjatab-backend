@@ -8,7 +8,8 @@ from pathlib import Path
 from typing import Optional
 
 from django.conf import settings
-from mistralai import Mistral, ImageURLChunk
+from mistralai.client import Mistral
+from mistralai.client.models import ImageURLChunk
 from mistralai.extra import response_format_from_pydantic_model
 
 from ninjatab.tabs.receipt_service import _Document
