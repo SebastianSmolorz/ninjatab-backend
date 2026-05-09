@@ -147,11 +147,11 @@ _DEMO_RECEIPT_DATA = {
 
 def create_demo_tab(user) -> Tab:
     """Factory that builds a pre-populated demo tab for the given user."""
-    user_name = user.get_full_name().strip() or user.username or "You"
+    user_name = user.first_name.strip() or "You"
 
     tab = Tab.objects.create(
-        name="Road Trip",
-        description="A demo tab, feel free to explore and edit!",
+        name="Europe Trip",
+        description="Demo tab, feel free to explore, edit or delete",
         default_currency="GBP",
         settlement_currency="GBP",
         created_by=user,
@@ -165,21 +165,6 @@ def create_demo_tab(user) -> Tab:
     sam = TabPerson.objects.create(tab=tab, name="Sam")
     jordan = TabPerson.objects.create(tab=tab, name="Jordan")
     all_people = [you, alex, sam, jordan]
-
-    # Bill 1: Groceries — £48.00, equal 4-way split (£12.00 each)
-    bill1 = Bill.objects.create(
-        tab=tab, description="Fuel", currency="GBP",
-        creator=you, paid_by=you,
-    )
-    li1 = LineItem.objects.create(
-        bill=bill1, description="Fuel", value=4800, split_type="shares",
-    )
-    for person in all_people:
-        PersonLineItemClaim.objects.create(
-            person=person, line_item=li1,
-            split_value=1, calculated_amount=1200,
-            settlement_amount=_sa(1200, bill1.currency, tab.settlement_currency),
-        )
 
     # Bill 2: Campsite fees — £80.00, equal 4-way split (£20.00 each)
     bill2 = Bill.objects.create(
@@ -253,25 +238,5 @@ def create_demo_tab(user) -> Tab:
                 calculated_amount=claim_data['calculated_amount'],
                 settlement_amount=_sa(claim_data['calculated_amount'], receipt_bill.currency, tab.settlement_currency),
             )
-
-    # Bill 5: Drinks at the hotel — €80.00, shares split
-    bill5 = Bill.objects.create(
-        tab=tab, description="Drinks at the hotel", currency="EUR",
-        creator=you, paid_by=you,
-    )
-    li5 = LineItem.objects.create(
-        bill=bill5, description="Local Beer", value=8000, split_type="shares",
-    )
-    for person, shares, amount in [
-        (you, 3, 3000),
-        (alex, 2, 2000),
-        (sam, 2, 2000),
-        (jordan, 1, 1000),
-    ]:
-        PersonLineItemClaim.objects.create(
-            person=person, line_item=li5,
-            split_value=shares, calculated_amount=amount,
-            settlement_amount=_sa(amount, bill5.currency, tab.settlement_currency),
-        )
 
     return tab

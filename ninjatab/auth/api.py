@@ -2,6 +2,7 @@ import jwt
 from ninja import Router
 from ninja.errors import HttpError
 from django.contrib.auth import get_user_model
+from django.db import transaction
 from django.http import JsonResponse
 
 from ninjatab.auth.schemas import (
@@ -33,6 +34,7 @@ from ninjatab.auth.cookies import (
     clear_auth_cookies,
 )
 from ninjatab.auth.social import verify_google_id_token, verify_apple_id_token
+from ninjatab.tabs.demo import create_demo_tab
 import logging
 from datetime import timedelta
 from posthog import new_context, identify_context, capture as ph_capture
@@ -47,10 +49,16 @@ auth_router = Router(tags=["auth"])
 
 @auth_router.post("/magic-link", response=MagicLinkSuccessSchema)
 def magic_link(request, payload: MagicLinkSchema):
-    user, _ = User.objects.get_or_create(
+    user, created = User.objects.get_or_create(
         email=payload.email.lower(),
         defaults={"username": payload.email.lower()},
     )
+    if created:
+        try:
+            with transaction.atomic():
+                create_demo_tab(user)
+        except Exception:
+            logger.exception("Failed to create demo tab on signup user_id=%s", user.id)
     check_magic_link_rate_limit(user)
     token = create_magic_token(user.id)
     magic_url = f"{django_settings.MAGIC_LINK_BASE_URL}?token={token}"
@@ -143,6 +151,13 @@ def social_login(request, payload: SocialLoginSchema):
     if updated_fields:
         user.save(update_fields=updated_fields)
 
+    if created:
+        try:
+            with transaction.atomic():
+                create_demo_tab(user)
+        except Exception:
+            logger.exception("Failed to create demo tab on signup user_id=%s", user.id)
+
     if not user.is_active:
         raise HttpError(403, "Account is blocked")
 
@@ -209,6 +224,7 @@ def me(request):
 
 @auth_router.patch("/me", response=AuthUserSchema, auth=JWTBearer())
 def update_me(request, payload: UpdateProfileSchema):
+    from ninjatab.tabs.models import TabPerson
     user = request.auth
     user.first_name = payload.first_name.strip()
     update_fields = ["first_name"]
@@ -216,6 +232,10 @@ def update_me(request, payload: UpdateProfileSchema):
         user.analytics_opted_in = payload.analytics_opted_in
         update_fields.append("analytics_opted_in")
     user.save(update_fields=update_fields)
+
+    new_name = user.first_name.strip() or "You"
+    TabPerson.objects.filter(user=user, tab__is_demo=True).update(name=new_name)
+
     return user
 
 
