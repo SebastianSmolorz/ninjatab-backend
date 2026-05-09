@@ -213,7 +213,7 @@ def create_demo_tab(user) -> Tab:
         description=_DEMO_RECEIPT_DATA['description'],
         currency=_DEMO_RECEIPT_DATA['currency'],
         creator=you,
-        paid_by=jordan,
+        paid_by=you,
         date=date.today(),
         receipt_image_url=_DEMO_RECEIPT_URL,
         # receipt_image_key intentionally empty — public CDN URL needs no presigned wrapping
