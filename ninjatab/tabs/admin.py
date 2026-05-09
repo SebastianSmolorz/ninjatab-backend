@@ -1,5 +1,4 @@
 from django.contrib import admin
-from django.contrib.admin import RelatedOnlyFieldListFilter
 from django.db.models import Count, Sum
 from django.utils.html import format_html
 from .models import Tab, TabPerson, Bill, LineItem, PersonLineItemClaim, Settlement, Contact, SplitType
@@ -114,8 +113,8 @@ class TabAdmin(admin.ModelAdmin):
 @admin.register(TabPerson)
 class TabPersonAdmin(admin.ModelAdmin):
     list_display = ['name', 'uuid', 'tab', 'user_link', 'created_at']
-    list_filter = [('tab', RelatedOnlyFieldListFilter), 'created_at']
-    search_fields = ['name', 'uuid', 'user__username', 'user__email', 'user__uuid']
+    list_filter = ['created_at']
+    search_fields = ['name', 'uuid', 'user__username', 'user__email', 'user__uuid', 'tab__name', 'tab__uuid']
     readonly_fields = ['uuid', 'created_at', 'updated_at']
     raw_id_fields = ['tab', 'user']
 
@@ -252,8 +251,8 @@ class PersonLineItemClaimInline(MoneyAdminMixin, admin.TabularInline):
 @admin.register(LineItem)
 class LineItemAdmin(MoneyAdminMixin, admin.ModelAdmin):
     list_display = ['description', 'uuid', 'bill', 'display_value', 'split_type', 'total_claimed_amount', 'claims_count', 'created_at']
-    list_filter = ['split_type', ('bill__tab', RelatedOnlyFieldListFilter), 'created_at']
-    search_fields = ['description', 'uuid', 'bill__description', 'bill__uuid']
+    list_filter = ['split_type', 'created_at']
+    search_fields = ['description', 'uuid', 'bill__description', 'bill__uuid', 'bill__tab__name', 'bill__tab__uuid']
     readonly_fields = ['uuid', 'created_at', 'updated_at', 'claims_count', 'total_claimed_amount']
     raw_id_fields = ['bill']
     show_full_result_count = False
@@ -357,7 +356,7 @@ class PersonLineItemClaimAdmin(MoneyAdminMixin, admin.ModelAdmin):
 @admin.register(Settlement)
 class SettlementAdmin(MoneyAdminMixin, admin.ModelAdmin):
     list_display = ['uuid', 'tab', 'from_person', 'to_person', 'display_amount', 'currency', 'created_at']
-    list_filter = ['currency', ('tab', RelatedOnlyFieldListFilter), 'created_at']
+    list_filter = ['currency', 'created_at']
     search_fields = ['uuid', 'tab__name', 'tab__uuid', 'from_person__name', 'to_person__name']
     readonly_fields = ['uuid', 'created_at', 'updated_at']
     show_full_result_count = False
