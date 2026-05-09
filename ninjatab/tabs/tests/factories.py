@@ -56,7 +56,6 @@ class ExchangeRateFactory(factory.django.DjangoModelFactory):
     class Meta:
         model = ExchangeRate
 
-    from_currency = "USD"
-    to_currency = "GBP"
+    currency = "GBP"
     rate = Decimal("0.80")
     effective_date = factory.LazyFunction(lambda: timezone.now())

@@ -29,19 +29,15 @@ class BaseModel(models.Model):
 
 
 class ExchangeRate(BaseModel):
-    """Exchange rate from one currency to another with historical tracking"""
-    from_currency = models.CharField(
-        max_length=3,
-        choices=Currency.choices
-    )
-    to_currency = models.CharField(
+    """USD-base exchange rate with historical tracking: 1 USD = rate * currency."""
+    currency = models.CharField(
         max_length=3,
         choices=Currency.choices
     )
     rate = models.DecimalField(
         max_digits=12,
         decimal_places=6,
-        help_text="Exchange rate: 1 from_currency = rate * to_currency"
+        help_text="Exchange rate: 1 USD = rate * currency"
     )
     effective_date = models.DateTimeField(
         help_text="Date and time when this rate became effective"
@@ -49,10 +45,10 @@ class ExchangeRate(BaseModel):
 
     class Meta:
         ordering = ['-effective_date']
-        unique_together = [['from_currency', 'to_currency', 'effective_date']]
+        unique_together = [['currency', 'effective_date']]
         indexes = [
-            models.Index(fields=['from_currency', 'to_currency', '-effective_date']),
+            models.Index(fields=['currency', '-effective_date']),
         ]
 
     def __str__(self):
-        return f"1 {self.from_currency} = {self.rate} {self.to_currency} (effective {self.effective_date.date()})"
+        return f"1 USD = {self.rate} {self.currency} (effective {self.effective_date.date()})"

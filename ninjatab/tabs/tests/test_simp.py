@@ -203,7 +203,7 @@ class TestCalculateTabBalances:
 
     def test_currency_conversion(self, tab_with_people):
         tab, p = tab_with_people(["Alice", "Bob"], currency="GBP")
-        ExchangeRateFactory(from_currency="USD", to_currency="GBP", rate=Decimal("0.80"))
+        ExchangeRateFactory(currency="GBP", rate=Decimal("0.80"))
 
         bill = BillFactory(tab=tab, paid_by=p["Alice"], creator=p["Alice"], currency="USD")
         li = LineItemFactory(bill=bill, value=1000)

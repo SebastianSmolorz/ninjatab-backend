@@ -21,9 +21,30 @@ def clear_rate_cache():
     _rate_cache.clear()
 
 
+def _usd_rate(currency: str, as_of_date: datetime) -> Decimal:
+    """Return rate such that 1 USD = rate * currency, as of the given date."""
+    if currency == 'USD':
+        return Decimal('1')
+
+    rate = ExchangeRate.objects.filter(
+        currency=currency,
+        effective_date__lte=as_of_date,
+    ).order_by('-effective_date').first()
+
+    if rate is None:
+        raise ExchangeRateNotFoundError(
+            f"No USD-base exchange rate found for {currency} "
+            f"as of {as_of_date.date()}"
+        )
+    return rate.rate
+
+
 def get_latest_exchange_rate(from_currency: str, to_currency: str, as_of_date: datetime = None) -> Decimal:
     """
     Get the latest exchange rate from one currency to another.
+
+    Computed from USD-base rates: rate = usd_rate(to) / usd_rate(from), so
+    1 from_currency = rate * to_currency.
 
     Args:
         from_currency: Source currency code (e.g., 'USD')
@@ -34,58 +55,28 @@ def get_latest_exchange_rate(from_currency: str, to_currency: str, as_of_date: d
         Decimal: Exchange rate (1 from_currency = rate * to_currency)
 
     Raises:
-        ExchangeRateNotFoundError: If no rate is found for the currency pair
+        ExchangeRateNotFoundError: If no rate is found for either currency
     """
-    # If converting to same currency, return 1
     if from_currency == to_currency:
         return Decimal('1.0')
 
     if as_of_date is None:
         as_of_date = timezone.now()
 
-    # Check in-memory cache (avoids repeated DB hits within the same operation)
     cache_key = (from_currency, to_currency, as_of_date.date())
     if cache_key in _rate_cache:
         return _rate_cache[cache_key]
 
-    # Try to find direct rate (from -> to)
-    try:
-        rate = ExchangeRate.objects.filter(
-            from_currency=from_currency,
-            to_currency=to_currency,
-            effective_date__lte=as_of_date
-        ).order_by('-effective_date').first()
+    from_usd = _usd_rate(from_currency, as_of_date)
+    if abs(from_usd) < Decimal('0.000001'):
+        raise ExchangeRateNotFoundError(
+            f"USD-base rate for {from_currency} is too small to invert"
+        )
+    to_usd = _usd_rate(to_currency, as_of_date)
 
-        if rate:
-            _rate_cache[cache_key] = rate.rate
-            return rate.rate
-    except ExchangeRate.DoesNotExist:
-        pass
-
-    # Try inverse rate (to -> from)
-    try:
-        rate = ExchangeRate.objects.filter(
-            from_currency=to_currency,
-            to_currency=from_currency,
-            effective_date__lte=as_of_date
-        ).order_by('-effective_date').first()
-
-        if rate and rate.rate != 0:
-            # Protect against near-zero rates that would cause huge inverses
-            if abs(rate.rate) < Decimal('0.000001'):
-                raise ExchangeRateNotFoundError(
-                    f"Exchange rate for {to_currency} to {from_currency} is too small to invert"
-                )
-            inverse = Decimal('1.0') / rate.rate
-            _rate_cache[cache_key] = inverse
-            return inverse
-    except ExchangeRate.DoesNotExist:
-        pass
-
-    raise ExchangeRateNotFoundError(
-        f"No exchange rate found for {from_currency} to {to_currency} "
-        f"as of {as_of_date.date()}"
-    )
+    rate = to_usd / from_usd
+    _rate_cache[cache_key] = rate
+    return rate
 
 
 def convert_amount(

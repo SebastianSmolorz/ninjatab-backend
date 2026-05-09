@@ -66,15 +66,19 @@ class Command(BaseCommand):
             return
 
         with transaction.atomic():
-            # 1. Exchange rates
+            # 1. Exchange rates — dump may contain legacy bidirectional rows;
+            # keep only the USD-base rows (from_currency='USD').
             rate_count = 0
             for obj in get("tabs.exchangerate"):
                 f = obj["fields"]
+                from_cur = f.get("from_currency", "USD")
+                to_cur = f.get("to_currency") or f.get("currency")
+                if from_cur != "USD":
+                    continue
                 ExchangeRate.objects.update_or_create(
                     pk=obj["pk"],
                     defaults=dict(
-                        from_currency=f["from_currency"],
-                        to_currency=f["to_currency"],
+                        currency=to_cur,
                         rate=Decimal(f["rate"]),
                         effective_date=f["effective_date"],
                         created_at=f["created_at"],

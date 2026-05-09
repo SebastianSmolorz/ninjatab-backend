@@ -1,6 +1,5 @@
 import requests
 from decimal import Decimal, ROUND_HALF_UP
-from itertools import permutations
 
 from django.core.management.base import BaseCommand
 from django.conf import settings
@@ -10,7 +9,7 @@ from ninjatab.currencies.models import Currency, ExchangeRate
 
 
 class Command(BaseCommand):
-    help = "Fetch exchange rates from Open Exchange Rates API and create rates for all currency pairs"
+    help = "Fetch USD-base exchange rates from Open Exchange Rates API"
 
     def handle(self, *args, **options):
         app_id = getattr(settings, 'OPEN_EXCHANGE_RATES_APP_ID', '') or ''
@@ -49,29 +48,22 @@ class Command(BaseCommand):
 
         self.stdout.write(f"Got rates for {len(available)} currencies, effective {effective_date}")
 
-        # Calculate cross rates for all pairs and bulk create
-        rates_to_create = []
-        for from_code, to_code in permutations(available.keys(), 2):
-            # rate = how many to_currency per 1 from_currency
-            # from_code -> USD -> to_code
-            # 1 from_code = (1 / usd_rate_from) USD = (usd_rate_to / usd_rate_from) to_code
-            cross_rate = (available[to_code] / available[from_code]).quantize(
-                Decimal('0.000001'), rounding=ROUND_HALF_UP
-            )
-            rates_to_create.append(ExchangeRate(
-                from_currency=from_code,
-                to_currency=to_code,
-                rate=cross_rate,
+        rates_to_create = [
+            ExchangeRate(
+                currency=code,
+                rate=rate.quantize(Decimal('0.000001'), rounding=ROUND_HALF_UP),
                 effective_date=effective_date,
-            ))
+            )
+            for code, rate in available.items()
+        ]
 
         ExchangeRate.objects.bulk_create(
             rates_to_create,
             update_conflicts=True,
-            unique_fields=['from_currency', 'to_currency', 'effective_date'],
+            unique_fields=['currency', 'effective_date'],
             update_fields=['rate'],
         )
 
         self.stdout.write(self.style.SUCCESS(
-            f"Created/updated {len(rates_to_create)} exchange rate pairs"
+            f"Created/updated {len(rates_to_create)} USD-base exchange rates"
         ))
