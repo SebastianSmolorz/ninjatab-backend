@@ -172,6 +172,8 @@ def list_tabs(request, cursor: str = None, archived: bool = False):
         bill_count=Count('bills', distinct=True),
         people_count=Count('people', distinct=True),
         all_settlements_paid=~Exists(unpaid_settlements),
+        paid_settlements_count=Count('settlements', filter=Q(settlements__paid=True), distinct=True),
+        total_settlements_count=Count('settlements', distinct=True),
     )
     items, next_cursor = _apply_tab_cursor(qs, cursor)
     return {"items": items, "next_cursor": next_cursor}

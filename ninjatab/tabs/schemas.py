@@ -510,6 +510,8 @@ class TabListSchema(BaseModel):
     bill_count: int
     people_count: int
     all_settlements_paid: bool = True
+    paid_settlements_count: int = 0
+    total_settlements_count: int = 0
     created_at: datetime
     updated_at: datetime
 
