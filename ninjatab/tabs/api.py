@@ -166,9 +166,13 @@ def create_tab(request, payload: TabCreateSchema):
 def list_tabs(request, cursor: str = None, archived: bool = False):
     """List tabs. Pass ?archived=true to list archived (deleted) tabs instead of active ones."""
     unpaid_settlements = Settlement.objects.filter(tab=OuterRef('pk'), paid=False)
+    people_count_subquery = Subquery(
+        TabPerson.objects.filter(tab=OuterRef('pk')).values('tab').annotate(c=Count('id')).values('c'),
+        output_field=IntegerField(),
+    )
     qs = Tab.objects.accessible_by(request.auth).filter(is_archived=archived).annotate(
         bill_count=Count('bills', distinct=True),
-        people_count=Count('people', distinct=True),
+        people_count=people_count_subquery,
         all_settlements_paid=~Exists(unpaid_settlements),
         paid_settlements_count=Count('settlements', filter=Q(settlements__paid=True), distinct=True),
         total_settlements_count=Count('settlements', distinct=True),
