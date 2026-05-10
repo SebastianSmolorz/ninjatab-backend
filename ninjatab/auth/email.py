@@ -48,23 +48,11 @@ def send_magic_link(email: str, token: str) -> None:
               <!-- CTA Button -->
               <tr>
                 <td align="center" style="padding: 0 40px 24px;">
-                  <a href="{magic_url}"
+                  <a href="{native_url}"
                      style="display: inline-block; padding: 14px 32px; background-color: #111827; color: #ffffff;
                             text-decoration: none; border-radius: 8px; font-weight: 600; font-size: 15px;">
                     Sign in
                   </a>
-                </td>
-              </tr>
-              <!-- Divider -->
-              <tr>
-                <td style="padding: 0 40px;">
-                  <hr style="border: none; border-top: 1px solid #e5e7eb; margin: 0;" />
-                </td>
-              </tr>
-              <!-- Direct app link -->
-              <tr>
-                <td align="center" style="padding: 16px 40px 8px;">
-                  <a href="{native_url}" style="font-size: 12px; color: #9ca3af; text-decoration: underline;">Open directly in the app</a>
                 </td>
               </tr>
               <!-- Footer -->

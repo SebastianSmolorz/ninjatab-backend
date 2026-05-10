@@ -35,7 +35,7 @@ bill_router = Router(tags=["bills"], auth=JWTBearer())
 
 logger = logging.getLogger("app")
 
-PAGE_SIZE = 25
+PAGE_SIZE = 15
 
 
 TAB_CURSOR_ORDER = '-created_at,-id'
