@@ -21,8 +21,6 @@ from ninjatab.tabs.simp import simp_tab
 from ninjatab.currencies.exchange import convert_amount, ExchangeRateNotFoundError, clear_rate_cache
 from ninjatab.auth.bearer import JWTBearer
 from ninjatab.auth.schemas import MagicLinkSuccessSchema
-from ninjatab.auth.jwt_utils import create_magic_token
-from ninjatab.auth.email import send_magic_link
 from ninjatab.tabs.limits import check_bill_limit, check_itemised_limit
 from ninjatab.tabs.demo import create_demo_tab as _create_demo_tab
 from posthog import new_context, identify_context, capture as ph_capture
@@ -581,10 +579,6 @@ def claim_invite(request, invite_code: str, payload: ClaimInviteSchema):
     person.user = user
     person.save()
     _sync_contacts_for_tab(tab)
-
-    if not authed_user:
-        token = create_magic_token(user.id)
-        send_magic_link(payload.email.lower(), token)
 
     with new_context():
         identify_context(str(user.uuid))
