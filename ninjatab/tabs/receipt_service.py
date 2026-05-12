@@ -23,7 +23,7 @@ ALLOWED_IMAGE_TYPES = {
     "image/jpeg", "image/png", "image/webp",
     "image/heic", "image/heif", "application/octet-stream",
 }
-MAX_UPLOAD_SIZE = 10 * 1024 * 1024  # 10 MB
+MAX_UPLOAD_SIZE = 25 * 1024 * 1024  # 10 MB
 
 
 class _Item(BaseModel):
