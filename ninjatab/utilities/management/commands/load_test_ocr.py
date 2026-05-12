@@ -7,7 +7,7 @@ from pathlib import Path
 from django.conf import settings
 from django.core.management.base import BaseCommand
 
-RECEIPTS_DIR = Path("/receipts")
+RECEIPTS_DIR = Path(__file__).resolve().parents[5] / "receipts"
 
 
 def _scan_one(image_path: Path, index: int) -> dict:
@@ -26,6 +26,7 @@ def _scan_one(image_path: Path, index: int) -> dict:
     data_url = f"data:{mime};base64,{b64}"
 
     client = Mistral(api_key=settings.MISTRAL_API_KEY)
+    print(f"  [{index:>3}] {image_path.name}  SENDING")
     t0 = time.perf_counter()
     try:
         response = client.ocr.process(
