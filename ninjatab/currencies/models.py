@@ -177,7 +177,7 @@ class ExchangeRate(BaseModel):
         choices=Currency.choices
     )
     rate = models.DecimalField(
-        max_digits=12,
+        max_digits=20,
         decimal_places=6,
         help_text="Exchange rate: 1 USD = rate * currency"
     )
