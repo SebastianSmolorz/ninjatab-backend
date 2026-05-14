@@ -3,7 +3,7 @@ from ninja.errors import HttpError
 from posthog import new_context, identify_context, capture as ph_capture
 
 from ninjatab.marketing.models import WaitlistEntry, WaitlistPageView
-from ninjatab.marketing.schemas import WaitlistCreateSchema, WaitlistResponseSchema, AppInstallSchema
+from ninjatab.marketing.schemas import WaitlistCreateSchema, WaitlistResponseSchema, AppInstallSchema, QRCodeScannedSchema
 
 marketing_router = Router(tags=["marketing"])
 
@@ -32,4 +32,17 @@ def app_install(request, payload: AppInstallSchema):
     with new_context():
         identify_context("$anon")
         ph_capture("app_installed", properties={"platform": payload.platform})
+    return {"success": True}
+
+
+@marketing_router.post("/qr-scanned", response=WaitlistResponseSchema)
+def qr_code_scanned(request, payload: QRCodeScannedSchema):
+    with new_context():
+        identify_context("$anon")
+        ph_capture("qr_code_scanned", properties={
+            "qr_id": payload.qr_id,
+            "utm_campaign": payload.utm_campaign,
+            "utm_medium": payload.utm_medium,
+            "utm_source": payload.utm_source,
+        })
     return {"success": True}
