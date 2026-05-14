@@ -20,8 +20,7 @@ class Command(BaseCommand):
             return
 
         supported_codes = [c.value for c in Currency]
-        symbols = ','.join(supported_codes)
-        url = f"https://openexchangerates.org/api/latest.json?app_id={app_id}&symbols={symbols}"
+        url = f"https://openexchangerates.org/api/latest.json?app_id={app_id}"
 
         self.stdout.write(f"Fetching rates from Open Exchange Rates (base=USD)...")
 
@@ -36,6 +35,10 @@ class Command(BaseCommand):
         usd_rates = data.get('rates', {})
         timestamp = data.get('timestamp')
         effective_date = datetime.fromtimestamp(timestamp, tz=timezone.utc)
+
+        self.stdout.write(f"All available currencies from API ({len(usd_rates)}):")
+        for code, rate in sorted(usd_rates.items()):
+            self.stdout.write(f"  {code}: {rate}")
 
         # Filter to only currencies we support
         available = {code: Decimal(str(usd_rates[code])) for code in supported_codes if code in usd_rates}
