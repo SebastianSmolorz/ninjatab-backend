@@ -179,17 +179,24 @@ def scan_receipt(image_key: str, tab_id: str) -> dict:
         include_image_base64=True,
     )
 
-    logger.info(
-        "Mistral OCR response for tab %s: %s",
-        tab_id,
-        response.model_dump_json(),
-    )
-
     # Extract annotation from response (top-level field, JSON string)
     annotation = None
     raw = response.document_annotation
     if raw and isinstance(raw, str) and not raw.startswith("~?~"):
         annotation = json.loads(raw)
+
+    # Compute items_total from the items returned, keeping the AI's value as ai_items_total
+    if annotation:
+        annotation["ai_items_total"] = annotation.pop("items_total", None)
+        items = annotation.get("items") or []
+        annotation["items_total"] = round(sum(float(item.get("total") or 0) for item in items), 2)
+
+    logger.info(
+        "Mistral OCR response for tab %s: %s | annotation: %s",
+        tab_id,
+        response.model_dump_json(),
+        json.dumps(annotation),
+    )
 
     # Parse date from annotation, default to today
     receipt_date = timezone.now().strftime("%Y-%m-%d")
