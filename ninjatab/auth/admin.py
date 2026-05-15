@@ -7,7 +7,7 @@ from ninjatab.auth.models import User
 class UserAdmin(BaseUserAdmin):
     readonly_fields = ['uuid']
     search_fields = ['username', 'email', 'first_name', 'last_name', 'uuid']
-    list_display = ['username', 'uuid', 'email', 'first_name', 'last_name', 'date_joined', 'analytics_opted_in']
+    list_display = ['username', 'uuid', 'email', 'first_name', 'last_name', 'date_joined', 'analytics_opted_in', 'platform']
     ordering = ['-uuid']
     fieldsets = BaseUserAdmin.fieldsets[:1] + (
         ('Identity', {'fields': ('uuid',)}),

@@ -49,9 +49,12 @@ auth_router = Router(tags=["auth"])
 
 @auth_router.post("/magic-link", response=MagicLinkSuccessSchema)
 def magic_link(request, payload: MagicLinkSchema):
+    defaults = {"username": payload.email.lower()}
+    if payload.platform in User.Platform.values:
+        defaults["platform"] = payload.platform
     user, created = User.objects.get_or_create(
         email=payload.email.lower(),
-        defaults={"username": payload.email.lower()},
+        defaults=defaults,
     )
     if created:
         try:
@@ -129,9 +132,12 @@ def social_login(request, payload: SocialLoginSchema):
         raise HttpError(401, "Invalid or expired token")
 
     email = provider_data["email"].lower()
+    defaults = {"username": email}
+    if payload.platform in User.Platform.values:
+        defaults["platform"] = payload.platform
     user, created = User.objects.get_or_create(
         email=email,
-        defaults={"username": email},
+        defaults=defaults,
     )
 
     # Populate name if available and not already set

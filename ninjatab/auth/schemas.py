@@ -5,6 +5,7 @@ from pydantic import BaseModel, ConfigDict, EmailStr, model_validator
 class MagicLinkSchema(BaseModel):
     email: EmailStr
     skip_email: bool = False
+    platform: str | None = None
 
 
 class MagicLinkSuccessSchema(BaseModel):
@@ -64,3 +65,4 @@ class SocialLoginSchema(BaseModel):
     id_token: str
     first_name: str | None = None
     last_name: str | None = None
+    platform: str | None = None
