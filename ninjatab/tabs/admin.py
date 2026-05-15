@@ -29,8 +29,8 @@ class BillInline(MoneyAdminMixin, admin.TabularInline):
     extra = 0
     can_delete = False
     show_change_link = True
-    fields = ['uuid', 'description', 'date', 'currency', 'display_total', 'status', 'paid_by', 'line_item_count']
-    readonly_fields = ['uuid', 'description', 'date', 'currency', 'display_total', 'status', 'paid_by', 'line_item_count']
+    fields = ['uuid', 'description', 'date', 'created_at', 'currency', 'display_total', 'status', 'paid_by', 'line_item_count']
+    readonly_fields = ['uuid', 'description', 'date', 'created_at', 'currency', 'display_total', 'status', 'paid_by', 'line_item_count']
     ordering = ['-date']
 
     def has_add_permission(self, request, obj=None):
@@ -80,6 +80,7 @@ class SettlementInline(MoneyAdminMixin, admin.TabularInline):
 class DemoTabFilter(admin.SimpleListFilter):
     title = 'demo'
     parameter_name = 'demo'
+    field_name = 'is_demo'
 
     def lookups(self, request, model_admin):
         return (
@@ -91,10 +92,10 @@ class DemoTabFilter(admin.SimpleListFilter):
     def queryset(self, request, queryset):
         value = self.value()
         if value == 'demo':
-            return queryset.filter(is_demo=True)
+            return queryset.filter(**{self.field_name: True})
         if value == 'all':
             return queryset
-        return queryset.filter(is_demo=False)
+        return queryset.filter(**{self.field_name: False})
 
     def choices(self, changelist):
         value = self.value() or 'real'
@@ -104,6 +105,10 @@ class DemoTabFilter(admin.SimpleListFilter):
                 'query_string': changelist.get_query_string({self.parameter_name: lookup}, []),
                 'display': title,
             }
+
+
+class BillDemoTabFilter(DemoTabFilter):
+    field_name = 'tab__is_demo'
 
 
 @admin.register(Tab)
@@ -200,11 +205,11 @@ class LineItemInline(MoneyAdminMixin, admin.TabularInline):
 
 @admin.register(Bill)
 class BillAdmin(MoneyAdminMixin, admin.ModelAdmin):
-    list_display = ['description', 'uuid', 'tab', 'currency', 'display_total_amount', 'display_is_itemised', 'status', 'date', 'has_receipt']
+    list_display = ['description', 'uuid', 'tab_link', 'tab_is_demo', 'currency', 'display_total_amount', 'display_is_itemised', 'status', 'date', 'has_receipt']
     ordering = ['-uuid']
-    list_filter = ['status', 'currency', 'date', 'created_at']
+    list_filter = [BillDemoTabFilter, 'status', 'currency', 'date', 'created_at']
     search_fields = ['description', 'uuid', 'tab__name', 'tab__uuid']
-    readonly_fields = ['uuid', 'display_total_amount', 'receipt_image_link', 'created_at', 'updated_at']
+    readonly_fields = ['uuid', 'tab_is_demo', 'display_total_amount', 'receipt_image_link', 'created_at', 'updated_at']
     raw_id_fields = ['tab', 'creator', 'paid_by']
     date_hierarchy = 'date'
     show_full_result_count = False
@@ -212,7 +217,7 @@ class BillAdmin(MoneyAdminMixin, admin.ModelAdmin):
 
     fieldsets = (
         ('Bill Information', {
-            'fields': ('uuid', 'tab', 'description', 'currency', 'date')
+            'fields': ('uuid', 'tab', 'tab_is_demo', 'description', 'currency', 'date')
         }),
         ('People', {
             'fields': ('creator', 'paid_by')
@@ -232,6 +237,24 @@ class BillAdmin(MoneyAdminMixin, admin.ModelAdmin):
     def display_total_amount(self, obj):
         return self.format_money(obj._total_amount, obj.currency)
     display_total_amount.short_description = 'Total Amount'
+
+    def tab_link(self, obj):
+        from django.urls import reverse
+        name = obj.tab.name or str(obj.tab.uuid)
+        truncated = name if len(name) <= 30 else name[:29] + '…'
+        url = reverse('admin:tabs_tab_change', args=[obj.tab.pk])
+        return format_html(
+            '<a href="{}" title="{}" style="display:inline-block;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:bottom;">{}</a>',
+            url, name, truncated,
+        )
+    tab_link.short_description = 'Tab'
+    tab_link.admin_order_field = 'tab__name'
+
+    def tab_is_demo(self, obj):
+        return obj.tab.is_demo
+    tab_is_demo.boolean = True
+    tab_is_demo.short_description = 'Demo tab'
+    tab_is_demo.admin_order_field = 'tab__is_demo'
 
     def display_is_itemised(self, obj):
         return (obj._line_items_count or 0) > 1

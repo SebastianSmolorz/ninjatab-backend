@@ -37,7 +37,7 @@ from ninjatab.auth.social import verify_google_id_token, verify_apple_id_token
 from ninjatab.tabs.demo import create_demo_tab
 import logging
 from datetime import timedelta
-from posthog import new_context, identify_context, capture as ph_capture
+from ninjatab.utilities.analytics import safe_capture
 
 logger = logging.getLogger("app")
 gdpr_logger = logging.getLogger("gdpr")
@@ -70,9 +70,9 @@ def magic_link(request, payload: MagicLinkSchema):
     user.last_magic_link_sent_dt = timezone.now()
     user.save(update_fields=["last_magic_link_sent_dt", "before_last_magic_link_sent_dt"])
 
-    with new_context():
-        identify_context(str(user.uuid))
-        ph_capture("magic_link_requested", properties={"method": "magic_link"})
+    logger.info("Magic link sent email=%s", payload.email.lower())
+
+    safe_capture(user.uuid, "magic_link_requested", properties={"method": "magic_link"})
 
     return {"success": True}
 
@@ -99,12 +99,10 @@ def verify_magic_link(request, payload: VerifyMagicLinkSchema):
     response = JsonResponse({"user": user_schema.model_dump()})
     set_auth_cookies(response, access_token, refresh_token)
 
-    with new_context():
-        identify_context(str(user.uuid))
-        is_new = (timezone.now() - user.date_joined) < timedelta(minutes=5)
-        ph_capture("user_signed_up" if is_new else "user_logged_in", properties={
-            "method": "magic_link",
-        })
+    is_new = (timezone.now() - user.date_joined) < timedelta(minutes=5)
+    safe_capture(user.uuid, "user_signed_up" if is_new else "user_logged_in", properties={
+        "method": "magic_link",
+    })
 
     return response
 
@@ -124,12 +122,10 @@ def social_login(request, payload: SocialLoginSchema):
         logger.info("Token verified: email=%s", provider_data.get("email"))
     except Exception as e:
         logger.error("Social login token verification failed: provider=%s, error_type=%s, error=%s", payload.provider, type(e).__name__, str(e), exc_info=True)
-        with new_context():
-            identify_context("$anon")
-            ph_capture("social_login_failed", properties={
-                "provider": payload.provider,
-                "reason_bucket": type(e).__name__,
-            })
+        safe_capture("$anon", "social_login_failed", properties={
+            "provider": payload.provider,
+            "reason_bucket": type(e).__name__,
+        })
         raise HttpError(401, "Invalid or expired token")
 
     email = provider_data["email"].lower()
@@ -168,11 +164,9 @@ def social_login(request, payload: SocialLoginSchema):
     response = JsonResponse({"user": user_schema.model_dump(), "is_new": created})
     set_auth_cookies(response, access_token, refresh_token)
 
-    with new_context():
-        identify_context(str(user.uuid))
-        ph_capture("user_signed_up" if created else "user_logged_in", properties={
-            "method": payload.provider,
-        })
+    safe_capture(user.uuid, "user_signed_up" if created else "user_logged_in", properties={
+        "method": payload.provider,
+    })
 
     return response
 
@@ -189,14 +183,10 @@ def refresh(request):
             raise HttpError(401, "Invalid token type")
         user = User.objects.get(id=int(token_data["sub"]))
     except (jwt.ExpiredSignatureError, jwt.InvalidTokenError):
-        with new_context():
-            identify_context("$anon")
-            ph_capture("auth_refresh_failed", properties={"reason": "invalid_token"})
+        safe_capture("$anon", "auth_refresh_failed", properties={"reason": "invalid_token"})
         raise HttpError(401, "Invalid or expired refresh token")
     except User.DoesNotExist:
-        with new_context():
-            identify_context("$anon")
-            ph_capture("auth_refresh_failed", properties={"reason": "user_not_found"})
+        safe_capture("$anon", "auth_refresh_failed", properties={"reason": "user_not_found"})
         raise HttpError(401, "User not found")
 
     if not user.is_active:

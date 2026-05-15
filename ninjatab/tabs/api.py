@@ -23,7 +23,7 @@ from ninjatab.auth.bearer import JWTBearer
 from ninjatab.auth.schemas import MagicLinkSuccessSchema
 from ninjatab.tabs.limits import check_bill_limit, check_itemised_limit
 from ninjatab.tabs.demo import create_demo_tab as _create_demo_tab
-from posthog import new_context, identify_context, capture as ph_capture
+from ninjatab.utilities.analytics import safe_capture
 
 
 User = get_user_model()
@@ -150,14 +150,12 @@ def create_tab(request, payload: TabCreateSchema):
         'settlements__to_person__user'
     ).get(id=tab.id)
 
-    with new_context():
-        identify_context(str(request.auth.uuid))
-        ph_capture("tab_created", properties={
-            "tab_id": str(tab.uuid),
-            "people_count": len(payload.people),
-            "default_currency": payload.default_currency,
-            "settlement_currency": payload.settlement_currency,
-        })
+    safe_capture(request.auth.uuid, "tab_created", properties={
+        "tab_id": str(tab.uuid),
+        "people_count": len(payload.people),
+        "default_currency": payload.default_currency,
+        "settlement_currency": payload.settlement_currency,
+    })
 
     return tab
 
@@ -286,14 +284,12 @@ def update_tab(request, tab_id: str, payload: TabUpdateSchema):
                     "tab=%s from=%s to=%s error=%s",
                     tab.uuid, claim.line_item.bill.currency, new_currency, e,
                 )
-                with new_context():
-                    identify_context(str(request.auth.uuid))
-                    ph_capture("currency_conversion_failed", properties={
-                        "tab_id": str(tab.uuid),
-                        "from_currency": claim.line_item.bill.currency,
-                        "to_currency": new_currency,
-                        "context": "update_tab",
-                    })
+                safe_capture(request.auth.uuid, "currency_conversion_failed", properties={
+                    "tab_id": str(tab.uuid),
+                    "from_currency": claim.line_item.bill.currency,
+                    "to_currency": new_currency,
+                    "context": "update_tab",
+                })
                 raise HttpError(422, f"Exchange rate not available: {e}")
             updated_claims.append(claim)
 
@@ -353,14 +349,12 @@ def close_tab(request, tab_id: str):
     tab.settlement_currency_settled_total = total
     tab.save()
 
-    with new_context():
-        identify_context(str(request.auth.uuid))
-        ph_capture("tab_settled", properties={
-            "tab_id": str(tab.uuid),
-            "bill_count": len(bills),
-            "settlement_currency": tab.settlement_currency,
-            "total_minor_units": total,
-        })
+    safe_capture(request.auth.uuid, "tab_settled", properties={
+        "tab_id": str(tab.uuid),
+        "bill_count": len(bills),
+        "settlement_currency": tab.settlement_currency,
+        "total_minor_units": total,
+    })
 
     # Refresh to get updated data
     tab.refresh_from_db()
@@ -381,9 +375,7 @@ def archive_tab(request, tab_id: str):
     tab.is_archived = True
     tab.save(update_fields=["is_archived"])
 
-    with new_context():
-        identify_context(str(request.auth.uuid))
-        ph_capture("tab_archived", properties={"tab_id": str(tab.uuid)})
+    safe_capture(request.auth.uuid, "tab_archived", properties={"tab_id": str(tab.uuid)})
 
     return {"success": True}
 
@@ -426,13 +418,11 @@ def simplify_tab(request, tab_id: str):
         # Calculate simplified transactions with currency conversion
         transactions = simp_tab(tab, settlement_currency=settlement_currency)
     except ExchangeRateNotFoundError as e:
-        with new_context():
-            identify_context(str(request.auth.uuid))
-            ph_capture("currency_conversion_failed", properties={
-                "tab_id": str(tab.uuid),
-                "to_currency": settlement_currency,
-                "context": "simplify_tab",
-            })
+        safe_capture(request.auth.uuid, "currency_conversion_failed", properties={
+            "tab_id": str(tab.uuid),
+            "to_currency": settlement_currency,
+            "context": "simplify_tab",
+        })
         raise HttpError(400, f"Currency conversion failed: {str(e)}")
 
     # Create Settlement records
@@ -453,13 +443,11 @@ def simplify_tab(request, tab_id: str):
     # Prefetch related data for response
     settlements = Settlement.objects.filter(tab=tab).select_related('from_person__user', 'to_person__user')
 
-    with new_context():
-        identify_context(str(request.auth.uuid))
-        ph_capture("tab_simplified", properties={
-            "tab_id": str(tab.uuid),
-            "settlement_count": len(settlements),
-            "settlement_currency": settlement_currency,
-        })
+    safe_capture(request.auth.uuid, "tab_simplified", properties={
+        "tab_id": str(tab.uuid),
+        "settlement_count": len(settlements),
+        "settlement_currency": settlement_currency,
+    })
 
     return {
         "settlements": list(settlements),
@@ -479,13 +467,11 @@ def mark_settlement_paid(request, settlement_id: str):
     settlement.paid = True
     settlement.save()
 
-    with new_context():
-        identify_context(str(request.auth.uuid))
-        ph_capture("settlement_marked_paid", properties={
-            "tab_id": str(settlement.tab.uuid),
-            "amount_minor_units": settlement.amount,
-            "currency": settlement.currency,
-        })
+    safe_capture(request.auth.uuid, "settlement_marked_paid", properties={
+        "tab_id": str(settlement.tab.uuid),
+        "amount_minor_units": settlement.amount,
+        "currency": settlement.currency,
+    })
 
     return settlement
 
@@ -584,9 +570,7 @@ def claim_invite(request, invite_code: str, payload: ClaimInviteSchema):
     person.save()
     _sync_contacts_for_tab(tab)
 
-    with new_context():
-        identify_context(str(user.uuid))
-        ph_capture("invite_claimed", properties={"tab_id": str(tab.uuid)})
+    safe_capture(user.uuid, "invite_claimed", properties={"tab_id": str(tab.uuid)})
 
     return {"success": True}
 
@@ -604,9 +588,7 @@ def upload_receipt(request, tab_id: str, file: UploadedFile = File(...)):
     try:
         check_scan_limit(tab)
     except ScanLimitExceeded as e:
-        with new_context():
-            identify_context(str(request.auth.uuid))
-            ph_capture("scan_limit_hit", properties={"tab_id": str(tab.uuid)})
+        safe_capture(request.auth.uuid, "scan_limit_hit", properties={"tab_id": str(tab.uuid)})
         raise HttpError(429, str(e))
 
     try:
@@ -619,27 +601,21 @@ def upload_receipt(request, tab_id: str, file: UploadedFile = File(...)):
     try:
         result = scan_receipt(image_key, tab_id)
     except Exception:
-        with new_context():
-            identify_context(str(request.auth.uuid))
-            ph_capture("receipt_scan_failed", properties={
-                "tab_id": str(tab.uuid),
-                "reason": "validation",
-            })
+        safe_capture(request.auth.uuid, "receipt_scan_failed", properties={
+            "tab_id": str(tab.uuid),
+            "reason": "validation",
+        })
         raise
 
     increment_scan_count(tab)
 
     if result.get("document_annotation") is None:
-        with new_context():
-            identify_context(str(request.auth.uuid))
-            ph_capture("receipt_scan_failed", properties={
-                "tab_id": str(tab.uuid),
-                "reason": "ocr_empty",
-            })
+        safe_capture(request.auth.uuid, "receipt_scan_failed", properties={
+            "tab_id": str(tab.uuid),
+            "reason": "ocr_empty",
+        })
 
-    with new_context():
-        identify_context(str(request.auth.uuid))
-        ph_capture("receipt_scanned", properties={"tab_id": str(tab.uuid)})
+    safe_capture(request.auth.uuid, "receipt_scanned", properties={"tab_id": str(tab.uuid)})
 
     return result
 
@@ -654,9 +630,7 @@ def upgrade_tab(request, tab_id: str):
     tab.is_pro = True
     tab.save(update_fields=["is_pro"])
 
-    with new_context():
-        identify_context(str(request.auth.uuid))
-        ph_capture("tab_upgraded", properties={"tab_id": str(tab.uuid)})
+    safe_capture(request.auth.uuid, "tab_upgraded", properties={"tab_id": str(tab.uuid)})
 
     return {"success": True}
 
@@ -668,9 +642,7 @@ def can_add_single(request, tab_id: str):
     try:
         check_bill_limit(tab)
     except HttpError:
-        with new_context():
-            identify_context(str(request.auth.uuid))
-            ph_capture("bill_limit_hit", properties={"tab_id": str(tab.uuid)})
+        safe_capture(request.auth.uuid, "bill_limit_hit", properties={"tab_id": str(tab.uuid)})
         raise
     return {"ok": True}
 
@@ -682,16 +654,12 @@ def can_add_itemised(request, tab_id: str):
     try:
         check_bill_limit(tab)
     except HttpError:
-        with new_context():
-            identify_context(str(request.auth.uuid))
-            ph_capture("bill_limit_hit", properties={"tab_id": str(tab.uuid)})
+        safe_capture(request.auth.uuid, "bill_limit_hit", properties={"tab_id": str(tab.uuid)})
         raise
     try:
         check_itemised_limit(tab)
     except HttpError:
-        with new_context():
-            identify_context(str(request.auth.uuid))
-            ph_capture("itemised_limit_hit", properties={"tab_id": str(tab.uuid)})
+        safe_capture(request.auth.uuid, "itemised_limit_hit", properties={"tab_id": str(tab.uuid)})
         raise
     return {"ok": True}
 
@@ -705,17 +673,13 @@ def create_bill(request, payload: BillCreateSchema):
     try:
         check_bill_limit(tab)
     except HttpError:
-        with new_context():
-            identify_context(str(request.auth.uuid))
-            ph_capture("bill_limit_hit", properties={"tab_id": str(tab.uuid)})
+        safe_capture(request.auth.uuid, "bill_limit_hit", properties={"tab_id": str(tab.uuid)})
         raise
     if len(payload.line_items) > 1:
         try:
             check_itemised_limit(tab)
         except HttpError:
-            with new_context():
-                identify_context(str(request.auth.uuid))
-                ph_capture("itemised_limit_hit", properties={"tab_id": str(tab.uuid)})
+            safe_capture(request.auth.uuid, "itemised_limit_hit", properties={"tab_id": str(tab.uuid)})
             raise
     if len(payload.line_items) > 150:
         raise HttpError(400, "A bill cannot have more than 150 line items")
@@ -749,14 +713,12 @@ def create_bill(request, payload: BillCreateSchema):
         if line_item_data.person_splits:
             _create_person_claims(line_item, line_item_data.person_splits, tab, user_uuid=str(request.auth.uuid))
 
-    with new_context():
-        identify_context(str(request.auth.uuid))
-        ph_capture("bill_created", properties={
-            "tab_id": str(tab.uuid),
-            "bill_id": str(bill.uuid),
-            "line_item_count": len(payload.line_items),
-            "currency": payload.currency,
-        })
+    safe_capture(request.auth.uuid, "bill_created", properties={
+        "tab_id": str(tab.uuid),
+        "bill_id": str(bill.uuid),
+        "line_item_count": len(payload.line_items),
+        "currency": payload.currency,
+    })
 
     return bill
 
@@ -795,14 +757,12 @@ def _create_person_claims(line_item: LineItem, person_splits: List[PersonSplitCr
             except ExchangeRateNotFoundError:
                 settlement_amount = None
                 if user_uuid:
-                    with new_context():
-                        identify_context(user_uuid)
-                        ph_capture("currency_conversion_failed", properties={
-                            "tab_id": str(tab.uuid),
-                            "from_currency": line_item.bill.currency,
-                            "to_currency": tab.settlement_currency,
-                            "context": "claim_calculation",
-                        })
+                    safe_capture(user_uuid, "currency_conversion_failed", properties={
+                        "tab_id": str(tab.uuid),
+                        "from_currency": line_item.bill.currency,
+                        "to_currency": tab.settlement_currency,
+                        "context": "claim_calculation",
+                    })
 
         PersonLineItemClaim.objects.create(
             person=person,
@@ -843,13 +803,11 @@ def submit_bill_splits(request, bill_id: str, payload: BillSplitSubmitSchema):
         # Create new claims
         _create_person_claims(line_item, line_item_split.person_splits, bill.tab, user_uuid=str(request.auth.uuid))
 
-    with new_context():
-        identify_context(str(request.auth.uuid))
-        ph_capture("bill_splits_submitted", properties={
-            "tab_id": str(bill.tab.uuid),
-            "bill_id": str(bill.uuid),
-            "line_item_count": len(payload.line_item_splits),
-        })
+    safe_capture(request.auth.uuid, "bill_splits_submitted", properties={
+        "tab_id": str(bill.tab.uuid),
+        "bill_id": str(bill.uuid),
+        "line_item_count": len(payload.line_item_splits),
+    })
 
     # Refresh the bill to get updated data
     bill.refresh_from_db()
@@ -929,14 +887,12 @@ def update_bill(request, bill_id: str, payload: BillUpdateSchema):
                     "bill=%s from=%s to=%s error=%s",
                     bill.uuid, new_currency, settlement_currency, e,
                 )
-                with new_context():
-                    identify_context(str(request.auth.uuid))
-                    ph_capture("currency_conversion_failed", properties={
-                        "tab_id": str(bill.tab.uuid),
-                        "from_currency": new_currency,
-                        "to_currency": settlement_currency,
-                        "context": "update_bill",
-                    })
+                safe_capture(request.auth.uuid, "currency_conversion_failed", properties={
+                    "tab_id": str(bill.tab.uuid),
+                    "from_currency": new_currency,
+                    "to_currency": settlement_currency,
+                    "context": "update_bill",
+                })
                 raise HttpError(422, f"Exchange rate not available: {e}")
             updated_claims.append(claim)
 
@@ -975,12 +931,10 @@ def delete_bill(request, bill_id: str):
     bill_uuid = str(bill.uuid)
     bill.delete()
 
-    with new_context():
-        identify_context(str(request.auth.uuid))
-        ph_capture("bill_deleted", properties={
-            "tab_id": tab_uuid,
-            "bill_id": bill_uuid,
-        })
+    safe_capture(request.auth.uuid, "bill_deleted", properties={
+        "tab_id": tab_uuid,
+        "bill_id": bill_uuid,
+    })
 
     return {"success": True}
 
