@@ -77,10 +77,40 @@ class SettlementInline(MoneyAdminMixin, admin.TabularInline):
         return super().get_queryset(request).select_related('from_person', 'to_person')
 
 
+class DemoTabFilter(admin.SimpleListFilter):
+    title = 'demo'
+    parameter_name = 'demo'
+
+    def lookups(self, request, model_admin):
+        return (
+            ('real', 'Real (default)'),
+            ('demo', 'Demo'),
+            ('all', 'All'),
+        )
+
+    def queryset(self, request, queryset):
+        value = self.value()
+        if value == 'demo':
+            return queryset.filter(is_demo=True)
+        if value == 'all':
+            return queryset
+        return queryset.filter(is_demo=False)
+
+    def choices(self, changelist):
+        value = self.value() or 'real'
+        for lookup, title in self.lookup_choices:
+            yield {
+                'selected': value == lookup,
+                'query_string': changelist.get_query_string({self.parameter_name: lookup}, []),
+                'display': title,
+            }
+
+
 @admin.register(Tab)
 class TabAdmin(admin.ModelAdmin):
-    list_display = ['name', 'uuid', 'default_currency', 'settlement_currency', 'is_pro', 'is_settled', 'is_archived', 'created_by', 'created_at']
-    list_filter = ['is_pro', 'is_settled', 'is_archived', 'default_currency', 'settlement_currency', 'created_at']
+    list_display = ['name', 'uuid', 'is_demo', 'default_currency', 'settlement_currency', 'is_pro', 'is_settled', 'is_archived', 'created_by', 'created_at']
+    ordering = ['-uuid']
+    list_filter = [DemoTabFilter, 'is_pro', 'is_settled', 'is_archived', 'default_currency', 'settlement_currency', 'created_at']
     search_fields = ['name', 'description', 'uuid', 'created_by__uuid']
     readonly_fields = ['uuid', 'created_at', 'updated_at']
     raw_id_fields = ['created_by']
@@ -113,6 +143,7 @@ class TabAdmin(admin.ModelAdmin):
 @admin.register(TabPerson)
 class TabPersonAdmin(admin.ModelAdmin):
     list_display = ['name', 'uuid', 'tab', 'user_link', 'created_at']
+    ordering = ['-uuid']
     list_filter = ['created_at']
     search_fields = ['name', 'uuid', 'user__username', 'user__email', 'user__uuid', 'tab__name', 'tab__uuid']
     readonly_fields = ['uuid', 'created_at', 'updated_at']
@@ -149,7 +180,7 @@ class TabPersonAdmin(admin.ModelAdmin):
 class LineItemInline(MoneyAdminMixin, admin.TabularInline):
     model = LineItem
     extra = 1
-    fields = ['uuid', 'description', 'value', 'split_type', 'total_claimed', 'created_at']
+    fields = ['uuid', 'description', 'translated_name', 'value', 'split_type', 'total_claimed', 'created_at']
     readonly_fields = ['uuid', 'total_claimed', 'created_at']
 
     def total_claimed(self, obj):
@@ -170,6 +201,7 @@ class LineItemInline(MoneyAdminMixin, admin.TabularInline):
 @admin.register(Bill)
 class BillAdmin(MoneyAdminMixin, admin.ModelAdmin):
     list_display = ['description', 'uuid', 'tab', 'currency', 'display_total_amount', 'display_is_itemised', 'status', 'date', 'has_receipt']
+    ordering = ['-uuid']
     list_filter = ['status', 'currency', 'date', 'created_at']
     search_fields = ['description', 'uuid', 'tab__name', 'tab__uuid']
     readonly_fields = ['uuid', 'display_total_amount', 'receipt_image_link', 'created_at', 'updated_at']
@@ -212,6 +244,14 @@ class BillAdmin(MoneyAdminMixin, admin.ModelAdmin):
     has_receipt.short_description = 'Receipt'
 
     def receipt_image_link(self, obj):
+        if obj.receipt_image_key:
+            from ninjatab.tabs.receipt_service import generate_presigned_url
+            url = generate_presigned_url(obj.receipt_image_key)
+            return format_html(
+                '<a href="{}" target="_blank">View receipt image</a> <span style="color:#888">({})</span>',
+                url,
+                obj.receipt_image_key,
+            )
         if obj.receipt_image_url:
             return format_html(
                 '<a href="{}" target="_blank">View receipt image</a>',
@@ -250,9 +290,10 @@ class PersonLineItemClaimInline(MoneyAdminMixin, admin.TabularInline):
 
 @admin.register(LineItem)
 class LineItemAdmin(MoneyAdminMixin, admin.ModelAdmin):
-    list_display = ['description', 'uuid', 'bill', 'display_value', 'split_type', 'total_claimed_amount', 'claims_count', 'created_at']
+    list_display = ['description', 'translated_name', 'uuid', 'bill', 'display_value', 'split_type', 'total_claimed_amount', 'claims_count', 'created_at']
+    ordering = ['-uuid']
     list_filter = ['split_type', 'created_at']
-    search_fields = ['description', 'uuid', 'bill__description', 'bill__uuid', 'bill__tab__name', 'bill__tab__uuid']
+    search_fields = ['description', 'translated_name', 'uuid', 'bill__description', 'bill__uuid', 'bill__tab__name', 'bill__tab__uuid']
     readonly_fields = ['uuid', 'created_at', 'updated_at', 'claims_count', 'total_claimed_amount']
     raw_id_fields = ['bill']
     show_full_result_count = False
@@ -260,7 +301,7 @@ class LineItemAdmin(MoneyAdminMixin, admin.ModelAdmin):
 
     fieldsets = (
         ('Line Item Information', {
-            'fields': ('uuid', 'bill', 'description', 'value', 'split_type')
+            'fields': ('uuid', 'bill', 'description', 'translated_name', 'value', 'split_type')
         }),
         ('Claims', {
             'fields': ('claims_count', 'total_claimed_amount')
@@ -303,6 +344,7 @@ class PersonLineItemClaimAdmin(MoneyAdminMixin, admin.ModelAdmin):
         'has_claimed',
         'created_at'
     ]
+    ordering = ['-uuid']
     list_filter = ['has_claimed', 'created_at']
     search_fields = [
         'uuid',
@@ -356,6 +398,7 @@ class PersonLineItemClaimAdmin(MoneyAdminMixin, admin.ModelAdmin):
 @admin.register(Settlement)
 class SettlementAdmin(MoneyAdminMixin, admin.ModelAdmin):
     list_display = ['uuid', 'tab', 'from_person', 'to_person', 'display_amount', 'currency', 'created_at']
+    ordering = ['-uuid']
     list_filter = ['currency', 'created_at']
     search_fields = ['uuid', 'tab__name', 'tab__uuid', 'from_person__name', 'to_person__name']
     readonly_fields = ['uuid', 'created_at', 'updated_at']
@@ -384,6 +427,7 @@ class SettlementAdmin(MoneyAdminMixin, admin.ModelAdmin):
 @admin.register(Contact)
 class ContactAdmin(admin.ModelAdmin):
     list_display = ['uuid', 'owner', 'contact_user', 'created_at']
+    ordering = ['-uuid']
     list_filter = ['created_at']
     search_fields = ['uuid', 'owner__email', 'owner__first_name', 'contact_user__email', 'contact_user__first_name']
     readonly_fields = ['uuid', 'created_at', 'updated_at']
