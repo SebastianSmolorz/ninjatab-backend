@@ -115,7 +115,7 @@ class BillDemoTabFilter(DemoTabFilter):
 class TabAdmin(admin.ModelAdmin):
     list_display = ['name', 'uuid', 'is_demo', 'default_currency', 'settlement_currency', 'is_pro', 'is_settled', 'is_archived', 'created_by', 'created_at']
     ordering = ['-uuid']
-    list_filter = [DemoTabFilter, 'is_pro', 'is_settled', 'is_archived', 'default_currency', 'settlement_currency', 'created_at']
+    list_filter = [DemoTabFilter, 'is_pro', 'is_settled', 'is_archived', 'created_at']
     search_fields = ['name', 'description', 'uuid', 'created_by__uuid']
     readonly_fields = ['uuid', 'created_at', 'updated_at']
     raw_id_fields = ['created_by']
@@ -207,7 +207,7 @@ class LineItemInline(MoneyAdminMixin, admin.TabularInline):
 class BillAdmin(MoneyAdminMixin, admin.ModelAdmin):
     list_display = ['description', 'uuid', 'tab_link', 'tab_is_demo', 'currency', 'display_total_amount', 'display_is_itemised', 'status', 'date', 'has_receipt']
     ordering = ['-uuid']
-    list_filter = [BillDemoTabFilter, 'status', 'currency', 'date', 'created_at']
+    list_filter = [BillDemoTabFilter, 'status', 'date', 'created_at']
     search_fields = ['description', 'uuid', 'tab__name', 'tab__uuid']
     readonly_fields = ['uuid', 'tab_is_demo', 'display_total_amount', 'receipt_image_link', 'created_at', 'updated_at']
     raw_id_fields = ['tab', 'creator', 'paid_by']
@@ -422,7 +422,7 @@ class PersonLineItemClaimAdmin(MoneyAdminMixin, admin.ModelAdmin):
 class SettlementAdmin(MoneyAdminMixin, admin.ModelAdmin):
     list_display = ['uuid', 'tab', 'from_person', 'to_person', 'display_amount', 'currency', 'created_at']
     ordering = ['-uuid']
-    list_filter = ['currency', 'created_at']
+    list_filter = ['created_at']
     search_fields = ['uuid', 'tab__name', 'tab__uuid', 'from_person__name', 'to_person__name']
     readonly_fields = ['uuid', 'created_at', 'updated_at']
     show_full_result_count = False

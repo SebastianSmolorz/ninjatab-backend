@@ -5,5 +5,4 @@ from .models import ExchangeRate
 @admin.register(ExchangeRate)
 class ExchangeRateAdmin(admin.ModelAdmin):
     list_display = ('currency', 'rate', 'effective_date')
-    list_filter = ('currency',)
     ordering = ('-effective_date',)
