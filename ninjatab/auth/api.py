@@ -36,8 +36,48 @@ from ninjatab.auth.cookies import (
 from ninjatab.auth.social import verify_google_id_token, verify_apple_id_token
 from ninjatab.tabs.demo import create_demo_tab
 import logging
+import sentry_sdk
 from datetime import timedelta
-from ninjatab.utilities.analytics import safe_capture
+from ninjatab.utilities.analytics import safe_capture, safe_identify
+
+
+def _identify_user(user, method):
+    try:
+        distinct_id = getattr(user, "uuid", None)
+        if distinct_id is None:
+            return
+        opted_in = bool(getattr(user, "analytics_opted_in", False))
+        properties = {
+            "platform": getattr(user, "platform", None) or None,
+            "last_login_method": method,
+            "analytics_opted_in": opted_in,
+        }
+        if opted_in:
+            first = getattr(user, "first_name", "") or ""
+            last = getattr(user, "last_name", "") or ""
+            properties["email"] = getattr(user, "email", None) or None
+            properties["name"] = f"{first} {last}".strip() or None
+            properties["first_name"] = first or None
+            properties["last_name"] = last or None
+        else:
+            # Clear any previously-set PII if the user has since opted out.
+            properties["email"] = None
+            properties["name"] = None
+            properties["first_name"] = None
+            properties["last_name"] = None
+        date_joined = getattr(user, "date_joined", None)
+        set_once = {
+            "initial_platform": getattr(user, "platform", None) or None,
+            "signup_method": method,
+            "date_joined": date_joined.isoformat() if date_joined else None,
+        }
+        safe_identify(distinct_id, properties=properties, set_once=set_once)
+    except Exception as e:
+        logger.exception("Failed to build analytics identify payload")
+        try:
+            sentry_sdk.capture_exception(e)
+        except Exception:
+            logger.exception("Failed to report analytics failure to Sentry")
 
 logger = logging.getLogger("app")
 gdpr_logger = logging.getLogger("gdpr")
@@ -103,6 +143,7 @@ def verify_magic_link(request, payload: VerifyMagicLinkSchema):
     set_auth_cookies(response, access_token, refresh_token)
 
     is_new = (timezone.now() - user.date_joined) < timedelta(minutes=5)
+    _identify_user(user, "magic_link")
     safe_capture(user.uuid, "user_signed_up" if is_new else "user_logged_in", properties={
         "method": "magic_link",
     })
@@ -170,6 +211,7 @@ def social_login(request, payload: SocialLoginSchema):
     response = JsonResponse({"user": user_schema.model_dump(), "is_new": created})
     set_auth_cookies(response, access_token, refresh_token)
 
+    _identify_user(user, payload.provider)
     safe_capture(user.uuid, "user_signed_up" if created else "user_logged_in", properties={
         "method": payload.provider,
     })
@@ -203,6 +245,7 @@ def refresh(request):
 
     response = JsonResponse({"success": True})
     set_auth_cookies(response, new_access_token, new_refresh_token)
+    _identify_user(user, "refresh")
     return response
 
 
@@ -224,13 +267,18 @@ def update_me(request, payload: UpdateProfileSchema):
     user = request.auth
     user.first_name = payload.first_name.strip()
     update_fields = ["first_name"]
-    if payload.analytics_opted_in is not None:
+    opt_in_changed = False
+    if payload.analytics_opted_in is not None and payload.analytics_opted_in != user.analytics_opted_in:
         user.analytics_opted_in = payload.analytics_opted_in
         update_fields.append("analytics_opted_in")
+        opt_in_changed = True
     user.save(update_fields=update_fields)
 
     new_name = user.first_name.strip() or "You"
     TabPerson.objects.filter(user=user, tab__is_demo=True).update(name=new_name)
+
+    if opt_in_changed:
+        _identify_user(user, "profile_update")
 
     return user
 
