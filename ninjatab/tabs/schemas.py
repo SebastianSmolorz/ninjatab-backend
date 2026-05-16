@@ -330,6 +330,14 @@ class BillCreateSchema(BaseModel):
     date: Optional[Date] = None
     receipt_image_key: str = ''
     line_items: List[LineItemCreateSchema] = []
+    scan_session_id: Optional[str] = None
+    was_edited: Optional[bool] = None
+    had_mismatch: Optional[bool] = None
+
+
+class ScanOutcomeSchema(BaseModel):
+    scan_session_id: str
+    outcome: str
 
 
 class BillUpdateSchema(BaseModel):
