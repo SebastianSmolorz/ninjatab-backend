@@ -31,7 +31,7 @@ class BillInline(MoneyAdminMixin, admin.TabularInline):
     show_change_link = True
     fields = ['uuid', 'description', 'date', 'created_at', 'currency', 'display_total', 'status', 'paid_by', 'line_item_count']
     readonly_fields = ['uuid', 'description', 'date', 'created_at', 'currency', 'display_total', 'status', 'paid_by', 'line_item_count']
-    ordering = ['-date']
+    ordering = ['-uuid']
 
     def has_add_permission(self, request, obj=None):
         return False
