@@ -617,7 +617,24 @@ def upload_receipt(request, tab_id: str, file: UploadedFile = File(...)):
 
     safe_capture(request.auth.uuid, "receipt_scanned", properties={"tab_id": str(tab.uuid)})
 
+    result["scan_session_id"] = image_key
     return result
+
+
+@tab_router.post("/scan-outcome")
+def scan_outcome(request, payload: ScanOutcomeSchema):
+    """Record a non-submit terminal outcome for a receipt scan.
+
+    Always returns 200; failures are logged but never surfaced to the client.
+    """
+    from ninjatab.tabs.scan_analytics import fire_scan_outcome
+
+    if payload.outcome not in {"rescanned", "abandoned"}:
+        logger.warning("scan_outcome got invalid outcome=%s", payload.outcome)
+        return {"ok": True}
+
+    fire_scan_outcome(request.auth.uuid, payload.scan_session_id, payload.outcome)
+    return {"ok": True}
 
 
 @tab_router.post("/{tab_id}/upgrade")
@@ -719,6 +736,23 @@ def create_bill(request, payload: BillCreateSchema):
         "line_item_count": len(payload.line_items),
         "currency": payload.currency,
     })
+
+    if payload.scan_session_id:
+        try:
+            from ninjatab.tabs.scan_analytics import compute_submit_outcome, fire_scan_outcome
+            outcome = compute_submit_outcome(
+                bool(payload.was_edited),
+                bool(payload.had_mismatch),
+            )
+            fire_scan_outcome(
+                request.auth.uuid,
+                payload.scan_session_id,
+                outcome,
+                tab_id=tab.uuid,
+                bill_id=bill.uuid,
+            )
+        except Exception:
+            logger.exception("scan outcome emission failed for bill=%s", bill.uuid)
 
     return bill
 
