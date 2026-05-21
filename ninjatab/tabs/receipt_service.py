@@ -28,32 +28,35 @@ ALLOWED_IMAGE_TYPES = {
 MAX_UPLOAD_SIZE = 10 * 1024 * 1024  # 10 MB
 
 
+# Monetary amounts are typed as `str` rather than `float` to prevent the
+# constrained JSON decoder from runaway-sampling decimal digits and truncating
+# the response. We coerce to float on the server.
 class _Item(BaseModel):
     name: str
     translated_name: str
-    total: float
+    total: str
     quantity: Optional[int] = None
-    price_per_quantity: Optional[float] = None
+    price_per_quantity: Optional[str] = None
 
 
 class _OtherCharge(BaseModel):
     name: str
     translated_name: str
-    amount: float
+    amount: str
 
 
 class _Document(BaseModel):
     receipt_language: str
     receipt_language_code: Optional[str] = None
     items: list[_Item]
-    receipt_total: Optional[float] = None
-    items_total: float
+    receipt_total: Optional[str] = None
+    items_total: Optional[str] = None
     receipt_establishment_name: Optional[str] = None
     currency_code: Optional[str] = None
     datetime_of_receipt: Optional[str] = None
-    tax: Optional[float] = None
-    tip: Optional[float] = None
-    service_charge: Optional[float] = None
+    tax: Optional[str] = None
+    tip: Optional[str] = None
+    service_charge: Optional[str] = None
     other_charges: Optional[list[_OtherCharge]] = None
 
 # Each item must include:
@@ -108,6 +111,8 @@ Extract datetime_of_receipt from the receipt date/time.
 - If the receipt provides only a partial date or ambiguous date/time that cannot be confidently converted to ISO 8601, return null
 - If no receipt date/time is present, return null
 
+All monetary amounts (total, price_per_quantity, receipt_total, items_total, tax, tip, service_charge, other_charges.amount) must be returned as decimal strings with at most 2 decimal places, for example "3.50" or "-1.20" for a discount. Do not return numbers with long decimal expansions.
+
 Be precise and conservative.
 - Do not invent values
 """
@@ -135,8 +140,21 @@ def _is_likely_non_contributing(name: Optional[str]) -> bool:
     return bool(name) and _NON_CONTRIBUTING_RE.search(name) is not None
 
 
+def _to_float(value) -> Optional[float]:
+    """Coerce a Mistral-returned amount (now typed as string) into a float.
+    Returns None on missing or unparseable input."""
+    if value is None:
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    try:
+        return float(str(value).strip().replace(",", "."))
+    except (ValueError, TypeError):
+        return None
+
+
 def _items_sum(items: list[dict]) -> float:
-    return round(sum(float(i.get("total") or 0) for i in items), 2)
+    return round(sum(_to_float(i.get("total")) or 0 for i in items), 2)
 
 
 def _reconcile_items_with_total(annotation: dict) -> list[dict]:
@@ -150,11 +168,10 @@ def _reconcile_items_with_total(annotation: dict) -> list[dict]:
 
     Returns the (possibly unchanged) items list."""
     items: list[dict] = list(annotation.get("items") or [])
-    receipt_total = annotation.get("receipt_total")
+    receipt_total = _to_float(annotation.get("receipt_total"))
     if receipt_total is None or not items and not _candidate_additions(annotation):
         return items
 
-    receipt_total = float(receipt_total)
     diff = _items_sum(items) - receipt_total
 
     if abs(diff) < ITEMS_TOTAL_TOLERANCE:
@@ -191,17 +208,17 @@ def _candidate_additions(annotation: dict) -> list[dict]:
     charge was misrouted into tax/tip/service_charge/other_charges."""
     out: list[dict] = []
     for key, label in (("tax", "Tax"), ("tip", "Tip"), ("service_charge", "Service charge")):
-        amount = annotation.get(key)
+        amount = _to_float(annotation.get(key))
         if amount is not None:
-            out.append({"name": label, "translated_name": label, "total": float(amount)})
+            out.append({"name": label, "translated_name": label, "total": amount})
     for charge in annotation.get("other_charges") or []:
-        amount = charge.get("amount")
+        amount = _to_float(charge.get("amount"))
         if amount is None:
             continue
         out.append({
             "name": charge.get("name") or "Charge",
             "translated_name": charge.get("translated_name") or charge.get("name") or "Charge",
-            "total": float(amount),
+            "total": amount,
         })
     return out
 
@@ -291,11 +308,29 @@ def scan_receipt(image_key: str, tab_id: str) -> dict:
         timeout_ms=30_000,
     )
 
-    # Extract annotation from response (top-level field, JSON string)
+    # Extract annotation from response (top-level field, JSON string).
+    # If Mistral returns malformed JSON (e.g. token-budget exhausted mid-number,
+    # truncated structure), capture to Sentry and fall through with no
+    # annotation so the client can show manual entry.
     annotation = None
     raw = response.document_annotation
     if raw and isinstance(raw, str) and not raw.startswith("~?~"):
-        annotation = json.loads(raw)
+        try:
+            annotation = json.loads(raw)
+        except json.JSONDecodeError as e:
+            sentry_sdk.capture_exception(e, contexts={
+                "mistral_ocr": {
+                    "tab_id": tab_id,
+                    "image_key": image_key,
+                    "raw_length": len(raw),
+                    "raw_preview": raw[:500],
+                },
+            })
+            logger.warning(
+                "Mistral OCR returned malformed JSON for tab %s: %s",
+                tab_id, e,
+            )
+            annotation = None
 
     # Compute items_total from the items returned, keeping the AI's value as ai_items_total.
     # Then attempt to reconcile items with receipt_total by adjusting which
