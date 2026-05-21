@@ -237,6 +237,29 @@ def _normalize_amounts_in_annotation(annotation: dict) -> None:
             charge["amount"] = _normalize_amount_str(charge["amount"], dp)
 
 
+def _synthesize_total_only_item(annotation: dict) -> bool:
+    """Card-terminal slips, ATM receipts, parking ticket stubs etc. often show
+    only a grand total. The model correctly returns no items but a receipt_total.
+    Synthesize a single item from the total so the bill is usable; otherwise
+    the user sees an empty list with a total they can't split.
+
+    Returns True if an item was synthesized. Mutates annotation in place."""
+    items = annotation.get("items") or []
+    if items:
+        return False
+    receipt_total = _to_float(annotation.get("receipt_total"))
+    if receipt_total is None or receipt_total <= 0:
+        return False
+    dp = _annotation_decimals(annotation)
+    name = (annotation.get("receipt_establishment_name") or "").strip() or "Total"
+    annotation["items"] = [{
+        "name": name,
+        "translated_name": name,
+        "total": f"{receipt_total:.{dp}f}",
+    }]
+    return True
+
+
 def _collapse_redundant_translations(annotation: dict) -> None:
     """If a translated_name equals the original name (case-insensitive), drop
     the translation and reuse the original to preserve its casing."""
@@ -445,6 +468,7 @@ def scan_receipt(image_key: str, tab) -> dict:
         "other_charges_count": 0,
         "reconciliation_action": "none",    # "none" | "items_dropped" | "candidates_added"
         "reconciliation_items_delta": 0,
+        "synthesized_total_only_item": False,
         "date_parsed": False,
         "ocr_pages": 0,
         "ocr_markdown_chars": 0,
@@ -519,6 +543,7 @@ def scan_receipt(image_key: str, tab) -> dict:
 
         _normalize_amounts_in_annotation(annotation)
         annotation["ai_items_total"] = annotation.pop("items_total", None)
+        metrics["synthesized_total_only_item"] = _synthesize_total_only_item(annotation)
         items_before = list(annotation.get("items") or [])
         annotation["items"] = _reconcile_items_with_total(annotation)
         items_after = annotation["items"]

@@ -37,6 +37,11 @@ The annotation `currency_code` was flowing through unchecked. The model could em
 ### H7 ⏭️ `_normalize_amount_str` mishandles negative 3-digit fractions
 Skipped for now. Negative values like `"-1.234"` for 2dp currencies still pass through the thousands-heuristic and become `"-1234"`. Revisit if logs show this firing.
 
+### TOTAL_ONLY ✅ Synthesize a single item when only a grand total is visible
+Card-terminal slips, ATM receipts, parking ticket stubs etc. often print only a total (no itemised lines). The model correctly returns `items: []` with a populated `receipt_total`, which previously yielded an empty bill the user couldn't split.
+
+**Applied** in `_synthesize_total_only_item`: when `items` is empty and `receipt_total > 0`, prepends a single synthetic item using `receipt_establishment_name` (or "Total" fallback) as the name and `receipt_total` as the amount, formatted to the receipt currency's precision. Tracked via `synthesized_total_only_item` boolean in scan metrics so it can be filtered in PostHog.
+
 ### OBS ✅ Rich PostHog telemetry for receipt scanning
 `scan_receipt` now accumulates a `_scan_metrics` dict during processing; `api.upload_receipt` strips it from the response and emits it as PostHog properties.
 
