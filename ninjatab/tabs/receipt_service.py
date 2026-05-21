@@ -1,7 +1,9 @@
 import json
 import logging
+import re
 import uuid
 from datetime import datetime
+from itertools import combinations
 from typing import Optional
 
 import boto3
@@ -112,6 +114,98 @@ Be precise and conservative.
 # - Only include items that clearly represent purchased goods or services or qualifying receipt-level charges
 
 
+NON_CONTRIBUTING_KEYWORDS = (
+    "tax", "vat", "gst", "hst", "pst",
+    "fee", "fees", "charge", "charges", "surcharge",
+    "tip", "tips", "gratuity",
+    "subtotal", "sub total", "sub-total",
+    "discount", "discounts", "voucher", "loyalty", "promo", "promotion",
+    "rounding",
+)
+
+_NON_CONTRIBUTING_RE = re.compile(
+    r"\b(?:" + "|".join(re.escape(kw) for kw in NON_CONTRIBUTING_KEYWORDS) + r")\b",
+    re.IGNORECASE,
+)
+
+ITEMS_TOTAL_TOLERANCE = 0.01
+
+
+def _is_likely_non_contributing(name: Optional[str]) -> bool:
+    return bool(name) and _NON_CONTRIBUTING_RE.search(name) is not None
+
+
+def _items_sum(items: list[dict]) -> float:
+    return round(sum(float(i.get("total") or 0) for i in items), 2)
+
+
+def _reconcile_items_with_total(annotation: dict) -> list[dict]:
+    """Try to make items_total match receipt_total by adjusting which
+    tax/tip/fee-like rows are counted as items.
+
+    - If items_total > receipt_total: try removing suspicious items already in
+      the items list (matched on translated_name).
+    - If items_total < receipt_total: try adding from the dedicated
+      tax/tip/service_charge/other_charges fields back into items.
+
+    Returns the (possibly unchanged) items list."""
+    items: list[dict] = list(annotation.get("items") or [])
+    receipt_total = annotation.get("receipt_total")
+    if receipt_total is None or not items and not _candidate_additions(annotation):
+        return items
+
+    receipt_total = float(receipt_total)
+    diff = _items_sum(items) - receipt_total
+
+    if abs(diff) < ITEMS_TOTAL_TOLERANCE:
+        return items
+
+    if diff > 0:
+        suspicious = [
+            i for i, it in enumerate(items)
+            if _is_likely_non_contributing(it.get("translated_name"))
+        ]
+        for r in range(1, len(suspicious) + 1):
+            for combo in combinations(suspicious, r):
+                drop = set(combo)
+                kept = [it for i, it in enumerate(items) if i not in drop]
+                if abs(_items_sum(kept) - receipt_total) < ITEMS_TOTAL_TOLERANCE:
+                    return kept
+        return items
+
+    additions = _candidate_additions(annotation)
+    if not additions:
+        return items
+    idxs = list(range(len(additions)))
+    for r in range(1, len(additions) + 1):
+        for combo in combinations(idxs, r):
+            extra = [additions[i] for i in combo]
+            if abs(_items_sum(items + extra) - receipt_total) < ITEMS_TOTAL_TOLERANCE:
+                return items + extra
+    return items
+
+
+def _candidate_additions(annotation: dict) -> list[dict]:
+    """Build a list of item-shaped dicts from the dedicated charge fields,
+    used when items_total is below receipt_total and we suspect a contributing
+    charge was misrouted into tax/tip/service_charge/other_charges."""
+    out: list[dict] = []
+    for key, label in (("tax", "Tax"), ("tip", "Tip"), ("service_charge", "Service charge")):
+        amount = annotation.get(key)
+        if amount is not None:
+            out.append({"name": label, "translated_name": label, "total": float(amount)})
+    for charge in annotation.get("other_charges") or []:
+        amount = charge.get("amount")
+        if amount is None:
+            continue
+        out.append({
+            "name": charge.get("name") or "Charge",
+            "translated_name": charge.get("translated_name") or charge.get("name") or "Charge",
+            "total": float(amount),
+        })
+    return out
+
+
 class ScanLimitExceeded(Exception):
     pass
 
@@ -203,11 +297,13 @@ def scan_receipt(image_key: str, tab_id: str) -> dict:
     if raw and isinstance(raw, str) and not raw.startswith("~?~"):
         annotation = json.loads(raw)
 
-    # Compute items_total from the items returned, keeping the AI's value as ai_items_total
+    # Compute items_total from the items returned, keeping the AI's value as ai_items_total.
+    # Then attempt to reconcile items with receipt_total by adjusting which
+    # tax/tip/fee-like rows are counted.
     if annotation:
         annotation["ai_items_total"] = annotation.pop("items_total", None)
-        items = annotation.get("items") or []
-        annotation["items_total"] = round(sum(float(item.get("total") or 0) for item in items), 2)
+        annotation["items"] = _reconcile_items_with_total(annotation)
+        annotation["items_total"] = _items_sum(annotation.get("items") or [])
 
     logger.info(
         "Mistral OCR response for tab %s: %s | annotation: %s",
