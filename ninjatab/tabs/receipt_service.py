@@ -85,6 +85,8 @@ Detect and extract the receipt language into receipt_language.
 Extract all purchased goods or services that contribute to the receipt total into items.
 Do not include receipt-level charges such as tax, tip, service charge, or other fees/discounts in items - those are captured separately below.
 
+CRITICAL - one output item per printed row. Never merge, combine, deduplicate, or consolidate multiple printed rows into a single output item, even if those rows have the identical name and identical price. If the receipt prints "Coke 3.00" on three separate rows, return three separate items each with quantity 1 and total 3.00 - do NOT return a single item with quantity 3 and total 9.00, and do NOT return a single item with quantity 1 and total 9.00. The output should have the same number of item rows as the receipt has printed item rows. Only use quantity > 1 (and a correspondingly larger total) when a SINGLE printed row on the receipt itself shows an explicit quantity multiplier (e.g. "3 x Coke   9.00" on one line).
+
 For each item:
 - name: the item name exactly as it appears on the receipt, in its original language
 - translated_name: the English translation of the item name
@@ -99,8 +101,6 @@ Only include price_per_quantity and quantity if clearly on the receipt.
 quantity: number of instanced of this item purchased. Set to 1 if it is not clear
 price_per_quantity: the price of this item per quantity
 total: the final price paid for that line item so quantity * price_per_quantity.
-
-Preserve the receipt verbatim when the same item appears multiple times. If the receipt lists the same item as two or more separate rows (each with its own price), return them as two or more separate items in the output - do not merge them into a single item with a higher quantity. Only use quantity > 1 when the receipt itself shows a single row for that item with an explicit quantity multiplier.
 
 Do not include subtotal, tax, VAT, tip, gratuity, service charge, payment method, change, balance, loyalty adjustments, discounts, or any other fees as items - even if they affect the grand total. These are captured separately below.
 
