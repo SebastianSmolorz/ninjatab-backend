@@ -23,7 +23,7 @@ ALLOWED_IMAGE_TYPES = {
     "image/jpeg", "image/png", "image/webp",
     "image/heic", "image/heif", "application/octet-stream",
 }
-MAX_UPLOAD_SIZE = 25 * 1024 * 1024  # 10 MB
+MAX_UPLOAD_SIZE = 10 * 1024 * 1024  # 10 MB
 
 
 class _Item(BaseModel):
@@ -176,7 +176,6 @@ def scan_receipt(image_key: str, tab_id: str) -> dict:
         document=ImageURLChunk(image_url=image_url),
         document_annotation_format=response_format_from_pydantic_model(_Document),
         document_annotation_prompt=DOCUMENT_ANNOTATION_PROMPT,
-        include_image_base64=True,
     )
 
     # Extract annotation from response (top-level field, JSON string)
