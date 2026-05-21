@@ -111,7 +111,7 @@ Extract datetime_of_receipt from the receipt date/time.
 - If the receipt provides only a partial date or ambiguous date/time that cannot be confidently converted to ISO 8601, return null
 - If no receipt date/time is present, return null
 
-All monetary amounts (total, price_per_quantity, receipt_total, items_total, tax, tip, service_charge, other_charges.amount) must be returned as decimal strings with at most 2 decimal places, for example "3.50" or "-1.20" for a discount. Do not return numbers with long decimal expansions.
+All monetary amounts (total, price_per_quantity, receipt_total, items_total, tax, tip, service_charge, other_charges.amount) must be returned as decimal strings with a dot (".") as the decimal separator and at most 2 decimal places, for example "3.50" or "-1.20" for a discount. Do not use comma as a decimal separator, even if the receipt does. Do not return numbers with long decimal expansions.
 
 Be precise and conservative.
 - Do not invent values
@@ -138,6 +138,31 @@ ITEMS_TOTAL_TOLERANCE = 0.01
 
 def _is_likely_non_contributing(name: Optional[str]) -> bool:
     return bool(name) and _NON_CONTRIBUTING_RE.search(name) is not None
+
+
+def _normalize_amount_str(value):
+    """Normalize an amount string to use '.' as the decimal separator.
+    Mistral sometimes echoes the receipt's locale (e.g. '20,00' on Italian
+    receipts), but the mobile client expects '.'-separated decimals.
+    Non-strings are returned unchanged."""
+    if not isinstance(value, str):
+        return value
+    return value.replace(",", ".")
+
+
+def _normalize_amounts_in_annotation(annotation: dict) -> None:
+    """In-place: rewrite all amount strings on the annotation to use '.' as
+    decimal separator so the mobile client parses them correctly."""
+    for key in ("receipt_total", "items_total", "tax", "tip", "service_charge"):
+        if key in annotation:
+            annotation[key] = _normalize_amount_str(annotation[key])
+    for item in annotation.get("items") or []:
+        for key in ("total", "price_per_quantity"):
+            if key in item:
+                item[key] = _normalize_amount_str(item[key])
+    for charge in annotation.get("other_charges") or []:
+        if "amount" in charge:
+            charge["amount"] = _normalize_amount_str(charge["amount"])
 
 
 def _to_float(value) -> Optional[float]:
@@ -332,10 +357,11 @@ def scan_receipt(image_key: str, tab_id: str) -> dict:
             )
             annotation = None
 
-    # Compute items_total from the items returned, keeping the AI's value as ai_items_total.
-    # Then attempt to reconcile items with receipt_total by adjusting which
-    # tax/tip/fee-like rows are counted.
+    # Normalize amount strings to '.' decimal separator (Mistral may echo
+    # locale-specific commas, e.g. "20,00" on Italian receipts), then compute
+    # items_total and attempt to reconcile items with receipt_total.
     if annotation:
+        _normalize_amounts_in_annotation(annotation)
         annotation["ai_items_total"] = annotation.pop("items_total", None)
         annotation["items"] = _reconcile_items_with_total(annotation)
         annotation["items_total"] = _items_sum(annotation.get("items") or [])
