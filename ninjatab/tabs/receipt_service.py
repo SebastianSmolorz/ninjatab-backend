@@ -18,6 +18,9 @@ from mistralai.extra import response_format_from_pydantic_model
 import sentry_sdk
 
 from ninjatab.currencies.currency_utils import CURRENCY_DECIMAL_PLACES, get_decimal_places
+from ninjatab.currencies.models import Currency
+
+SUPPORTED_CURRENCY_CODES = frozenset(c.value for c in Currency)
 
 logger = logging.getLogger("app")
 
@@ -318,12 +321,16 @@ def _reconcile_items_with_total(annotation: dict) -> list[dict]:
 def _candidate_additions(annotation: dict) -> list[dict]:
     """Build a list of item-shaped dicts from the dedicated charge fields,
     used when items_total is below receipt_total and we suspect a contributing
-    charge was misrouted into tax/tip/service_charge/other_charges."""
+    charge was misrouted into tax/tip/service_charge/other_charges.
+
+    Item totals are emitted as strings formatted to the receipt currency's
+    precision, matching the type the model-returned items use."""
+    dp = _annotation_decimals(annotation)
     out: list[dict] = []
     for key, label in (("tax", "Tax"), ("tip", "Tip"), ("service_charge", "Service charge")):
         amount = _to_float(annotation.get(key))
         if amount is not None:
-            out.append({"name": label, "translated_name": label, "total": amount})
+            out.append({"name": label, "translated_name": label, "total": f"{amount:.{dp}f}"})
     for charge in annotation.get("other_charges") or []:
         amount = _to_float(charge.get("amount"))
         if amount is None:
@@ -331,7 +338,7 @@ def _candidate_additions(annotation: dict) -> list[dict]:
         out.append({
             "name": charge.get("name") or "Charge",
             "translated_name": charge.get("translated_name") or charge.get("name") or "Charge",
-            "total": amount,
+            "total": f"{amount:.{dp}f}",
         })
     return out
 
@@ -450,13 +457,23 @@ def scan_receipt(image_key: str, tab) -> dict:
     # locale-specific commas, e.g. "20,00" on Italian receipts), then compute
     # items_total and attempt to reconcile items with receipt_total.
     if annotation:
-        if not (annotation.get("currency_code") or "").strip():
+        raw_code = (annotation.get("currency_code") or "").strip().upper()
+        if not raw_code:
             logger.warning(
                 "Mistral OCR returned no currency_code for tab %s (image %s); "
                 "falling back to tab default_currency %s",
                 tab_id, image_key, tab.default_currency,
             )
             annotation["currency_code"] = tab.default_currency
+        elif raw_code not in SUPPORTED_CURRENCY_CODES:
+            logger.warning(
+                "Mistral OCR returned unsupported currency_code %r for tab %s "
+                "(image %s); falling back to tab default_currency %s",
+                raw_code, tab_id, image_key, tab.default_currency,
+            )
+            annotation["currency_code"] = tab.default_currency
+        else:
+            annotation["currency_code"] = raw_code
         _normalize_amounts_in_annotation(annotation)
         annotation["ai_items_total"] = annotation.pop("items_total", None)
         annotation["items"] = _reconcile_items_with_total(annotation)
