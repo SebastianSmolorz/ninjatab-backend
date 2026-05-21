@@ -109,7 +109,7 @@ Extract receipt-level charges that affect the grand total into their dedicated f
 
 Only populate these fields when the charge clearly affects the grand total. Leave them null if not present. Do not include line items in these fields, and do not include these charges in items.
 
-Extract receipt_total as the final total charged on the receipt.
+Extract receipt_total as the final total charged on the receipt. If the receipt does not explicitly display a grand total, return null - do not calculate, sum, or otherwise invent a receipt_total from the items or charges.
 
 Extract receipt_establishment_name as the merchant or establishment name shown on the receipt if available.
 
@@ -258,7 +258,9 @@ def _reconcile_items_with_total(annotation: dict) -> list[dict]:
     Returns the (possibly unchanged) items list."""
     items: list[dict] = list(annotation.get("items") or [])
     receipt_total = _to_float(annotation.get("receipt_total"))
-    if receipt_total is None or not items and not _candidate_additions(annotation):
+    if receipt_total is None:
+        return items
+    if not items and not _candidate_additions(annotation):
         return items
 
     diff = _items_sum(items) - receipt_total
