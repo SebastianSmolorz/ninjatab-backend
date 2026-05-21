@@ -29,7 +29,7 @@ MAX_UPLOAD_SIZE = 10 * 1024 * 1024  # 10 MB
 class _Item(BaseModel):
     name: str
     translated_name: str
-    total: float
+    total: Optional[float] = None
     quantity: Optional[int] = None
     price_per_quantity: Optional[float] = None
 
@@ -38,7 +38,7 @@ class _Document(BaseModel):
     receipt_language: str
     receipt_language_code: Optional[str] = None
     items: list[_Item]
-    receipt_total: float
+    receipt_total: Optional[float] = None
     items_total: float
     receipt_establishment_name: Optional[str] = None
     currency_code: Optional[str] = None
@@ -176,6 +176,7 @@ def scan_receipt(image_key: str, tab_id: str) -> dict:
         document=ImageURLChunk(image_url=image_url),
         document_annotation_format=response_format_from_pydantic_model(_Document),
         document_annotation_prompt=DOCUMENT_ANNOTATION_PROMPT,
+        timeout_ms=30_000,
     )
 
     # Extract annotation from response (top-level field, JSON string)
