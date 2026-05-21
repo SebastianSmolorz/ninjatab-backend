@@ -82,10 +82,22 @@ Detect and extract the receipt language into receipt_language.
 
 Extract all purchased goods or services that contribute to the receipt total into items.
 Do not include receipt-level charges such as tax, tip, service charge, or other fees/discounts in items - those are captured separately below.
+
+For each item:
+- name: the item name exactly as it appears on the receipt, in its original language
+- translated_name: the English translation of the item name
+  - Always attempt a translation when the item is not already in English, even if the original text is abbreviated, partially illegible, or you have to make your best guess from context (cuisine type, common menu items, surrounding items, the establishment name)
+  - For abbreviated item names (e.g. "BIRRA DIAMOND GRAN", "ANT. PIEVE VECCHIA"), expand and translate the likely full meaning ("Diamond beer (large)", "Antipasto Pieve Vecchia")
+  - Only fall back to copying the original name verbatim if you genuinely cannot make any reasonable guess at the English meaning
+  - If the item is already in English, set translated_name equal to name
+- quantity, price_per_quantity, total: see below
+
 Only include price_per_quantity and quantity if clearly on the receipt.
 quantity: number of instanced of this item purchased. Set to 1 if it is not clear
 price_per_quantity: the price of this item per quantity
 total: the final price paid for that line item so quantity * price_per_quantity.
+
+Preserve the receipt verbatim when the same item appears multiple times. If the receipt lists the same item as two or more separate rows (each with its own price), return them as two or more separate items in the output - do not merge them into a single item with a higher quantity. Only use quantity > 1 when the receipt itself shows a single row for that item with an explicit quantity multiplier.
 
 Do not include subtotal, tax, VAT, tip, gratuity, service charge, payment method, change, balance, loyalty adjustments, discounts, or any other fees as items - even if they affect the grand total. These are captured separately below.
 
@@ -111,10 +123,18 @@ Extract datetime_of_receipt from the receipt date/time.
 - If the receipt provides only a partial date or ambiguous date/time that cannot be confidently converted to ISO 8601, return null
 - If no receipt date/time is present, return null
 
-All monetary amounts (total, price_per_quantity, receipt_total, items_total, tax, tip, service_charge, other_charges.amount) must be returned as decimal strings with a dot (".") as the decimal separator and at most 2 decimal places, for example "3.50" or "-1.20" for a discount. Do not use comma as a decimal separator, even if the receipt does. Do not return numbers with long decimal expansions.
+All monetary amounts (total, price_per_quantity, receipt_total, items_total, tax, tip, service_charge, other_charges.amount) must be returned as decimal strings normalized to US locale formatting:
+- Use a dot (".") as the decimal separator
+- Do not include any thousands separators (no commas, no spaces, no dots between groups of digits)
+- Use at most 2 decimal places
+- Use a leading minus sign for negative amounts (discounts)
 
-Be precise and conservative.
-- Do not invent values
+Examples: "3.50", "1234.56", "-1.20", "0.99".
+Do not return values like "1,234.56", "1.234,56", "1 234,56", "20,00", or numbers with long decimal expansions, even if the receipt itself uses those formats. Convert from the receipt's local format to US format before returning.
+
+Be precise and conservative about monetary amounts, quantities, dates, and which items contribute to the total.
+- Do not invent prices or items that are not on the receipt
+- This conservatism does NOT apply to translated_name - always attempt a best-guess English translation as described above, even for abbreviated or partially illegible item names
 """
 # - Only include items that clearly represent purchased goods or services or qualifying receipt-level charges
 
@@ -141,13 +161,42 @@ def _is_likely_non_contributing(name: Optional[str]) -> bool:
 
 
 def _normalize_amount_str(value):
-    """Normalize an amount string to use '.' as the decimal separator.
-    Mistral sometimes echoes the receipt's locale (e.g. '20,00' on Italian
-    receipts), but the mobile client expects '.'-separated decimals.
-    Non-strings are returned unchanged."""
+    """Normalize an amount string to use '.' as the decimal separator and no
+    thousands separators. Handles both '.'-decimal (US: 1,234.56) and
+    ','-decimal (EU: 1.234,56) conventions, plus mixed/ambiguous cases.
+
+    Rule: the rightmost of '.' or ',' is the decimal separator; the other is
+    a thousands separator and is stripped. A lone separator followed by
+    exactly 3 digits with no other separator is treated as a thousands
+    separator (e.g. '1,234' or '1.500' → '1234')."""
     if not isinstance(value, str):
         return value
-    return value.replace(",", ".")
+    s = value.strip()
+    if not s:
+        return value
+
+    last_comma = s.rfind(",")
+    last_dot = s.rfind(".")
+    if last_comma == -1 and last_dot == -1:
+        return s
+
+    if last_comma > last_dot:
+        decimal_sep, thousands_sep, decimal_pos = ",", ".", last_comma
+    else:
+        decimal_sep, thousands_sep, decimal_pos = ".", ",", last_dot
+
+    frac = s[decimal_pos + 1:]
+    # Lone separator + 3-digit "fraction" + no other separator → thousands.
+    if (
+        len(frac) == 3
+        and frac.isdigit()
+        and thousands_sep not in s
+        and s.count(decimal_sep) == 1
+    ):
+        return s.replace(decimal_sep, "")
+
+    integer = s[:decimal_pos].replace(thousands_sep, "").replace(decimal_sep, "")
+    return f"{integer}.{frac}"
 
 
 def _normalize_amounts_in_annotation(annotation: dict) -> None:
