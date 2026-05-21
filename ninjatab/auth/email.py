@@ -1,7 +1,11 @@
+import logging
+
 import requests
 
 from django.conf import settings
 
+
+logger = logging.getLogger("app")
 
 LOGO_URL = "https://tab.ninja/logo-v2-120.png"
 
@@ -71,6 +75,7 @@ def send_magic_link(email: str, token: str) -> None:
     </html>
     """
 
+    logger.info("Sending magic link email to %s", email)
     resp = requests.post(
         "https://api.brevo.com/v3/smtp/email",
         headers={
@@ -85,6 +90,7 @@ def send_magic_link(email: str, token: str) -> None:
         },
     )
     resp.raise_for_status()
+    logger.info("Sent magic link email to %s (status=%s)", email, resp.status_code)
 
 
 def send_deletion_request_email(user_id: int, email: str) -> None:
@@ -92,6 +98,7 @@ def send_deletion_request_email(user_id: int, email: str) -> None:
         print(f"\n[DELETION REQUEST] user_id={user_id} email={email}\n")
         return
 
+    logger.info("Sending deletion request email for user_id=%s email=%s", user_id, email)
     resp = requests.post(
         "https://api.brevo.com/v3/smtp/email",
         headers={
@@ -106,3 +113,4 @@ def send_deletion_request_email(user_id: int, email: str) -> None:
         },
     )
     resp.raise_for_status()
+    logger.info("Sent deletion request email for user_id=%s (status=%s)", user_id, resp.status_code)
