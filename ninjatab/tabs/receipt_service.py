@@ -29,9 +29,15 @@ MAX_UPLOAD_SIZE = 10 * 1024 * 1024  # 10 MB
 class _Item(BaseModel):
     name: str
     translated_name: str
-    total: Optional[float] = None
+    total: float
     quantity: Optional[int] = None
     price_per_quantity: Optional[float] = None
+
+
+class _OtherCharge(BaseModel):
+    name: str
+    translated_name: str
+    amount: float
 
 
 class _Document(BaseModel):
@@ -43,6 +49,10 @@ class _Document(BaseModel):
     receipt_establishment_name: Optional[str] = None
     currency_code: Optional[str] = None
     datetime_of_receipt: Optional[str] = None
+    tax: Optional[float] = None
+    tip: Optional[float] = None
+    service_charge: Optional[float] = None
+    other_charges: Optional[list[_OtherCharge]] = None
 
 # Each item must include:
 # - name: the item name exactly as shown on the receipt
@@ -65,14 +75,22 @@ Detect and extract the receipt language into receipt_language.
 - If the receipt is in English, set receipt_language to "English".
 - Otherwise set it to the detected language name.
 
-Extract all items which contribute to the receipt total into items.
-Include all purchasable items as well as any service charges if they contribute to the receipt total. 
-Only include price_per_quantity and quantity if clearly on the receipt. 
+Extract all purchased goods or services that contribute to the receipt total into items.
+Do not include receipt-level charges such as tax, tip, service charge, or other fees/discounts in items - those are captured separately below.
+Only include price_per_quantity and quantity if clearly on the receipt.
 quantity: number of instanced of this item purchased. Set to 1 if it is not clear
 price_per_quantity: the price of this item per quantity
 total: the final price paid for that line item so quantity * price_per_quantity.
 
-Do not include subtotal, tax, VAT, payment method, change, balance, or loyalty adjustments as items unless they clearly affect the grand total as a receipt-level charge described above.
+Do not include subtotal, tax, VAT, tip, gratuity, service charge, payment method, change, balance, loyalty adjustments, discounts, or any other fees as items - even if they affect the grand total. These are captured separately below.
+
+Extract receipt-level charges that affect the grand total into their dedicated fields:
+- tax: total tax/VAT amount on the receipt, if shown
+- tip: tip or gratuity amount, if shown
+- service_charge: service charge amount, if shown
+- other_charges: a list of any other receipt-level fees or discounts that affect the total but do not fit tax/tip/service_charge (for example: delivery fee, booking fee, cover charge, loyalty discount, voucher). Use a negative amount for discounts. Each entry should include name (as shown on the receipt), translated_name (English translation, or same value if already English), and amount.
+
+Only populate these fields when the charge clearly affects the grand total. Leave them null if not present. Do not include line items in these fields, and do not include these charges in items.
 
 Extract receipt_total as the final total charged on the receipt.
 
