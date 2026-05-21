@@ -599,7 +599,7 @@ def upload_receipt(request, tab_id: str, file: UploadedFile = File(...)):
     image_key = upload_to_spaces(file, tab_id)
 
     try:
-        result = scan_receipt(image_key, tab_id)
+        result = scan_receipt(image_key, tab)
     except Exception:
         safe_capture(request.auth.uuid, "receipt_scan_failed", properties={
             "tab_id": str(tab.uuid),

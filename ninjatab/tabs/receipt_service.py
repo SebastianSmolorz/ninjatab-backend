@@ -17,7 +17,7 @@ from mistralai.extra import response_format_from_pydantic_model
 
 import sentry_sdk
 
-from ninjatab.currencies.currency_utils import get_decimal_places
+from ninjatab.currencies.currency_utils import CURRENCY_DECIMAL_PLACES, get_decimal_places
 
 logger = logging.getLogger("app")
 
@@ -117,6 +117,9 @@ Extract receipt_total as the final total charged on the receipt. If the receipt 
 Extract receipt_establishment_name as the merchant or establishment name shown on the receipt if available.
 
 Extract currency_code in ISO 4217 format, for example GBP, EUR, USD.
+- Prefer an explicit currency symbol, code, or label printed on the receipt
+- If no explicit currency is shown but the receipt's address (country/city), language, tax label (e.g. "VAT", "IVA", "MwSt", "GST"), or merchant clearly indicates a single dominant currency for that locale, set currency_code to that currency
+- If the currency cannot be confidently determined from explicit markings or strong contextual evidence, return null - do not guess or invent a currency code from a weak signal
 
 Calculate items_total as the sum of all item totals. Report the honest sum even if it does not match receipt_total - do not adjust, add, or drop items to force the totals to agree.
 
@@ -154,7 +157,13 @@ _NON_CONTRIBUTING_RE = re.compile(
 )
 
 def _annotation_decimals(annotation: dict) -> int:
-    return get_decimal_places((annotation.get("currency_code") or "").strip().upper())
+    code = (annotation.get("currency_code") or "").strip().upper()
+    if code and code not in CURRENCY_DECIMAL_PLACES:
+        logger.warning(
+            "Unknown currency_code %r in receipt annotation; defaulting to 2 decimal places",
+            code,
+        )
+    return get_decimal_places(code)
 
 
 def _annotation_tolerance(annotation: dict) -> float:
@@ -396,11 +405,12 @@ def generate_presigned_url(key: str, expiry: int = 3600) -> str:
     )
 
 
-def scan_receipt(image_key: str, tab_id: str) -> dict:
+def scan_receipt(image_key: str, tab) -> dict:
     """
     Run Mistral OCR on the image and return parsed annotation + date + presigned URL.
     Returns {"document_annotation": dict | None, "date": str, "image_url": str, "image_key": str}.
     """
+    tab_id = str(tab.uuid)
     client = Mistral(api_key=settings.MISTRAL_API_KEY)
     image_url = generate_presigned_url(image_key)
 
@@ -440,6 +450,13 @@ def scan_receipt(image_key: str, tab_id: str) -> dict:
     # locale-specific commas, e.g. "20,00" on Italian receipts), then compute
     # items_total and attempt to reconcile items with receipt_total.
     if annotation:
+        if not (annotation.get("currency_code") or "").strip():
+            logger.warning(
+                "Mistral OCR returned no currency_code for tab %s (image %s); "
+                "falling back to tab default_currency %s",
+                tab_id, image_key, tab.default_currency,
+            )
+            annotation["currency_code"] = tab.default_currency
         _normalize_amounts_in_annotation(annotation)
         annotation["ai_items_total"] = annotation.pop("items_total", None)
         annotation["items"] = _reconcile_items_with_total(annotation)
