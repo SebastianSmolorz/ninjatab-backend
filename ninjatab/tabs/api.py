@@ -600,22 +600,43 @@ def upload_receipt(request, tab_id: str, file: UploadedFile = File(...)):
 
     try:
         result = scan_receipt(image_key, tab)
-    except Exception:
+    except Exception as e:
         safe_capture(request.auth.uuid, "receipt_scan_failed", properties={
             "tab_id": str(tab.uuid),
-            "reason": "validation",
+            "reason": "exception",
+            "exception_type": type(e).__name__,
         })
         raise
 
     increment_scan_count(tab)
 
+    scan_metrics = result.pop("_scan_metrics", {}) or {}
+
     if result.get("document_annotation") is None:
         safe_capture(request.auth.uuid, "receipt_scan_failed", properties={
             "tab_id": str(tab.uuid),
             "reason": "ocr_empty",
+            **scan_metrics,
         })
-
-    safe_capture(request.auth.uuid, "receipt_scanned", properties={"tab_id": str(tab.uuid)})
+    else:
+        safe_capture(
+            request.auth.uuid,
+            "receipt_scanned",
+            properties=scan_metrics,
+        )
+        # Dedicated events for the two signals worth dashboarding directly.
+        if scan_metrics.get("currency_source") in {"fallback_missing", "fallback_unsupported"}:
+            safe_capture(
+                request.auth.uuid,
+                "receipt_currency_fallback",
+                properties=scan_metrics,
+            )
+        if scan_metrics.get("items_match_receipt_total") is False:
+            safe_capture(
+                request.auth.uuid,
+                "receipt_totals_mismatch",
+                properties=scan_metrics,
+            )
 
     result["scan_session_id"] = image_key
     return result

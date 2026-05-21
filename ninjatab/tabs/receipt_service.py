@@ -415,12 +415,43 @@ def generate_presigned_url(key: str, expiry: int = 3600) -> str:
 def scan_receipt(image_key: str, tab) -> dict:
     """
     Run Mistral OCR on the image and return parsed annotation + date + presigned URL.
-    Returns {"document_annotation": dict | None, "date": str, "image_url": str, "image_key": str}.
+    Returns {"document_annotation": dict | None, "date": str, "image_url": str,
+    "image_key": str, "_scan_metrics": dict}. The `_scan_metrics` key carries
+    per-scan analytics properties to be emitted upstream; api callers should
+    pop it before returning to the mobile client.
     """
     tab_id = str(tab.uuid)
     client = Mistral(api_key=settings.MISTRAL_API_KEY)
     image_url = generate_presigned_url(image_key)
 
+    metrics: dict = {
+        "tab_id": tab_id,
+        "tab_default_currency": tab.default_currency,
+        "annotation_present": False,
+        "annotation_parse_error": False,
+        "currency_source": None,            # "model" | "fallback_missing" | "fallback_unsupported"
+        "currency_code": None,
+        "currency_decimals": None,
+        "items_count": 0,
+        "items_total": None,
+        "ai_items_total": None,
+        "receipt_total": None,
+        "items_match_receipt_total": None,  # None when receipt_total absent
+        "items_receipt_gap": None,
+        "ai_vs_server_total_divergence": None,
+        "has_tax": False,
+        "has_tip": False,
+        "has_service_charge": False,
+        "other_charges_count": 0,
+        "reconciliation_action": "none",    # "none" | "items_dropped" | "candidates_added"
+        "reconciliation_items_delta": 0,
+        "date_parsed": False,
+        "ocr_pages": 0,
+        "ocr_markdown_chars": 0,
+        "mistral_call_ms": None,
+    }
+
+    ocr_started = timezone.now()
     response = client.ocr.process(
         model="mistral-ocr-latest",
         document=ImageURLChunk(image_url=image_url),
@@ -428,6 +459,9 @@ def scan_receipt(image_key: str, tab) -> dict:
         document_annotation_prompt=DOCUMENT_ANNOTATION_PROMPT,
         timeout_ms=30_000,
     )
+    metrics["mistral_call_ms"] = int((timezone.now() - ocr_started).total_seconds() * 1000)
+    metrics["ocr_pages"] = len(response.pages or [])
+    metrics["ocr_markdown_chars"] = sum(len(p.markdown or "") for p in (response.pages or []))
 
     # Extract annotation from response (top-level field, JSON string).
     # If Mistral returns malformed JSON (e.g. token-budget exhausted mid-number,
@@ -452,11 +486,13 @@ def scan_receipt(image_key: str, tab) -> dict:
                 tab_id, e,
             )
             annotation = None
+            metrics["annotation_parse_error"] = True
 
     # Normalize amount strings to '.' decimal separator (Mistral may echo
     # locale-specific commas, e.g. "20,00" on Italian receipts), then compute
     # items_total and attempt to reconcile items with receipt_total.
     if annotation:
+        metrics["annotation_present"] = True
         raw_code = (annotation.get("currency_code") or "").strip().upper()
         if not raw_code:
             logger.warning(
@@ -465,6 +501,7 @@ def scan_receipt(image_key: str, tab) -> dict:
                 tab_id, image_key, tab.default_currency,
             )
             annotation["currency_code"] = tab.default_currency
+            metrics["currency_source"] = "fallback_missing"
         elif raw_code not in SUPPORTED_CURRENCY_CODES:
             logger.warning(
                 "Mistral OCR returned unsupported currency_code %r for tab %s "
@@ -472,13 +509,49 @@ def scan_receipt(image_key: str, tab) -> dict:
                 raw_code, tab_id, image_key, tab.default_currency,
             )
             annotation["currency_code"] = tab.default_currency
+            metrics["currency_source"] = "fallback_unsupported"
+            metrics["currency_unsupported_raw"] = raw_code
         else:
             annotation["currency_code"] = raw_code
+            metrics["currency_source"] = "model"
+        metrics["currency_code"] = annotation["currency_code"]
+        metrics["currency_decimals"] = _annotation_decimals(annotation)
+
         _normalize_amounts_in_annotation(annotation)
         annotation["ai_items_total"] = annotation.pop("items_total", None)
+        items_before = list(annotation.get("items") or [])
         annotation["items"] = _reconcile_items_with_total(annotation)
-        annotation["items_total"] = _items_sum(annotation.get("items") or [], _annotation_decimals(annotation))
+        items_after = annotation["items"]
+        delta = len(items_after) - len(items_before)
+        if delta > 0:
+            metrics["reconciliation_action"] = "candidates_added"
+        elif delta < 0:
+            metrics["reconciliation_action"] = "items_dropped"
+        metrics["reconciliation_items_delta"] = delta
+
+        annotation["items_total"] = _items_sum(items_after, _annotation_decimals(annotation))
         _collapse_redundant_translations(annotation)
+
+        receipt_total_f = _to_float(annotation.get("receipt_total"))
+        items_total_f = _to_float(annotation.get("items_total"))
+        ai_items_total_f = _to_float(annotation.get("ai_items_total"))
+        tolerance = _annotation_tolerance(annotation)
+        metrics["items_count"] = len(items_after)
+        metrics["items_total"] = items_total_f
+        metrics["ai_items_total"] = ai_items_total_f
+        metrics["receipt_total"] = receipt_total_f
+        if receipt_total_f is not None and items_total_f is not None:
+            gap = round(items_total_f - receipt_total_f, 6)
+            metrics["items_receipt_gap"] = gap
+            metrics["items_match_receipt_total"] = abs(gap) < tolerance
+        if items_total_f is not None and ai_items_total_f is not None:
+            metrics["ai_vs_server_total_divergence"] = (
+                abs(items_total_f - ai_items_total_f) > tolerance
+            )
+        metrics["has_tax"] = annotation.get("tax") is not None
+        metrics["has_tip"] = annotation.get("tip") is not None
+        metrics["has_service_charge"] = annotation.get("service_charge") is not None
+        metrics["other_charges_count"] = len(annotation.get("other_charges") or [])
 
     logger.info(
         "Mistral OCR response for tab %s: %s | annotation: %s",
@@ -494,12 +567,20 @@ def scan_receipt(image_key: str, tab) -> dict:
         try:
             parsed = datetime.fromisoformat(raw_dt.replace("Z", "+00:00"))
             receipt_date = parsed.strftime("%Y-%m-%d")
+            metrics["date_parsed"] = True
         except (ValueError, TypeError):
             try:
                 from datetime import date as date_type
                 parsed_date = date_type.fromisoformat(raw_dt[:10])
                 receipt_date = parsed_date.isoformat()
+                metrics["date_parsed"] = True
             except (ValueError, TypeError):
                 pass
 
-    return {"document_annotation": annotation, "date": receipt_date, "image_url": image_url, "image_key": image_key}
+    return {
+        "document_annotation": annotation,
+        "date": receipt_date,
+        "image_url": image_url,
+        "image_key": image_key,
+        "_scan_metrics": metrics,
+    }

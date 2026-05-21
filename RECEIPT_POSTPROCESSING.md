@@ -37,6 +37,28 @@ The annotation `currency_code` was flowing through unchecked. The model could em
 ### H7 ⏭️ `_normalize_amount_str` mishandles negative 3-digit fractions
 Skipped for now. Negative values like `"-1.234"` for 2dp currencies still pass through the thousands-heuristic and become `"-1234"`. Revisit if logs show this firing.
 
+### OBS ✅ Rich PostHog telemetry for receipt scanning
+`scan_receipt` now accumulates a `_scan_metrics` dict during processing; `api.upload_receipt` strips it from the response and emits it as PostHog properties.
+
+**Events:**
+- `receipt_scanned` — fired on every successful scan with full property payload.
+- `receipt_currency_fallback` — fired when `currency_source ∈ {fallback_missing, fallback_unsupported}`.
+- `receipt_totals_mismatch` — fired when `items_total != receipt_total` (within tolerance).
+- `receipt_scan_failed` — now includes `exception_type` and (when ocr returned empty) the same metrics payload, so failure rows are filterable.
+
+**Properties on every event:**
+- `tab_id`, `tab_default_currency`
+- `annotation_present`, `annotation_parse_error`
+- `currency_source` (`model` / `fallback_missing` / `fallback_unsupported`), `currency_code`, `currency_decimals`, `currency_unsupported_raw` (only on unsupported fallback)
+- `items_count`, `items_total`, `ai_items_total`, `receipt_total`
+- `items_match_receipt_total` (bool, null if no receipt_total), `items_receipt_gap` (signed difference), `ai_vs_server_total_divergence`
+- `has_tax`, `has_tip`, `has_service_charge`, `other_charges_count`
+- `reconciliation_action` (`none` / `items_dropped` / `candidates_added`), `reconciliation_items_delta`
+- `date_parsed`
+- `ocr_pages`, `ocr_markdown_chars`, `mistral_call_ms`
+
+This gives PostHog the ability to slice scan performance by currency, by mismatch rate, by reconciliation behaviour, by Mistral latency, etc., without any further code changes.
+
 ### H1 ⏳ Reconciliation can silently delete legitimate items
 `_reconcile_items_with_total` drops items whose `translated_name` matches `NON_CONTRIBUTING_KEYWORDS` when `items_total > receipt_total`. But "cover charge", "service charge", and similar can be legitimate contributing line items. If dropping one happens to make totals match, we silently hide a real item.
 
