@@ -90,6 +90,7 @@ For each item:
   - For abbreviated item names (e.g. "BIRRA DIAMOND GRAN", "ANT. PIEVE VECCHIA"), expand and translate the likely full meaning ("Diamond beer (large)", "Antipasto Pieve Vecchia")
   - Only fall back to copying the original name verbatim if you genuinely cannot make any reasonable guess at the English meaning
   - If the item is already in English, set translated_name equal to name
+  - Be aggressive here: the precision/conservatism rules that apply to amounts, items, and dates do NOT apply to translated_name - always produce a best-guess English translation rather than leaving it untranslated
 - quantity, price_per_quantity, total: see below
 
 Only include price_per_quantity and quantity if clearly on the receipt.
@@ -115,8 +116,7 @@ Extract receipt_establishment_name as the merchant or establishment name shown o
 
 Extract currency_code in ISO 4217 format, for example GBP, EUR, USD.
 
-Calculate items_total which is the sum of the totals of all items which affect the total.
-items_total should ideally match the receipt_total. If it does not, an item may be missing or have an incorrect total, or there may be a superfluous item.
+Calculate items_total as the sum of all item totals. Report the honest sum even if it does not match receipt_total - do not adjust, add, or drop items to force the totals to agree.
 
 Extract datetime_of_receipt from the receipt date/time.
 - Return it as an ISO 8601 string when possible
@@ -132,9 +132,7 @@ All monetary amounts (total, price_per_quantity, receipt_total, items_total, tax
 Examples: "3.50", "1234.56", "-1.20", "0.99".
 Do not return values like "1,234.56", "1.234,56", "1 234,56", "20,00", or numbers with long decimal expansions, even if the receipt itself uses those formats. Convert from the receipt's local format to US format before returning.
 
-Be precise and conservative about monetary amounts, quantities, dates, and which items contribute to the total.
-- Do not invent prices or items that are not on the receipt
-- This conservatism does NOT apply to translated_name - always attempt a best-guess English translation as described above, even for abbreviated or partially illegible item names
+Be precise and conservative about monetary amounts, quantities, dates, and which items contribute to the total. Do not invent prices or items that are not on the receipt. (Reminder: this conservatism does not apply to translated_name - see the translation guidance above.)
 """
 # - Only include items that clearly represent purchased goods or services or qualifying receipt-level charges
 
