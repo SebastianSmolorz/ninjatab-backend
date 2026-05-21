@@ -214,6 +214,21 @@ def _normalize_amounts_in_annotation(annotation: dict) -> None:
             charge["amount"] = _normalize_amount_str(charge["amount"])
 
 
+def _collapse_redundant_translations(annotation: dict) -> None:
+    """If a translated_name equals the original name (case-insensitive), drop
+    the translation and reuse the original to preserve its casing."""
+    for item in annotation.get("items") or []:
+        name = item.get("name")
+        translated = item.get("translated_name")
+        if name and translated and name.casefold() == translated.casefold():
+            item["translated_name"] = name
+    for charge in annotation.get("other_charges") or []:
+        name = charge.get("name")
+        translated = charge.get("translated_name")
+        if name and translated and name.casefold() == translated.casefold():
+            charge["translated_name"] = name
+
+
 def _to_float(value) -> Optional[float]:
     """Coerce a Mistral-returned amount (now typed as string) into a float.
     Returns None on missing or unparseable input."""
@@ -414,6 +429,7 @@ def scan_receipt(image_key: str, tab_id: str) -> dict:
         annotation["ai_items_total"] = annotation.pop("items_total", None)
         annotation["items"] = _reconcile_items_with_total(annotation)
         annotation["items_total"] = _items_sum(annotation.get("items") or [])
+        _collapse_redundant_translations(annotation)
 
     logger.info(
         "Mistral OCR response for tab %s: %s | annotation: %s",
