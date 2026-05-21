@@ -18,6 +18,10 @@ CURRENCY_DECIMAL_PLACES: dict[str, int] = {
     'JOD': 3,
     'OMR': 3,
     'TND': 3,
+    'BHD': 3,
+    'KWD': 3,
+    'LYD': 3,
+    'IQD': 3,
 }
 
 

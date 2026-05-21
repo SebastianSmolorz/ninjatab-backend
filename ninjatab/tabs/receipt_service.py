@@ -17,6 +17,8 @@ from mistralai.extra import response_format_from_pydantic_model
 
 import sentry_sdk
 
+from ninjatab.currencies.currency_utils import get_decimal_places
+
 logger = logging.getLogger("app")
 
 MAX_SCANS_PER_TAB = 150
@@ -126,11 +128,11 @@ Extract datetime_of_receipt from the receipt date/time.
 All monetary amounts (total, price_per_quantity, receipt_total, items_total, tax, tip, service_charge, other_charges.amount) must be returned as decimal strings normalized to US locale formatting:
 - Use a dot (".") as the decimal separator
 - Do not include any thousands separators (no commas, no spaces, no dots between groups of digits)
-- Use at most 2 decimal places
+- Use the number of decimal places appropriate for the receipt's currency: 0 for currencies with no minor unit (e.g. JPY), 2 for most currencies (e.g. USD, EUR, GBP), 3 for currencies that use three decimals (e.g. JOD, KWD, BHD, OMR, TND). Match the precision shown on the receipt itself - never truncate "1.234" (a JOD amount) to "1.23"
 - Use a leading minus sign for negative amounts (discounts)
 
-Examples: "3.50", "1234.56", "-1.20", "0.99".
-Do not return values like "1,234.56", "1.234,56", "1 234,56", "20,00", or numbers with long decimal expansions, even if the receipt itself uses those formats. Convert from the receipt's local format to US format before returning.
+Examples: "3.50" (USD), "1234.56" (EUR), "-1.20" (discount), "0.99" (GBP), "1500" (JPY), "12.345" (JOD).
+Do not return values like "1,234.56", "1.234,56", "1 234,56", "20,00", or numbers with spurious extra decimal digits beyond the currency's precision, even if the receipt itself uses those formats. Convert from the receipt's local format to US format before returning.
 
 Be precise and conservative about monetary amounts, quantities, dates, and which items contribute to the total. Do not invent prices or items that are not on the receipt. (Reminder: this conservatism does not apply to translated_name - see the translation guidance above.)
 """
@@ -151,14 +153,21 @@ _NON_CONTRIBUTING_RE = re.compile(
     re.IGNORECASE,
 )
 
-ITEMS_TOTAL_TOLERANCE = 0.01
+def _annotation_decimals(annotation: dict) -> int:
+    return get_decimal_places((annotation.get("currency_code") or "").strip().upper())
+
+
+def _annotation_tolerance(annotation: dict) -> float:
+    # One minor unit of the receipt's currency (e.g. 0.01 USD, 0.001 JOD, 1 JPY).
+    dp = _annotation_decimals(annotation)
+    return 10 ** -dp if dp > 0 else 1.0
 
 
 def _is_likely_non_contributing(name: Optional[str]) -> bool:
     return bool(name) and _NON_CONTRIBUTING_RE.search(name) is not None
 
 
-def _normalize_amount_str(value):
+def _normalize_amount_str(value, currency_decimals: int = 2):
     """Normalize an amount string to use '.' as the decimal separator and no
     thousands separators. Handles both '.'-decimal (US: 1,234.56) and
     ','-decimal (EU: 1.234,56) conventions, plus mixed/ambiguous cases.
@@ -166,7 +175,8 @@ def _normalize_amount_str(value):
     Rule: the rightmost of '.' or ',' is the decimal separator; the other is
     a thousands separator and is stripped. A lone separator followed by
     exactly 3 digits with no other separator is treated as a thousands
-    separator (e.g. '1,234' or '1.500' → '1234')."""
+    separator (e.g. '1,234' or '1.500' → '1234') - except when the currency
+    uses 3 decimal places (JOD, KWD, etc.), where '1.500' is 1.5 JOD."""
     if not isinstance(value, str):
         return value
     s = value.strip()
@@ -184,9 +194,11 @@ def _normalize_amount_str(value):
         decimal_sep, thousands_sep, decimal_pos = ".", ",", last_dot
 
     frac = s[decimal_pos + 1:]
-    # Lone separator + 3-digit "fraction" + no other separator → thousands.
+    # Lone separator + 3-digit "fraction" + no other separator → thousands,
+    # unless the currency itself uses 3 decimal places (then it's the fraction).
     if (
-        len(frac) == 3
+        currency_decimals != 3
+        and len(frac) == 3
         and frac.isdigit()
         and thousands_sep not in s
         and s.count(decimal_sep) == 1
@@ -200,16 +212,17 @@ def _normalize_amount_str(value):
 def _normalize_amounts_in_annotation(annotation: dict) -> None:
     """In-place: rewrite all amount strings on the annotation to use '.' as
     decimal separator so the mobile client parses them correctly."""
+    dp = get_decimal_places((annotation.get("currency_code") or "").strip().upper())
     for key in ("receipt_total", "items_total", "tax", "tip", "service_charge"):
         if key in annotation:
-            annotation[key] = _normalize_amount_str(annotation[key])
+            annotation[key] = _normalize_amount_str(annotation[key], dp)
     for item in annotation.get("items") or []:
         for key in ("total", "price_per_quantity"):
             if key in item:
-                item[key] = _normalize_amount_str(item[key])
+                item[key] = _normalize_amount_str(item[key], dp)
     for charge in annotation.get("other_charges") or []:
         if "amount" in charge:
-            charge["amount"] = _normalize_amount_str(charge["amount"])
+            charge["amount"] = _normalize_amount_str(charge["amount"], dp)
 
 
 def _collapse_redundant_translations(annotation: dict) -> None:
@@ -240,8 +253,8 @@ def _to_float(value) -> Optional[float]:
         return None
 
 
-def _items_sum(items: list[dict]) -> float:
-    return round(sum(_to_float(i.get("total")) or 0 for i in items), 2)
+def _items_sum(items: list[dict], decimals: int = 2) -> float:
+    return round(sum(_to_float(i.get("total")) or 0 for i in items), decimals)
 
 
 def _reconcile_items_with_total(annotation: dict) -> list[dict]:
@@ -261,9 +274,11 @@ def _reconcile_items_with_total(annotation: dict) -> list[dict]:
     if not items and not _candidate_additions(annotation):
         return items
 
-    diff = _items_sum(items) - receipt_total
+    dp = _annotation_decimals(annotation)
+    tolerance = _annotation_tolerance(annotation)
+    diff = _items_sum(items, dp) - receipt_total
 
-    if abs(diff) < ITEMS_TOTAL_TOLERANCE:
+    if abs(diff) < tolerance:
         return items
 
     if diff > 0:
@@ -275,7 +290,7 @@ def _reconcile_items_with_total(annotation: dict) -> list[dict]:
             for combo in combinations(suspicious, r):
                 drop = set(combo)
                 kept = [it for i, it in enumerate(items) if i not in drop]
-                if abs(_items_sum(kept) - receipt_total) < ITEMS_TOTAL_TOLERANCE:
+                if abs(_items_sum(kept, dp) - receipt_total) < tolerance:
                     return kept
         return items
 
@@ -286,7 +301,7 @@ def _reconcile_items_with_total(annotation: dict) -> list[dict]:
     for r in range(1, len(additions) + 1):
         for combo in combinations(idxs, r):
             extra = [additions[i] for i in combo]
-            if abs(_items_sum(items + extra) - receipt_total) < ITEMS_TOTAL_TOLERANCE:
+            if abs(_items_sum(items + extra, dp) - receipt_total) < tolerance:
                 return items + extra
     return items
 
@@ -428,7 +443,7 @@ def scan_receipt(image_key: str, tab_id: str) -> dict:
         _normalize_amounts_in_annotation(annotation)
         annotation["ai_items_total"] = annotation.pop("items_total", None)
         annotation["items"] = _reconcile_items_with_total(annotation)
-        annotation["items_total"] = _items_sum(annotation.get("items") or [])
+        annotation["items_total"] = _items_sum(annotation.get("items") or [], _annotation_decimals(annotation))
         _collapse_redundant_translations(annotation)
 
     logger.info(
