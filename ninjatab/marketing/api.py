@@ -2,7 +2,7 @@ from ninja import Router
 from ninja.errors import HttpError
 from ninjatab.utilities.analytics import safe_capture
 from ninjatab.marketing.models import WaitlistEntry, WaitlistPageView
-from ninjatab.marketing.schemas import WaitlistCreateSchema, WaitlistResponseSchema, AppInstallSchema, QRCodeScannedSchema
+from ninjatab.marketing.schemas import WaitlistCreateSchema, WaitlistResponseSchema, AppInstallSchema, QRCodeScannedSchema, DownloadClickSchema
 
 marketing_router = Router(tags=["marketing"])
 
@@ -27,6 +27,14 @@ def join_waitlist(request, payload: WaitlistCreateSchema):
 @marketing_router.post("/install", response=WaitlistResponseSchema)
 def app_install(request, payload: AppInstallSchema):
     safe_capture("$anon", "app_installed", properties={"platform": payload.platform})
+    return {"success": True}
+
+
+@marketing_router.post("/download-click", response=WaitlistResponseSchema)
+def download_click(request, payload: DownloadClickSchema):
+    properties = {k: v for k, v in payload.model_dump().items() if v is not None}
+    properties["platform"] = payload.platform.value
+    safe_capture("$anon", "download_link_clicked", properties=properties)
     return {"success": True}
 
 
