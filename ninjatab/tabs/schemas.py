@@ -97,6 +97,10 @@ class TabPersonCreateSchema(BaseModel):
     user_id: Optional[str] = None
 
 
+class TabPersonUpdateSchema(BaseModel):
+    name: Optional[str] = None
+
+
 class PersonLineItemClaimSchema(BaseModel):
     id: str
     person_id: str

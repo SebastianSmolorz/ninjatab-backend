@@ -534,14 +534,31 @@ def add_tab_person(request, tab_id: str, payload: TabPersonCreateSchema):
     return person
 
 
+@tab_router.patch("/{tab_id}/people/{person_id}", response=TabPersonSchema)
+def update_tab_person(request, tab_id: str, person_id: str, payload: TabPersonUpdateSchema):
+    """Update a person on a tab (currently only their name)"""
+    tab = get_object_or_404(Tab.objects.accessible_by(request.auth), uuid=tab_id, is_settled=False)
+    person = get_object_or_404(TabPerson, uuid=person_id, tab=tab)
+    if payload.name is not None:
+        name = payload.name.strip()
+        if not name:
+            raise HttpError(400, "Name cannot be empty")
+        if tab.people.exclude(uuid=person.uuid).filter(name=name).exists():
+            raise HttpError(400, "A person with that name already exists on this tab")
+        person.name = name
+        person.save(update_fields=["name", "updated_at"])
+    return person
+
+
 @tab_router.delete("/{tab_id}/people/{person_id}")
 def remove_tab_person(request, tab_id: str, person_id: str):
-    """Remove a person from a tab (only if not referenced in any bills)"""
+    """Remove a person from a tab (only if not referenced in any bills or settlements)"""
     tab = get_object_or_404(Tab.objects.accessible_by(request.auth), uuid=tab_id)
     person = get_object_or_404(TabPerson, uuid=person_id, tab=tab)
     if (PersonLineItemClaim.objects.filter(person=person).exists() or
-            Bill.objects.filter(Q(paid_by=person) | Q(creator=person)).exists()):
-        raise HttpError(400, "Cannot remove a person who is associated with a bill")
+            Bill.objects.filter(Q(paid_by=person) | Q(creator=person)).exists() or
+            Settlement.objects.filter(Q(from_person=person) | Q(to_person=person)).exists()):
+        raise HttpError(400, "Cannot remove a person who is associated with a bill or settlement")
     person.delete()
     return {"success": True}
 
