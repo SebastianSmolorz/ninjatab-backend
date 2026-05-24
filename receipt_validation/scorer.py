@@ -2,8 +2,12 @@ import difflib
 from datetime import date, datetime
 from typing import Optional
 
+from ninjatab.tabs.receipt_scanning.postprocess import _to_float
 
-def _total_accuracy(got: Optional[float], expected: Optional[float]) -> Optional[float]:
+
+def _total_accuracy(got, expected) -> Optional[float]:
+    got = _to_float(got)
+    expected = _to_float(expected)
     if expected is None or got is None:
         return None
     if expected == 0:
@@ -61,8 +65,8 @@ def score_result(result: dict, expected: dict) -> dict:
     )
 
     # Sum of result item totals vs receipt_total and items_total
-    result_item_totals = [i["total"] for i in result_items if i.get("total") is not None]
-    result_items_sum = sum(result_item_totals) if result_item_totals else 0.0
+    result_item_totals = [_to_float(i.get("total")) for i in result_items]
+    result_items_sum = sum(t for t in result_item_totals if t is not None)
     items_sum_vs_receipt_total = _total_accuracy(result_items_sum, expected_ann.get("receipt_total"))
     items_sum_vs_items_total = _total_accuracy(result_items_sum, expected_ann.get("items_total"))
 

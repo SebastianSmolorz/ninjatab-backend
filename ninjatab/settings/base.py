@@ -131,6 +131,9 @@ S3_BUCKET = "tab-ninja-receipt-scans"
 # Mistral AI
 MISTRAL_API_KEY = env.str("MISTRAL_API_KEY", default="")
 
+# Receipt scanning strategy (see ninjatab.tabs.receipt_scanning.strategies)
+RECEIPT_SCAN_STRATEGY = env.str("RECEIPT_SCAN_STRATEGY", default="baseline_mistral_ocr")
+
 # Open Exchange Rates
 OPEN_EXCHANGE_RATES_APP_ID = env.str("OPEN_EXCHANGE_RATES_APP_ID", default="")
 

@@ -1,18 +1,16 @@
-import base64
 import json
 import mimetypes
 import time
 import traceback
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
 from django.conf import settings
-from mistralai.client import Mistral
-from mistralai.client.models import ImageURLChunk
-from mistralai.extra import response_format_from_pydantic_model
 
-from ninjatab.tabs.receipt_service import _Document
+from ninjatab.tabs.receipt_scanning.base import ScanContext
+from ninjatab.tabs.receipt_service import _s3_client
 from receipt_validation.scorer import score_result
 
 CASES_DIR = Path(__file__).parent / "cases"
@@ -24,8 +22,8 @@ def _load_cases(case_uuids: Optional[list[str]] = None) -> dict[str, dict]:
     for case_dir in sorted(CASES_DIR.iterdir()):
         if not case_dir.is_dir():
             continue
-        uuid = case_dir.name
-        if case_uuids and uuid not in case_uuids:
+        uuid_ = case_dir.name
+        if case_uuids and uuid_ not in case_uuids:
             continue
         image_path = next(
             (
@@ -40,37 +38,55 @@ def _load_cases(case_uuids: Optional[list[str]] = None) -> dict[str, dict]:
             continue
         with open(expected_path) as f:
             expected = json.load(f)
-        cases[uuid] = {"image_path": image_path, "expected": expected}
+        cases[uuid_] = {"image_path": image_path, "expected": expected}
     return cases
 
 
-def _run_mistral_ocr(strategy: dict, image_path: Path, case_uuid: str) -> dict:
+def _s3_configured() -> bool:
+    return bool(settings.AWS_ACCESS_KEY_ID and settings.AWS_SECRET_ACCESS_KEY)
+
+
+def _upload_validation_image(image_bytes: bytes, content_type: str, ext: str) -> str:
+    """Upload a local validation image to S3 so multi-request strategies get the
+    same anti-dedupe behaviour as production. Returns the object key."""
+    key = f"receipts/validation/{uuid.uuid4()}.{ext}"
+    _s3_client().put_object(
+        Bucket=settings.S3_BUCKET,
+        Key=key,
+        Body=image_bytes,
+        ACL="private",
+        ContentType=content_type,
+    )
+    return key
+
+
+def _build_context(image_path: Path, default_currency: str = "USD") -> ScanContext:
     content_type, _ = mimetypes.guess_type(str(image_path))
     content_type = content_type or "image/jpeg"
-    image_b64 = base64.b64encode(image_path.read_bytes()).decode()
-    image_url = f"data:{content_type};base64,{image_b64}"
-
-    client = Mistral(api_key=settings.MISTRAL_API_KEY)
-    response = client.ocr.process(
-        model="mistral-ocr-latest",
-        document=ImageURLChunk(image_url=image_url),
-        document_annotation_format=response_format_from_pydantic_model(_Document),
-        document_annotation_prompt=strategy["prompt"],
-        include_image_base64=False,
+    image_bytes = image_path.read_bytes()
+    s3_base_key = None
+    if _s3_configured():
+        ext = image_path.suffix.lstrip(".") or "jpg"
+        s3_base_key = _upload_validation_image(image_bytes, content_type, ext)
+    return ScanContext(
+        image_bytes=image_bytes,
+        content_type=content_type,
+        default_currency=default_currency,
+        tab_id="validation",
+        s3_base_key=s3_base_key,
     )
-    annotation = None
-    raw = response.document_annotation
-    if raw and isinstance(raw, str) and not raw.startswith("~?~"):
-        annotation = json.loads(raw)
-    return {"document_annotation": annotation}
 
 
-def run_strategy(strategy: dict, image_path: Path, case_uuid: str) -> dict:
-    """Blackbox: run a strategy on a local image and return a result dict."""
-    api = strategy["api"]
-    if api == "mistral_ocr":
-        return _run_mistral_ocr(strategy, image_path, case_uuid)
-    raise ValueError(f"Unknown api: {api!r}")
+def run_strategy(strategy, image_path: Path) -> dict:
+    """Run a strategy class on a local image and return its post-processed
+    result, timings and metrics."""
+    ctx = _build_context(image_path)
+    result = strategy.run(ctx)
+    return {
+        "document_annotation": result.document_annotation,
+        "timings": result.timings,
+        "metrics": result.metrics,
+    }
 
 
 def _stdev(values: list) -> Optional[float]:
@@ -86,11 +102,20 @@ def _mean(values: list) -> Optional[float]:
     return sum(filtered) / len(filtered) if filtered else None
 
 
+def _percentile(values: list, pct: float) -> Optional[float]:
+    filtered = sorted(v for v in values if v is not None)
+    if not filtered:
+        return None
+    k = (len(filtered) - 1) * pct
+    lo, hi = int(k), min(int(k) + 1, len(filtered) - 1)
+    return filtered[lo] + (filtered[hi] - filtered[lo]) * (k - lo)
+
+
 def run_pipeline(
     case_uuids: Optional[list[str]],
     strategy_names: Optional[list[str]],
     runs_per_strategy: int,
-    strategies: list[dict],
+    strategies: list,
     sleep_between_runs: int = 0,
 ) -> dict:
     from receipt_validation.strategies import STRATEGIES_BY_NAME
@@ -114,7 +139,7 @@ def run_pipeline(
         output["cases"][case_uuid] = {
             "image_path": str(case_data["image_path"].relative_to(Path(__file__).parent.parent)),
             "receipt_establishment_name": establishment,
-            "strategies": {s["name"]: {"runs": []} for s in selected_strategies},
+            "strategies": {s.name: {"runs": []} for s in selected_strategies},
         }
 
     # runs × cases × strategies so consecutive runs are spread apart
@@ -125,21 +150,23 @@ def run_pipeline(
             image_path = case_data["image_path"]
             expected = case_data["expected"]
             for strategy in selected_strategies:
-                strategy_name = strategy["name"]
                 error = None
                 result = None
                 scores = None
+                timings = None
                 try:
-                    result = run_strategy(strategy, image_path, case_uuid)
+                    result = run_strategy(strategy, image_path)
+                    timings = result.get("timings")
                     scores = score_result(result, expected)
                 except Exception:
                     error = traceback.format_exc()
                 print(".", end="", flush=True)
 
-                output["cases"][case_uuid]["strategies"][strategy_name]["runs"].append({
+                output["cases"][case_uuid]["strategies"][strategy.name]["runs"].append({
                     "run": run_idx,
                     "result": result,
                     "scores": scores,
+                    "timings": timings,
                     "error": error,
                 })
 
@@ -157,6 +184,14 @@ def run_pipeline(
             total_scores = [r["scores"]["total_score"] for r in runs_out if r["scores"]]
             sd = _stdev(total_scores)
             aggregate["stability_score"] = max(0.0, 1.0 - sd) if sd is not None else None
+
+            total_ms = [r["timings"].get("total_ms") for r in runs_out if r["timings"]]
+            mistral_ms = [r["timings"].get("mistral_ms") for r in runs_out if r["timings"]]
+            aggregate["mean_total_ms"] = _mean(total_ms)
+            aggregate["mean_mistral_ms"] = _mean(mistral_ms)
+            aggregate["min_total_ms"] = min(total_ms) if total_ms else None
+            aggregate["max_total_ms"] = max(total_ms) if total_ms else None
+            aggregate["p95_total_ms"] = _percentile(total_ms, 0.95)
             strategy_out["aggregate"] = aggregate
     print()
 

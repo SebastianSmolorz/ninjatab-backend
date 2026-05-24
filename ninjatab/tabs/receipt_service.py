@@ -1,26 +1,19 @@
-import json
 import logging
-import re
 import uuid
-from datetime import datetime
-from itertools import combinations
-from typing import Optional
 
 import boto3
+import sentry_sdk
 from django.conf import settings
 from django.db.models import F
-from django.utils import timezone
-from pydantic import BaseModel
-from mistralai.client import Mistral
-from mistralai.client.models import ImageURLChunk
-from mistralai.extra import response_format_from_pydantic_model
 
-import sentry_sdk
-
-from ninjatab.currencies.currency_utils import CURRENCY_DECIMAL_PLACES, get_decimal_places
-from ninjatab.currencies.models import Currency
-
-SUPPORTED_CURRENCY_CODES = frozenset(c.value for c in Currency)
+# Pure receipt-parsing pieces now live in the receipt_scanning package. Re-export
+# the schema and prompt here so existing imports keep working.
+from ninjatab.tabs.receipt_scanning.prompt import DOCUMENT_ANNOTATION_PROMPT  # noqa: F401
+from ninjatab.tabs.receipt_scanning.schema import (  # noqa: F401
+    _Document,
+    _Item,
+    _OtherCharge,
+)
 
 logger = logging.getLogger("app")
 
@@ -31,339 +24,6 @@ ALLOWED_IMAGE_TYPES = {
     "image/heic", "image/heif", "application/octet-stream",
 }
 MAX_UPLOAD_SIZE = 10 * 1024 * 1024  # 10 MB
-
-
-# Monetary amounts are typed as `str` rather than `float` to prevent the
-# constrained JSON decoder from runaway-sampling decimal digits and truncating
-# the response. We coerce to float on the server.
-class _Item(BaseModel):
-    name: str
-    translated_name: str
-    total: str
-    quantity: Optional[int] = None
-    price_per_quantity: Optional[str] = None
-
-
-class _OtherCharge(BaseModel):
-    name: str
-    translated_name: str
-    amount: str
-
-
-class _Document(BaseModel):
-    receipt_language: str
-    receipt_language_code: Optional[str] = None
-    items: list[_Item]
-    receipt_total: Optional[str] = None
-    items_total: Optional[str] = None
-    receipt_establishment_name: Optional[str] = None
-    currency_code: Optional[str] = None
-    datetime_of_receipt: Optional[str] = None
-    tax: Optional[str] = None
-    tip: Optional[str] = None
-    service_charge: Optional[str] = None
-    other_charges: Optional[list[_OtherCharge]] = None
-
-# Each item must include:
-# - name: the item name exactly as shown on the receipt
-# - translated_name: the English translation of the item name
-#   - if the item name is already in English, set translated_name equal to name
-# - quantity: number of items of this item bought
-# - price_per_quantity: the price of this item per quantity
-# - total: the final price paid for that line item so quantity * price_per_quantity
-#
-# 3. If a discount clearly applies to a specific line item, subtract it from that item total.
-#
-# 4. If there is a receipt-level service charge, gratuity, tip, or other mandatory fee that contributes to the final total, include it as a line item in items.
-# - Use the charge label as shown on the receipt for name
-# - Use the English translation for translated_name, or the same value if already English
-# - Use the charge amount for total
-
-DOCUMENT_ANNOTATION_PROMPT = """
-Extract structured data from this receipt.
-Detect and extract the receipt language into receipt_language.
-- If the receipt is in English, set receipt_language to "English".
-- Otherwise set it to the detected language name.
-
-Extract all purchased goods or services that contribute to the receipt total into items.
-Do not include receipt-level charges such as tax, tip, service charge, or other fees/discounts in items - those are captured separately below.
-
-CRITICAL - one output item per printed row. Never merge, combine, deduplicate, or consolidate multiple printed rows into a single output item, even if those rows have the identical name and identical price. If the receipt prints "Coke 3.00" on three separate rows, return three separate items each with quantity 1 and total 3.00 - do NOT return a single item with quantity 3 and total 9.00, and do NOT return a single item with quantity 1 and total 9.00. The output should have the same number of item rows as the receipt has printed item rows. Only use quantity > 1 (and a correspondingly larger total) when a SINGLE printed row on the receipt itself shows an explicit quantity multiplier (e.g. "3 x Coke   9.00" on one line).
-
-For each item:
-- name: the item name exactly as it appears on the receipt, in its original language
-- translated_name: the English translation of the item name
-  - Always attempt a translation when the item is not already in English, even if the original text is abbreviated, partially illegible, or you have to make your best guess from context (cuisine type, common menu items, surrounding items, the establishment name)
-  - For abbreviated item names (e.g. "BIRRA DIAMOND GRAN", "ANT. PIEVE VECCHIA"), expand and translate the likely full meaning ("Diamond beer (large)", "Antipasto Pieve Vecchia")
-  - Only fall back to copying the original name verbatim if you genuinely cannot make any reasonable guess at the English meaning
-  - If the item is already in English, set translated_name equal to name
-  - Be aggressive here: the precision/conservatism rules that apply to amounts, items, and dates do NOT apply to translated_name - always produce a best-guess English translation rather than leaving it untranslated
-- quantity, price_per_quantity, total: see below
-
-Only include price_per_quantity and quantity if clearly on the receipt.
-quantity: number of instanced of this item purchased. Set to 1 if it is not clear
-price_per_quantity: the price of this item per quantity
-total: the final price paid for that line item so quantity * price_per_quantity.
-
-Do not include subtotal, tax, VAT, tip, gratuity, service charge, payment method, change, balance, loyalty adjustments, discounts, or any other fees as items - even if they affect the grand total. These are captured separately below.
-
-Extract receipt-level charges that affect the grand total into their dedicated fields:
-- tax: total tax/VAT amount on the receipt, if shown
-- tip: tip or gratuity amount, if shown
-- service_charge: service charge amount, if shown
-- other_charges: a list of any other receipt-level fees or discounts that affect the total but do not fit tax/tip/service_charge (for example: delivery fee, booking fee, cover charge, loyalty discount, voucher). Use a negative amount for discounts. Each entry should include name (as shown on the receipt), translated_name (English translation, or same value if already English), and amount.
-
-Only populate these fields when the charge clearly affects the grand total. Leave them null if not present. Do not include line items in these fields, and do not include these charges in items.
-
-Extract receipt_total as the final total charged on the receipt. If the receipt does not explicitly display a grand total, return null - do not calculate, sum, or otherwise invent a receipt_total from the items or charges.
-
-Extract receipt_establishment_name as the merchant or establishment name shown on the receipt if available.
-
-Extract currency_code in ISO 4217 format, for example GBP, EUR, USD.
-- Prefer an explicit currency symbol, code, or label printed on the receipt
-- If no explicit currency is shown but the receipt's address (country/city), language, tax label (e.g. "VAT", "IVA", "MwSt", "GST"), or merchant clearly indicates a single dominant currency for that locale, set currency_code to that currency
-- If the currency cannot be confidently determined from explicit markings or strong contextual evidence, return null - do not guess or invent a currency code from a weak signal
-
-Calculate items_total as the sum of all item totals. Report the honest sum even if it does not match receipt_total - do not adjust, add, or drop items to force the totals to agree.
-
-Extract datetime_of_receipt from the receipt date/time.
-- Return it as an ISO 8601 string when possible
-- If the receipt provides only a partial date or ambiguous date/time that cannot be confidently converted to ISO 8601, return null
-- If no receipt date/time is present, return null
-
-All monetary amounts (total, price_per_quantity, receipt_total, items_total, tax, tip, service_charge, other_charges.amount) must be returned as decimal strings normalized to US locale formatting:
-- Use a dot (".") as the decimal separator
-- Do not include any thousands separators (no commas, no spaces, no dots between groups of digits)
-- Use the number of decimal places appropriate for the receipt's currency: 0 for currencies with no minor unit (e.g. JPY), 2 for most currencies (e.g. USD, EUR, GBP), 3 for currencies that use three decimals (e.g. JOD, KWD, BHD, OMR, TND). Match the precision shown on the receipt itself - never truncate "1.234" (a JOD amount) to "1.23"
-- Use a leading minus sign for negative amounts (discounts)
-
-Examples: "3.50" (USD), "1234.56" (EUR), "-1.20" (discount), "0.99" (GBP), "1500" (JPY), "12.345" (JOD).
-Do not return values like "1,234.56", "1.234,56", "1 234,56", "20,00", or numbers with spurious extra decimal digits beyond the currency's precision, even if the receipt itself uses those formats. Convert from the receipt's local format to US format before returning.
-
-Be precise and conservative about monetary amounts, quantities, dates, and which items contribute to the total. Do not invent prices or items that are not on the receipt. (Reminder: this conservatism does not apply to translated_name - see the translation guidance above.)
-"""
-# - Only include items that clearly represent purchased goods or services or qualifying receipt-level charges
-
-
-NON_CONTRIBUTING_KEYWORDS = (
-    "tax", "vat", "gst", "hst", "pst",
-    "fee", "fees", "charge", "charges", "surcharge",
-    "tip", "tips", "gratuity",
-    "subtotal", "sub total", "sub-total",
-    "discount", "discounts", "voucher", "loyalty", "promo", "promotion",
-    "rounding",
-)
-
-_NON_CONTRIBUTING_RE = re.compile(
-    r"\b(?:" + "|".join(re.escape(kw) for kw in NON_CONTRIBUTING_KEYWORDS) + r")\b",
-    re.IGNORECASE,
-)
-
-def _annotation_decimals(annotation: dict) -> int:
-    code = (annotation.get("currency_code") or "").strip().upper()
-    if code and code not in CURRENCY_DECIMAL_PLACES:
-        logger.warning(
-            "Unknown currency_code %r in receipt annotation; defaulting to 2 decimal places",
-            code,
-        )
-    return get_decimal_places(code)
-
-
-def _annotation_tolerance(annotation: dict) -> float:
-    # One minor unit of the receipt's currency (e.g. 0.01 USD, 0.001 JOD, 1 JPY).
-    dp = _annotation_decimals(annotation)
-    return 10 ** -dp if dp > 0 else 1.0
-
-
-def _is_likely_non_contributing(name: Optional[str]) -> bool:
-    return bool(name) and _NON_CONTRIBUTING_RE.search(name) is not None
-
-
-def _normalize_amount_str(value, currency_decimals: int = 2):
-    """Normalize an amount string to use '.' as the decimal separator and no
-    thousands separators. Handles both '.'-decimal (US: 1,234.56) and
-    ','-decimal (EU: 1.234,56) conventions, plus mixed/ambiguous cases.
-
-    Rule: the rightmost of '.' or ',' is the decimal separator; the other is
-    a thousands separator and is stripped. A lone separator followed by
-    exactly 3 digits with no other separator is treated as a thousands
-    separator (e.g. '1,234' or '1.500' → '1234') - except when the currency
-    uses 3 decimal places (JOD, KWD, etc.), where '1.500' is 1.5 JOD."""
-    if not isinstance(value, str):
-        return value
-    s = value.strip()
-    if not s:
-        return value
-
-    last_comma = s.rfind(",")
-    last_dot = s.rfind(".")
-    if last_comma == -1 and last_dot == -1:
-        return s
-
-    if last_comma > last_dot:
-        decimal_sep, thousands_sep, decimal_pos = ",", ".", last_comma
-    else:
-        decimal_sep, thousands_sep, decimal_pos = ".", ",", last_dot
-
-    frac = s[decimal_pos + 1:]
-    # Lone separator + 3-digit "fraction" + no other separator → thousands,
-    # unless the currency itself uses 3 decimal places (then it's the fraction).
-    if (
-        currency_decimals != 3
-        and len(frac) == 3
-        and frac.isdigit()
-        and thousands_sep not in s
-        and s.count(decimal_sep) == 1
-    ):
-        return s.replace(decimal_sep, "")
-
-    integer = s[:decimal_pos].replace(thousands_sep, "").replace(decimal_sep, "")
-    return f"{integer}.{frac}"
-
-
-def _normalize_amounts_in_annotation(annotation: dict) -> None:
-    """In-place: rewrite all amount strings on the annotation to use '.' as
-    decimal separator so the mobile client parses them correctly."""
-    dp = get_decimal_places((annotation.get("currency_code") or "").strip().upper())
-    for key in ("receipt_total", "items_total", "tax", "tip", "service_charge"):
-        if key in annotation:
-            annotation[key] = _normalize_amount_str(annotation[key], dp)
-    for item in annotation.get("items") or []:
-        for key in ("total", "price_per_quantity"):
-            if key in item:
-                item[key] = _normalize_amount_str(item[key], dp)
-    for charge in annotation.get("other_charges") or []:
-        if "amount" in charge:
-            charge["amount"] = _normalize_amount_str(charge["amount"], dp)
-
-
-def _synthesize_total_only_item(annotation: dict) -> bool:
-    """Card-terminal slips, ATM receipts, parking ticket stubs etc. often show
-    only a grand total. The model correctly returns no items but a receipt_total.
-    Synthesize a single item from the total so the bill is usable; otherwise
-    the user sees an empty list with a total they can't split.
-
-    Returns True if an item was synthesized. Mutates annotation in place."""
-    items = annotation.get("items") or []
-    if items:
-        return False
-    receipt_total = _to_float(annotation.get("receipt_total"))
-    if receipt_total is None or receipt_total <= 0:
-        return False
-    dp = _annotation_decimals(annotation)
-    name = (annotation.get("receipt_establishment_name") or "").strip() or "Total"
-    annotation["items"] = [{
-        "name": name,
-        "translated_name": name,
-        "total": f"{receipt_total:.{dp}f}",
-    }]
-    return True
-
-
-def _collapse_redundant_translations(annotation: dict) -> None:
-    """If a translated_name equals the original name (case-insensitive), drop
-    the translation and reuse the original to preserve its casing."""
-    for item in annotation.get("items") or []:
-        name = item.get("name")
-        translated = item.get("translated_name")
-        if name and translated and name.casefold() == translated.casefold():
-            item["translated_name"] = name
-    for charge in annotation.get("other_charges") or []:
-        name = charge.get("name")
-        translated = charge.get("translated_name")
-        if name and translated and name.casefold() == translated.casefold():
-            charge["translated_name"] = name
-
-
-def _to_float(value) -> Optional[float]:
-    """Coerce a Mistral-returned amount (now typed as string) into a float.
-    Returns None on missing or unparseable input."""
-    if value is None:
-        return None
-    if isinstance(value, (int, float)):
-        return float(value)
-    try:
-        return float(str(value).strip().replace(",", "."))
-    except (ValueError, TypeError):
-        return None
-
-
-def _items_sum(items: list[dict], decimals: int = 2) -> float:
-    return round(sum(_to_float(i.get("total")) or 0 for i in items), decimals)
-
-
-def _reconcile_items_with_total(annotation: dict) -> list[dict]:
-    """Try to make items_total match receipt_total by adjusting which
-    tax/tip/fee-like rows are counted as items.
-
-    - If items_total > receipt_total: try removing suspicious items already in
-      the items list (matched on translated_name).
-    - If items_total < receipt_total: try adding from the dedicated
-      tax/tip/service_charge/other_charges fields back into items.
-
-    Returns the (possibly unchanged) items list."""
-    items: list[dict] = list(annotation.get("items") or [])
-    receipt_total = _to_float(annotation.get("receipt_total"))
-    if receipt_total is None:
-        return items
-    if not items and not _candidate_additions(annotation):
-        return items
-
-    dp = _annotation_decimals(annotation)
-    tolerance = _annotation_tolerance(annotation)
-    diff = _items_sum(items, dp) - receipt_total
-
-    if abs(diff) < tolerance:
-        return items
-
-    if diff > 0:
-        suspicious = [
-            i for i, it in enumerate(items)
-            if _is_likely_non_contributing(it.get("translated_name"))
-        ]
-        for r in range(1, len(suspicious) + 1):
-            for combo in combinations(suspicious, r):
-                drop = set(combo)
-                kept = [it for i, it in enumerate(items) if i not in drop]
-                if abs(_items_sum(kept, dp) - receipt_total) < tolerance:
-                    return kept
-        return items
-
-    additions = _candidate_additions(annotation)
-    if not additions:
-        return items
-    idxs = list(range(len(additions)))
-    for r in range(1, len(additions) + 1):
-        for combo in combinations(idxs, r):
-            extra = [additions[i] for i in combo]
-            if abs(_items_sum(items + extra, dp) - receipt_total) < tolerance:
-                return items + extra
-    return items
-
-
-def _candidate_additions(annotation: dict) -> list[dict]:
-    """Build a list of item-shaped dicts from the dedicated charge fields,
-    used when items_total is below receipt_total and we suspect a contributing
-    charge was misrouted into tax/tip/service_charge/other_charges.
-
-    Item totals are emitted as strings formatted to the receipt currency's
-    precision, matching the type the model-returned items use."""
-    dp = _annotation_decimals(annotation)
-    out: list[dict] = []
-    for key, label in (("tax", "Tax"), ("tip", "Tip"), ("service_charge", "Service charge")):
-        amount = _to_float(annotation.get(key))
-        if amount is not None:
-            out.append({"name": label, "translated_name": label, "total": f"{amount:.{dp}f}"})
-    for charge in annotation.get("other_charges") or []:
-        amount = _to_float(charge.get("amount"))
-        if amount is None:
-            continue
-        out.append({
-            "name": charge.get("name") or "Charge",
-            "translated_name": charge.get("translated_name") or charge.get("name") or "Charge",
-            "total": f"{amount:.{dp}f}",
-        })
-    return out
 
 
 class ScanLimitExceeded(Exception):
@@ -435,177 +95,59 @@ def generate_presigned_url(key: str, expiry: int = 3600) -> str:
     )
 
 
-def scan_receipt(image_key: str, tab) -> dict:
+def _read_s3_bytes(key: str) -> tuple[bytes, str]:
+    """Fetch an object's bytes and content type from S3."""
+    obj = _s3_client().get_object(Bucket=settings.S3_BUCKET, Key=key)
+    return obj["Body"].read(), obj.get("ContentType") or "image/jpeg"
+
+
+def scan_receipt(image_key: str, tab, *, strategy=None) -> dict:
     """
-    Run Mistral OCR on the image and return parsed annotation + date + presigned URL.
+    Run a receipt scanning strategy on the uploaded image and return the parsed
+    annotation + date + presigned URL.
+
+    The strategy is chosen from (in order): the `strategy` argument (name or
+    instance), then `settings.RECEIPT_SCAN_STRATEGY`, then the package default.
+
     Returns {"document_annotation": dict | None, "date": str, "image_url": str,
     "image_key": str, "_scan_metrics": dict}. The `_scan_metrics` key carries
-    per-scan analytics properties to be emitted upstream; api callers should
-    pop it before returning to the mobile client.
+    per-scan analytics properties to be emitted upstream (including `strategy`
+    and `scan_total_ms`); api callers should pop it before returning to the
+    mobile client.
     """
-    tab_id = str(tab.uuid)
-    client = Mistral(api_key=settings.MISTRAL_API_KEY)
-    image_url = generate_presigned_url(image_key)
-
-    metrics: dict = {
-        "tab_id": tab_id,
-        "tab_default_currency": tab.default_currency,
-        "annotation_present": False,
-        "annotation_parse_error": False,
-        "currency_source": None,            # "model" | "fallback_missing" | "fallback_unsupported"
-        "currency_code": None,
-        "currency_decimals": None,
-        "items_count": 0,
-        "items_total": None,
-        "ai_items_total": None,
-        "receipt_total": None,
-        "items_match_receipt_total": None,  # None when receipt_total absent
-        "items_receipt_gap": None,
-        "ai_vs_server_total_divergence": None,
-        "has_tax": False,
-        "has_tip": False,
-        "has_service_charge": False,
-        "other_charges_count": 0,
-        "reconciliation_action": "none",    # "none" | "items_dropped" | "candidates_added"
-        "reconciliation_items_delta": 0,
-        "synthesized_total_only_item": False,
-        "date_parsed": False,
-        "ocr_pages": 0,
-        "ocr_markdown_chars": 0,
-        "mistral_call_ms": None,
-    }
-
-    ocr_started = timezone.now()
-    response = client.ocr.process(
-        model="mistral-ocr-latest",
-        document=ImageURLChunk(image_url=image_url),
-        document_annotation_format=response_format_from_pydantic_model(_Document),
-        document_annotation_prompt=DOCUMENT_ANNOTATION_PROMPT,
-        timeout_ms=30_000,
+    from ninjatab.tabs.receipt_scanning.base import ScanContext
+    from ninjatab.tabs.receipt_scanning.strategies import (
+        DEFAULT_STRATEGY,
+        STRATEGIES_BY_NAME,
     )
-    metrics["mistral_call_ms"] = int((timezone.now() - ocr_started).total_seconds() * 1000)
-    metrics["ocr_pages"] = len(response.pages or [])
-    metrics["ocr_markdown_chars"] = sum(len(p.markdown or "") for p in (response.pages or []))
 
-    # Extract annotation from response (top-level field, JSON string).
-    # If Mistral returns malformed JSON (e.g. token-budget exhausted mid-number,
-    # truncated structure), capture to Sentry and fall through with no
-    # annotation so the client can show manual entry.
-    annotation = None
-    raw = response.document_annotation
-    if raw and isinstance(raw, str) and not raw.startswith("~?~"):
-        try:
-            annotation = json.loads(raw)
-        except json.JSONDecodeError as e:
-            sentry_sdk.capture_exception(e, contexts={
-                "mistral_ocr": {
-                    "tab_id": tab_id,
-                    "image_key": image_key,
-                    "raw_length": len(raw),
-                    "raw_preview": raw[:500],
-                },
-            })
-            logger.warning(
-                "Mistral OCR returned malformed JSON for tab %s: %s",
-                tab_id, e,
-            )
-            annotation = None
-            metrics["annotation_parse_error"] = True
+    if strategy is None:
+        name = getattr(settings, "RECEIPT_SCAN_STRATEGY", DEFAULT_STRATEGY)
+        strategy = STRATEGIES_BY_NAME.get(name) or STRATEGIES_BY_NAME[DEFAULT_STRATEGY]
+    elif isinstance(strategy, str):
+        strategy = STRATEGIES_BY_NAME[strategy]
 
-    # Normalize amount strings to '.' decimal separator (Mistral may echo
-    # locale-specific commas, e.g. "20,00" on Italian receipts), then compute
-    # items_total and attempt to reconcile items with receipt_total.
-    if annotation:
-        metrics["annotation_present"] = True
-        raw_code = (annotation.get("currency_code") or "").strip().upper()
-        if not raw_code:
-            logger.warning(
-                "Mistral OCR returned no currency_code for tab %s (image %s); "
-                "falling back to tab default_currency %s",
-                tab_id, image_key, tab.default_currency,
-            )
-            annotation["currency_code"] = tab.default_currency
-            metrics["currency_source"] = "fallback_missing"
-        elif raw_code not in SUPPORTED_CURRENCY_CODES:
-            logger.warning(
-                "Mistral OCR returned unsupported currency_code %r for tab %s "
-                "(image %s); falling back to tab default_currency %s",
-                raw_code, tab_id, image_key, tab.default_currency,
-            )
-            annotation["currency_code"] = tab.default_currency
-            metrics["currency_source"] = "fallback_unsupported"
-            metrics["currency_unsupported_raw"] = raw_code
-        else:
-            annotation["currency_code"] = raw_code
-            metrics["currency_source"] = "model"
-        metrics["currency_code"] = annotation["currency_code"]
-        metrics["currency_decimals"] = _annotation_decimals(annotation)
+    tab_id = str(tab.uuid)
+    image_bytes, content_type = _read_s3_bytes(image_key)
+    ctx = ScanContext(
+        image_bytes=image_bytes,
+        content_type=content_type,
+        default_currency=tab.default_currency,
+        tab_id=tab_id,
+        s3_base_key=image_key,
+    )
 
-        _normalize_amounts_in_annotation(annotation)
-        annotation["ai_items_total"] = annotation.pop("items_total", None)
-        metrics["synthesized_total_only_item"] = _synthesize_total_only_item(annotation)
-        items_before = list(annotation.get("items") or [])
-        annotation["items"] = _reconcile_items_with_total(annotation)
-        items_after = annotation["items"]
-        delta = len(items_after) - len(items_before)
-        if delta > 0:
-            metrics["reconciliation_action"] = "candidates_added"
-        elif delta < 0:
-            metrics["reconciliation_action"] = "items_dropped"
-        metrics["reconciliation_items_delta"] = delta
-
-        annotation["items_total"] = _items_sum(items_after, _annotation_decimals(annotation))
-        _collapse_redundant_translations(annotation)
-
-        receipt_total_f = _to_float(annotation.get("receipt_total"))
-        items_total_f = _to_float(annotation.get("items_total"))
-        ai_items_total_f = _to_float(annotation.get("ai_items_total"))
-        tolerance = _annotation_tolerance(annotation)
-        metrics["items_count"] = len(items_after)
-        metrics["items_total"] = items_total_f
-        metrics["ai_items_total"] = ai_items_total_f
-        metrics["receipt_total"] = receipt_total_f
-        if receipt_total_f is not None and items_total_f is not None:
-            gap = round(items_total_f - receipt_total_f, 6)
-            metrics["items_receipt_gap"] = gap
-            metrics["items_match_receipt_total"] = abs(gap) < tolerance
-        if items_total_f is not None and ai_items_total_f is not None:
-            metrics["ai_vs_server_total_divergence"] = (
-                abs(items_total_f - ai_items_total_f) > tolerance
-            )
-        metrics["has_tax"] = annotation.get("tax") is not None
-        metrics["has_tip"] = annotation.get("tip") is not None
-        metrics["has_service_charge"] = annotation.get("service_charge") is not None
-        metrics["other_charges_count"] = len(annotation.get("other_charges") or [])
+    result = strategy.run(ctx)
 
     logger.info(
-        "Mistral OCR response for tab %s: %s | annotation: %s",
-        tab_id,
-        response.model_dump_json(),
-        json.dumps(annotation),
+        "Receipt scan for tab %s via %s: annotation=%s timings=%s",
+        tab_id, strategy.name, result.document_annotation, result.timings,
     )
 
-    # Parse date from annotation, default to today
-    receipt_date = timezone.now().strftime("%Y-%m-%d")
-    if annotation and annotation.get("datetime_of_receipt"):
-        raw_dt = annotation["datetime_of_receipt"].strip()
-        try:
-            parsed = datetime.fromisoformat(raw_dt.replace("Z", "+00:00"))
-            receipt_date = parsed.strftime("%Y-%m-%d")
-            metrics["date_parsed"] = True
-        except (ValueError, TypeError):
-            try:
-                from datetime import date as date_type
-                parsed_date = date_type.fromisoformat(raw_dt[:10])
-                receipt_date = parsed_date.isoformat()
-                metrics["date_parsed"] = True
-            except (ValueError, TypeError):
-                pass
-
     return {
-        "document_annotation": annotation,
-        "date": receipt_date,
-        "image_url": image_url,
+        "document_annotation": result.document_annotation,
+        "date": result.date,
+        "image_url": generate_presigned_url(image_key),
         "image_key": image_key,
-        "_scan_metrics": metrics,
+        "_scan_metrics": result.metrics,
     }

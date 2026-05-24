@@ -91,6 +91,9 @@ class Command(BaseCommand):
             ("mean_date_match", "Date"),
             ("stability_score", "Stability"),
             ("success_rate", "Success"),
+            ("mean_total_ms", "ms (mean)"),
+            ("mean_mistral_ms", "ms (api)"),
+            ("p95_total_ms", "ms (p95)"),
         ]
         header = f"{'Establishment':<20}  {'Strategy':<28}  " + "  ".join(f"{label:<10}" for _, label in score_keys)
         self.stdout.write(header)
