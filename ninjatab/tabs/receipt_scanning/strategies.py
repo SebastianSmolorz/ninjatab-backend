@@ -13,8 +13,10 @@ from .base import (
 from .postprocess import (
     _items_receipt_gap,
     _to_float,
+    field_consensus,
     most_common_consensus,
-    select_closest_to_receipt_total,
+    recompute_total_match,
+    select_best_line_items,
     standard_post_process,
 )
 from .sources import default_ref
@@ -28,14 +30,17 @@ class BaselineStrategy(ReceiptScanStrategy):
 
 class ConcurrentConsensusStrategy(ReceiptScanStrategy):
     """Fire N concurrent OCR requests on the same image, post-process each
-    candidate, then keep the candidate whose calculated items_total is closest
-    to its receipt_total. Falls back to most-common-field / first when no
-    candidate has a receipt_total.
+    candidate, then combine them:
 
-    Note: the Mistral OCR API does NOT dedupe identical images - repeated calls
-    on the very same presigned URL return independently-varying output (verified
-    empirically against the validation cases). So all N requests reuse a single
-    image reference; no per-request copies/keys are needed."""
+    - scalar fields (currency, establishment, date, receipt_total) are taken as
+      the modal value across runs, removing per-run noise;
+    - line items are taken whole from the single best candidate, chosen by the
+      items_total-vs-receipt_total gap but tie-broken toward the modal item
+      count so a run that merged rows to hit the total does not win.
+
+    Falls back to most-common-field / first when no candidate has a usable
+    receipt_total. The Mistral OCR API does not dedupe identical images
+    (verified), so all N requests reuse a single image reference."""
 
     name = "concurrent_consensus"
 
@@ -68,20 +73,16 @@ class ConcurrentConsensusStrategy(ReceiptScanStrategy):
             candidates.append(ann)
             candidate_metrics.append(pm)
 
-        method = "none"
-        idx = select_closest_to_receipt_total(candidates)
-        if idx is not None:
-            method = "closest_total"
-        else:
+        method = "best_line_items"
+        idx = select_best_line_items(candidates)
+        if idx is None:
             idx = most_common_consensus(candidates)
-            if idx is not None:
-                method = "most_common"
+            method = "most_common" if idx is not None else "none"
 
         metrics = self.base_metrics(ctx)
-        n_candidates = sum(1 for c in candidates if c is not None)
         metrics.update({
             "consensus_n_requested": self.n_requests,
-            "consensus_n_candidates": n_candidates,
+            "consensus_n_candidates": sum(1 for c in candidates if c is not None),
             "consensus_selection_method": method,
             "consensus_selected_index": idx,
             "consensus_candidate_items_totals": [
@@ -90,30 +91,87 @@ class ConcurrentConsensusStrategy(ReceiptScanStrategy):
             "consensus_candidate_receipt_totals": [
                 _to_float((c or {}).get("receipt_total")) for c in candidates
             ],
+            "consensus_candidate_item_counts": [
+                len((c or {}).get("items") or []) if c else None for c in candidates
+            ],
             "consensus_candidate_gaps": [
                 _items_receipt_gap(c) if c else None for c in candidates
             ],
         })
 
         if idx is None:
-            # Every request failed to produce an annotation.
             metrics["annotation_parse_error"] = all(o["parse_error"] for o in ocr_results)
             metrics["consensus_selected_gap"] = None
             return ScanResult(document_annotation=None, date=parse_receipt_date(None)[0], metrics=metrics)
 
         chosen_ocr = ocr_results[idx]
-        chosen_ann = candidates[idx]
+        chosen = candidates[idx]
         metrics["ocr_pages"] = chosen_ocr["ocr_pages"]
         metrics["ocr_markdown_chars"] = chosen_ocr["ocr_markdown_chars"]
         metrics["annotation_parse_error"] = chosen_ocr["parse_error"]
         metrics.update(candidate_metrics[idx])
-        metrics["consensus_selected_gap"] = _items_receipt_gap(chosen_ann)
 
-        date_str, parsed = parse_receipt_date(chosen_ann)
+        # Overlay the modal scalar fields, then recompute the totals match
+        # against the (possibly updated) receipt_total.
+        consensus_fields = field_consensus(candidates)
+        overridden = {}
+        for key, value in consensus_fields.items():
+            if value is not None and chosen.get(key) != value:
+                overridden[key] = {"from": chosen.get(key), "to": value}
+                chosen[key] = value
+        metrics["consensus_overridden_fields"] = list(overridden)
+        metrics.update(recompute_total_match(chosen))
+        metrics["consensus_selected_gap"] = _items_receipt_gap(chosen)
+
+        date_str, parsed = parse_receipt_date(chosen)
         metrics["date_parsed"] = parsed
-        return ScanResult(document_annotation=chosen_ann, date=date_str, metrics=metrics)
+        return ScanResult(document_annotation=chosen, date=date_str, metrics=metrics)
 
 
-STRATEGIES = [BaselineStrategy(), ConcurrentConsensusStrategy()]
+class EscalatingStrategy(ReceiptScanStrategy):
+    """Run a cheap single-call strategy first; only escalate to a more expensive
+    strategy when the result is not trustworthy - i.e. the items_total does not
+    reconcile with the receipt_total (the proxy for a correct parse), or no
+    annotation came back at all. Keeps the common case realtime/single-call and
+    spends extra OCR calls only on receipts that demonstrably need them."""
+
+    name = "escalating"
+
+    def __init__(self, base: ReceiptScanStrategy = None, escalate_to: ReceiptScanStrategy = None):
+        self.base = base or BaselineStrategy()
+        self.escalate_to = escalate_to or ConcurrentConsensusStrategy()
+
+    def run(self, ctx: ScanContext) -> ScanResult:
+        first = self.base.run(ctx)
+        reconciled = first.metrics.get("items_match_receipt_total") is True
+
+        if reconciled:
+            first.metrics["strategy"] = self.name
+            first.metrics["escalated"] = False
+            first.metrics["escalation_reason"] = None
+            first.metrics["escalation_base_strategy"] = self.base.name
+            return first
+
+        reason = "no_annotation" if first.document_annotation is None else "totals_unreconciled"
+        second = self.escalate_to.run(ctx)
+        second.metrics["strategy"] = self.name
+        second.metrics["escalated"] = True
+        second.metrics["escalation_reason"] = reason
+        second.metrics["escalation_base_strategy"] = self.base.name
+        second.metrics["escalation_escalated_to"] = self.escalate_to.name
+
+        base_ms = first.timings.get("total_ms", 0)
+        esc_ms = second.timings.get("total_ms", 0)
+        second.timings = {
+            "total_ms": base_ms + esc_ms,
+            "base_ms": base_ms,
+            "escalated_ms": esc_ms,
+            "mistral_ms": (first.timings.get("mistral_ms") or 0) + (second.timings.get("mistral_ms") or 0),
+        }
+        second.metrics["scan_total_ms"] = second.timings["total_ms"]
+        return second
+
+
+STRATEGIES = [BaselineStrategy(), ConcurrentConsensusStrategy(), EscalatingStrategy()]
 STRATEGIES_BY_NAME = {s.name: s for s in STRATEGIES}
 DEFAULT_STRATEGY = "baseline_mistral_ocr"

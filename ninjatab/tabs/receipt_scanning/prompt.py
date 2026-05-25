@@ -23,6 +23,7 @@ Only include price_per_quantity and quantity if clearly on the receipt.
 quantity: number of instanced of this item purchased. Set to 1 if it is not clear
 price_per_quantity: the price of this item per quantity
 total: the final price paid for that line item so quantity * price_per_quantity.
+receipt_line_text: the raw, verbatim text of the printed receipt row(s) this item was extracted from, exactly as it appears (including any item code, quantity, and price as printed). If the item spans multiple printed rows, join them with " / ". This is used to verify the extraction against the receipt - copy the source text faithfully, do not clean it up.
 
 Do not include subtotal, tax, VAT, tip, gratuity, service charge, payment method, change, balance, loyalty adjustments, discounts, or any other fees as items - even if they affect the grand total. These are captured separately below.
 

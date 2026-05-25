@@ -322,6 +322,10 @@ def standard_post_process(annotation: dict, default_currency: str) -> dict:
         gap = round(items_total_f - receipt_total_f, 6)
         metrics["items_receipt_gap"] = gap
         metrics["items_match_receipt_total"] = abs(gap) < tolerance
+        # Surface the reconciliation outcome on the annotation itself so the
+        # client can flag low-confidence parses (items_total != receipt_total)
+        # for user review.
+        annotation["totals_reconciled"] = metrics["items_match_receipt_total"]
     if items_total_f is not None and ai_items_total_f is not None:
         metrics["ai_vs_server_total_divergence"] = (
             abs(items_total_f - ai_items_total_f) > tolerance
@@ -344,21 +348,87 @@ def _items_receipt_gap(annotation: dict) -> Optional[float]:
     return abs(items_total - receipt_total)
 
 
-def select_closest_to_receipt_total(candidates: list[dict]) -> Optional[int]:
-    """Given already post-processed annotations, return the index of the one
-    whose calculated items_total is closest to its receipt_total. Candidates
-    without both totals are excluded. Returns None when no candidate qualifies."""
-    best_idx: Optional[int] = None
-    best_gap: Optional[float] = None
-    for idx, ann in enumerate(candidates):
-        if ann is None:
-            continue
-        gap = _items_receipt_gap(ann)
-        if gap is None:
-            continue
-        if best_gap is None or gap < best_gap:
-            best_gap, best_idx = gap, idx
-    return best_idx
+def _is_reconciled(annotation: dict) -> bool:
+    """True when the calculated items_total matches receipt_total within the
+    currency's tolerance. False when they diverge or receipt_total is absent."""
+    gap = _items_receipt_gap(annotation)
+    return gap is not None and gap < _annotation_tolerance(annotation)
+
+
+def recompute_total_match(annotation: dict) -> dict:
+    """Recompute items_total and the reconciliation flag in place (used after
+    swapping in consensus field values). Returns the totals metrics."""
+    dp = _annotation_decimals(annotation)
+    annotation["items_total"] = _items_sum(annotation.get("items") or [], dp)
+    items_total = _to_float(annotation.get("items_total"))
+    receipt_total = _to_float(annotation.get("receipt_total"))
+    tolerance = _annotation_tolerance(annotation)
+    gap = round(items_total - receipt_total, 6) if (items_total is not None and receipt_total is not None) else None
+    matched = abs(gap) < tolerance if gap is not None else None
+    if receipt_total is not None:
+        annotation["totals_reconciled"] = matched
+    return {
+        "items_total": items_total,
+        "receipt_total": receipt_total,
+        "items_receipt_gap": gap,
+        "items_match_receipt_total": matched,
+    }
+
+
+def select_best_line_items(candidates: list[dict]) -> Optional[int]:
+    """Pick the candidate with the best line-item breakdown, using the
+    items_total-vs-receipt_total gap as the dominant correctness signal but
+    refusing to reward merged/dropped rows.
+
+    Ranking (highest first):
+      1. reconciled (items_total matches receipt_total within tolerance)
+      2. item count equals the modal count among the reconciled candidates
+         (a candidate that merged rows to hit the total has fewer items than
+         the mode and loses here)
+      3. has a currency_code
+      4. has a datetime_of_receipt
+      5. smallest items/receipt gap
+
+    Returns None when no candidate is valid."""
+    valid_idx = [i for i, c in enumerate(candidates) if c]
+    if not valid_idx:
+        return None
+
+    reconciled_idx = [i for i in valid_idx if _is_reconciled(candidates[i])]
+    pool = reconciled_idx or valid_idx
+    counts = Counter(len(candidates[i].get("items") or []) for i in pool)
+    modal_count = counts.most_common(1)[0][0] if counts else None
+
+    def score(i: int):
+        c = candidates[i]
+        gap = _items_receipt_gap(c)
+        return (
+            1 if i in reconciled_idx else 0,
+            1 if modal_count is not None and len(c.get("items") or []) == modal_count else 0,
+            1 if c.get("currency_code") else 0,
+            1 if c.get("datetime_of_receipt") else 0,
+            -(gap if gap is not None else float("inf")),
+        )
+
+    return max(valid_idx, key=score)
+
+
+def field_consensus(candidates: list[dict]) -> dict:
+    """Modal value across candidates for the stable scalar fields. These vote
+    cleanly (currency flips, establishment null-outs, missing dates are
+    outliers), so the mode removes per-run noise. Line items are NOT voted here
+    - they are taken whole from the best candidate (see select_best_line_items)
+    to keep the itemization internally coherent."""
+    valid = [c for c in candidates if c]
+
+    def mode(key):
+        counts = Counter(c.get(key) for c in valid if c.get(key) is not None)
+        return counts.most_common(1)[0][0] if counts else None
+
+    return {
+        k: mode(k)
+        for k in ("currency_code", "receipt_establishment_name", "datetime_of_receipt", "receipt_total")
+    }
 
 
 def most_common_consensus(candidates: list[dict]) -> Optional[int]:

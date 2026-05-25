@@ -12,6 +12,9 @@ class _Item(BaseModel):
     total: str
     quantity: Optional[int] = None
     price_per_quantity: Optional[str] = None
+    # Raw OCR text of the printed receipt row(s) this item came from. Used for
+    # debugging and line-item alignment in validation; ignored by splitting.
+    receipt_line_text: Optional[str] = None
 
 
 class _OtherCharge(BaseModel):
