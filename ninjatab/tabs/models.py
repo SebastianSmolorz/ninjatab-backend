@@ -146,11 +146,22 @@ class Bill(BaseModel):
     date = models.DateField(default=date.today)
     receipt_image_url = models.URLField(max_length=500, blank=True, default='')
     receipt_image_key = models.CharField(max_length=500, blank=True, default='')
+    # Client-supplied idempotency key (the app's offline-queue localId). Lets a
+    # retried create — e.g. after a crash between server-create and client-ack —
+    # return the original bill instead of creating a duplicate.
+    client_id = models.CharField(max_length=64, null=True, blank=True)
 
     class Meta:
         ordering = ['-date', '-id']
         indexes = [
             models.Index(fields=['-date', '-id']),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=['creator', 'client_id'],
+                condition=Q(client_id__isnull=False),
+                name='uniq_bill_creator_client_id',
+            ),
         ]
 
     def __str__(self):

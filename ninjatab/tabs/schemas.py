@@ -337,6 +337,9 @@ class BillCreateSchema(BaseModel):
     scan_session_id: Optional[str] = None
     was_edited: Optional[bool] = None
     had_mismatch: Optional[bool] = None
+    # Client-supplied idempotency key (offline-queue localId). When a bill with
+    # this (creator, client_id) already exists, the create is a no-op replay.
+    client_id: Optional[str] = None
 
 
 class ScanOutcomeSchema(BaseModel):

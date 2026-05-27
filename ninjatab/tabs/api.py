@@ -10,7 +10,7 @@ from ninja import Router, Schema, UploadedFile, File
 from ninja.errors import HttpError
 from django.conf import settings
 from django.shortcuts import get_object_or_404
-from django.db import transaction
+from django.db import transaction, IntegrityError
 from django.db.models import Q, Count, Exists, OuterRef, Subquery, Sum, IntegerField
 from django.db.models.functions import Coalesce
 from django.contrib.auth import get_user_model
@@ -725,6 +725,18 @@ def can_add_itemised(request, tab_id: str):
 def create_bill(request, payload: BillCreateSchema):
     """Create a new bill with line items"""
     tab = get_object_or_404(Tab.objects.accessible_by(request.auth), uuid=payload.tab_id)
+    creator = get_object_or_404(TabPerson, tab=tab, user=request.auth)
+
+    # Idempotent replay: a retried create carrying a previously-seen client_id
+    # returns the original bill rather than creating a duplicate (and skips the
+    # limit checks / analytics below, which already ran for the first attempt).
+    if payload.client_id:
+        existing = Bill.objects.filter(
+            creator=creator, client_id=payload.client_id
+        ).first()
+        if existing:
+            return existing
+
     try:
         check_bill_limit(tab)
     except HttpError:
@@ -738,35 +750,41 @@ def create_bill(request, payload: BillCreateSchema):
             raise
     if len(payload.line_items) > 150:
         raise HttpError(400, "A bill cannot have more than 150 line items")
-    creator = get_object_or_404(TabPerson, tab=tab, user=request.auth)
 
     paid_by = None
     if payload.paid_by_id:
         paid_by = get_object_or_404(TabPerson, uuid=payload.paid_by_id, tab=tab)
 
-    bill = Bill.objects.create(
-        tab=tab,
-        description=payload.description,
-        currency=payload.currency,
-        creator=creator,
-        paid_by=paid_by,
-        date=payload.date if payload.date else date.today(),
-        receipt_image_key=payload.receipt_image_key
-    )
+    try:
+        with transaction.atomic():
+            bill = Bill.objects.create(
+                tab=tab,
+                description=payload.description,
+                currency=payload.currency,
+                creator=creator,
+                paid_by=paid_by,
+                date=payload.date if payload.date else date.today(),
+                receipt_image_key=payload.receipt_image_key,
+                client_id=payload.client_id or None,
+            )
 
-    # Create line items with splits
-    for line_item_data in payload.line_items:
-        line_item = LineItem.objects.create(
-            bill=bill,
-            description=line_item_data.description,
-            translated_name=line_item_data.translated_name,
-            value=line_item_data.value,
-            split_type=line_item_data.split_type
-        )
+            # Create line items with splits
+            for line_item_data in payload.line_items:
+                line_item = LineItem.objects.create(
+                    bill=bill,
+                    description=line_item_data.description,
+                    translated_name=line_item_data.translated_name,
+                    value=line_item_data.value,
+                    split_type=line_item_data.split_type
+                )
 
-        # Create person claims if provided
-        if line_item_data.person_splits:
-            _create_person_claims(line_item, line_item_data.person_splits, tab, user_uuid=str(request.auth.uuid))
+                # Create person claims if provided
+                if line_item_data.person_splits:
+                    _create_person_claims(line_item, line_item_data.person_splits, tab, user_uuid=str(request.auth.uuid))
+    except IntegrityError:
+        # A concurrent retry slipped past the check above; the unique constraint
+        # caught it — return the bill that won the race.
+        return Bill.objects.get(creator=creator, client_id=payload.client_id)
 
     safe_capture(request.auth.uuid, "bill_created", properties={
         "tab_id": str(tab.uuid),
