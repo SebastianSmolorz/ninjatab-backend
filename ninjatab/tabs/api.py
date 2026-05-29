@@ -606,7 +606,10 @@ def upload_receipt(request, tab_id: str, file: UploadedFile = File(...)):
         check_scan_limit(tab)
     except ScanLimitExceeded as e:
         safe_capture(request.auth.uuid, "scan_limit_hit", properties={"tab_id": str(tab.uuid)})
-        raise HttpError(429, str(e))
+        # 409, not 429: this is a permanent per-tab sanity backstop, not a
+        # rate-limit. The client must stop retrying rather than back off.
+        # (401/403 are avoided — they trigger client logout.)
+        raise HttpError(409, str(e))
 
     try:
         validate_upload(file)
