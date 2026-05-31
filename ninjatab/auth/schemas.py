@@ -1,5 +1,5 @@
 from django.conf import settings as django_settings
-from pydantic import BaseModel, ConfigDict, EmailStr, model_validator
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, model_validator
 
 
 class MagicLinkSchema(BaseModel):
@@ -66,3 +66,16 @@ class SocialLoginSchema(BaseModel):
     first_name: str | None = None
     last_name: str | None = None
     platform: str | None = None
+
+
+class PaymentMethodSchema(BaseModel):
+    provider: str
+    username: str
+    is_preferred: bool
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class PaymentMethodUpsertSchema(BaseModel):
+    username: str = Field(min_length=1, max_length=255)
+    is_preferred: bool = False

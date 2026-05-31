@@ -1,3 +1,5 @@
+import base64
+import hashlib
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -11,6 +13,15 @@ load_dotenv(BASE_DIR.parent / ".env")
 env = Env()
 
 SECRET_KEY = env.str("SECRET_KEY", default="django-insecure-fallback-key-override-in-production")
+
+# Key for column-level field encryption (Fernet). Must be a 32-byte urlsafe
+# base64 key. The dev default is derived from SECRET_KEY; production MUST set
+# FIELD_ENCRYPTION_KEY explicitly and keep it stable (rotating it makes existing
+# ciphertext undecryptable).
+FIELD_ENCRYPTION_KEY = env.str(
+    "FIELD_ENCRYPTION_KEY",
+    default=base64.urlsafe_b64encode(hashlib.sha256(SECRET_KEY.encode()).digest()).decode(),
+)
 
 DEBUG = env.bool("DEBUG", default=False)
 

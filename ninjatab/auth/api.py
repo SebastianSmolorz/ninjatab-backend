@@ -15,6 +15,8 @@ from ninjatab.auth.schemas import (
     LogoutResponseSchema,
     UpdateProfileSchema,
     SocialLoginSchema,
+    PaymentMethodSchema,
+    PaymentMethodUpsertSchema,
 )
 from ninjatab.auth.jwt_utils import (
     create_access_token,
@@ -289,3 +291,37 @@ def request_deletion(request):
     gdpr_logger.info("account_deletion_requested user_id=%s email=%s", user.id, user.email)
     send_deletion_request_email(user.id, user.email)
     return {"success": True}
+
+
+@auth_router.get("/me/payment-methods", response=list[PaymentMethodSchema], auth=JWTBearer())
+def list_payment_methods(request):
+    return list(request.auth.payment_methods.all())
+
+
+@auth_router.put("/me/payment-methods/{provider}", response=PaymentMethodSchema, auth=JWTBearer())
+def upsert_payment_method(request, provider: str, payload: PaymentMethodUpsertSchema):
+    from ninjatab.auth.models import UserPaymentMethod
+    if provider not in UserPaymentMethod.Provider.values:
+        raise HttpError(400, "Unsupported provider")
+
+    with transaction.atomic():
+        pm, _ = UserPaymentMethod.objects.update_or_create(
+            user=request.auth,
+            provider=provider,
+            defaults={"username": payload.username.strip()},
+        )
+        if payload.is_preferred:
+            # At most one preferred method per user (enforced by a partial
+            # unique constraint) — clear the others first.
+            request.auth.payment_methods.exclude(pk=pm.pk).update(is_preferred=False)
+        if pm.is_preferred != payload.is_preferred:
+            pm.is_preferred = payload.is_preferred
+            pm.save(update_fields=["is_preferred"])
+
+    return pm
+
+
+@auth_router.delete("/me/payment-methods/{provider}", response={204: None}, auth=JWTBearer())
+def delete_payment_method(request, provider: str):
+    request.auth.payment_methods.filter(provider=provider).delete()
+    return 204, None
