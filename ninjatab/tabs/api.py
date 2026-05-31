@@ -34,7 +34,7 @@ bill_router = Router(tags=["bills"], auth=JWTBearer())
 logger = logging.getLogger("app")
 
 PAGE_SIZE = 15
-
+TABS_PAGE_SIZE = 5
 
 TAB_CURSOR_ORDER = '-created_at,-id'
 BILL_CURSOR_ORDER = '-date,-id'
@@ -58,11 +58,11 @@ def _apply_tab_cursor(qs, cursor: str | None):
             raise HttpError(400, "Invalid cursor")
 
     qs = qs.order_by('-created_at', '-id')
-    items = list(qs[:PAGE_SIZE + 1])
+    items = list(qs[:TABS_PAGE_SIZE + 1])
 
     next_cursor = None
-    if len(items) > PAGE_SIZE:
-        items = items[:PAGE_SIZE]
+    if len(items) > TABS_PAGE_SIZE:
+        items = items[:TABS_PAGE_SIZE]
         last = items[-1]
         raw = f"{TAB_CURSOR_ORDER}|{last.created_at.isoformat()}|{last.id}"
         next_cursor = base64.urlsafe_b64encode(raw.encode()).decode()
@@ -918,6 +918,24 @@ def list_bills(request, tab_id: str = None, cursor: str = None):
     if tab_id:
         qs = qs.filter(tab__uuid=tab_id)
     qs = qs.select_related('paid_by__user', 'tab').prefetch_related('line_items')
+    items, next_cursor = _apply_bill_cursor(qs, cursor)
+    return {"items": items, "next_cursor": next_cursor}
+
+
+@bill_router.get("/details", response=CursorPageSchema[BillSchema])
+def list_bill_details(request, tab_id: str = None, cursor: str = None):
+    """List bills with full detail (line items + claims), optionally filtered by tab.
+
+    Mirrors list_bills' cursor pagination but returns the same payload as
+    retrieve_bill for each item, so a client can warm its cache for a whole tab
+    in one request instead of one fetch per bill.
+    """
+    qs = Bill.objects.filter(tab__in=Tab.objects.accessible_by(request.auth))
+    if tab_id:
+        qs = qs.filter(tab__uuid=tab_id)
+    qs = qs.select_related('tab', 'creator__user', 'paid_by__user').prefetch_related(
+        'line_items__person_claims__person__user'
+    )
     items, next_cursor = _apply_bill_cursor(qs, cursor)
     return {"items": items, "next_cursor": next_cursor}
 
