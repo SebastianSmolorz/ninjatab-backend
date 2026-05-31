@@ -9,6 +9,7 @@ from enum import Enum
 from ninjatab.currencies.currency_utils import minor_to_decimal
 from ninjatab.currencies.exchange import convert_amount, ExchangeRateNotFoundError
 from ninjatab.currencies.models import Currency
+from ninjatab.auth.schemas import PaymentMethodSchema
 
 T = TypeVar('T')
 
@@ -553,6 +554,9 @@ class SettlementSchema(BaseModel):
     amount_display: Optional[Decimal] = None
     currency: CurrencyEnum
     paid: bool
+    # The payee's saved payment handles (preferred first) so the payer can pay
+    # them back directly. Empty when the payee has no linked user / no methods.
+    to_person_payment_methods: List[PaymentMethodSchema] = []
     created_at: datetime
     updated_at: datetime
 
@@ -564,6 +568,13 @@ class SettlementSchema(BaseModel):
         if hasattr(data, 'from_person') and hasattr(data, 'to_person'):
             amount = data.amount
             currency = data.currency
+            to_user = getattr(data.to_person, 'user', None)
+            methods = []
+            if to_user is not None:
+                methods = sorted(
+                    to_user.payment_methods.all(),
+                    key=lambda m: (not m.is_preferred, m.provider),
+                )
             return {
                 'id': str(data.uuid),
                 'from_person': data.from_person,
@@ -572,6 +583,7 @@ class SettlementSchema(BaseModel):
                 'amount_display': minor_to_decimal(amount, currency),
                 'currency': currency,
                 'paid': data.paid,
+                'to_person_payment_methods': methods,
                 'created_at': data.created_at,
                 'updated_at': data.updated_at,
             }

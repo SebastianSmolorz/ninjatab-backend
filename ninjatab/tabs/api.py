@@ -147,7 +147,7 @@ def create_tab(request, payload: TabCreateSchema):
     tab = Tab.objects.prefetch_related(
         'people__user',
         'settlements__from_person__user',
-        'settlements__to_person__user'
+        'settlements__to_person__user__payment_methods'
     ).get(id=tab.id)
 
     safe_capture(request.auth.uuid, "tab_created", properties={
@@ -188,7 +188,7 @@ def create_demo_tab(request):
         'people__user',
         'bills__line_items__person_claims',
         'settlements__from_person__user',
-        'settlements__to_person__user',
+        'settlements__to_person__user__payment_methods',
     ).get(id=tab.id)
     return tab
 
@@ -233,7 +233,7 @@ def retrieve_tab(request, tab_id: str):
             'people__user',
             'bills__line_items',
             'settlements__from_person__user',
-            'settlements__to_person__user'
+            'settlements__to_person__user__payment_methods'
         ).annotate(
             user_owes=Coalesce(Subquery(user_owes_sq), 0, output_field=IntegerField()),
             user_owed=Coalesce(Subquery(user_owed_sq), 0, output_field=IntegerField()),
@@ -253,7 +253,7 @@ def update_tab(request, tab_id: str, payload: TabUpdateSchema):
             'people__user',
             'bills__line_items',
             'settlements__from_person__user',
-            'settlements__to_person__user'
+            'settlements__to_person__user__payment_methods'
         ),
         uuid=tab_id,
     )
@@ -303,7 +303,7 @@ def update_tab(request, tab_id: str, payload: TabUpdateSchema):
         'people__user',
         'bills__line_items',
         'settlements__from_person__user',
-        'settlements__to_person__user'
+        'settlements__to_person__user__payment_methods'
     ).get(id=tab.id)
 
     return tab
@@ -328,7 +328,7 @@ def close_tab(request, tab_id: str):
             'people__user',
             'bills__line_items',
             'settlements__from_person__user',
-            'settlements__to_person__user'
+            'settlements__to_person__user__payment_methods'
         ),
         uuid=tab_id,
     )
@@ -362,7 +362,7 @@ def close_tab(request, tab_id: str):
         'people__user',
         'bills__line_items',
         'settlements__from_person__user',
-        'settlements__to_person__user'
+        'settlements__to_person__user__payment_methods'
     ).get(id=tab.id)
 
     return tab
@@ -441,7 +441,9 @@ def simplify_tab(request, tab_id: str):
         settlements.append(settlement)
 
     # Prefetch related data for response
-    settlements = Settlement.objects.filter(tab=tab).select_related('from_person__user', 'to_person__user')
+    settlements = Settlement.objects.filter(tab=tab).select_related(
+        'from_person__user', 'to_person__user'
+    ).prefetch_related('to_person__user__payment_methods')
 
     safe_capture(request.auth.uuid, "tab_simplified", properties={
         "tab_id": str(tab.uuid),
@@ -460,7 +462,9 @@ def simplify_tab(request, tab_id: str):
 def mark_settlement_paid(request, settlement_id: str):
     """Mark a settlement as paid"""
     settlement = get_object_or_404(
-        Settlement.objects.select_related('tab', 'from_person__user', 'to_person__user'),
+        Settlement.objects.select_related(
+            'tab', 'from_person__user', 'to_person__user'
+        ).prefetch_related('to_person__user__payment_methods'),
         uuid=settlement_id,
         tab__in=Tab.objects.accessible_by(request.auth)
     )
