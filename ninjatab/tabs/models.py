@@ -30,6 +30,32 @@ class BaseModel(models.Model):
         abstract = True
 
 
+class VersionedModel(models.Model):
+    """Mixin adding an optimistic-concurrency version counter.
+
+    `version` starts at 1 on create and increments on every subsequent save, so
+    a client can read it, send it back with an edit, and detect when it was
+    editing against stale data (the basis for offline-edit conflict detection).
+
+    Caveat: this hooks `save()`, so it is bypassed by `QuerySet.update()` and
+    `bulk_update()`, which don't call `save()`. Mutate through model instances
+    to keep the counter accurate; for changes that only touch child rows (e.g.
+    submitting splits, which rewrites claims), bump the parent explicitly.
+    """
+    version = models.PositiveIntegerField(default=1)
+
+    class Meta:
+        abstract = True
+
+    def save(self, *args, **kwargs):
+        if not self._state.adding:
+            self.version = (self.version or 0) + 1
+            update_fields = kwargs.get("update_fields")
+            if update_fields is not None:
+                kwargs["update_fields"] = {*update_fields, "version"}
+        super().save(*args, **kwargs)
+
+
 
 class TabManager(models.Manager):
     def accessible_by(self, user):
@@ -38,7 +64,7 @@ class TabManager(models.Manager):
         ).distinct()
 
 
-class Tab(BaseModel):
+class Tab(VersionedModel, BaseModel):
     """A tab that tracks shared expenses"""
     name = models.CharField(max_length=255)
     description = models.TextField(blank=True)
@@ -114,7 +140,7 @@ class TabPerson(BaseModel):
         return f"{self.name} on {self.tab.name}"
 
 
-class Bill(BaseModel):
+class Bill(VersionedModel, BaseModel):
     """A bill/expense on a tab"""
     tab = models.ForeignKey(
         Tab,
@@ -175,11 +201,8 @@ class Bill(BaseModel):
     def total_amount(self):
         return sum(item.value for item in self.line_items.all())
 
-    def save(self, *args, **kwargs):
-        super().save(*args, **kwargs)
 
-
-class LineItem(BaseModel):
+class LineItem(VersionedModel, BaseModel):
     """A line item within a bill"""
     bill = models.ForeignKey(
         Bill,

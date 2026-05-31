@@ -906,6 +906,10 @@ def submit_bill_splits(request, bill_id: str, payload: BillSplitSubmitSchema):
         "line_item_count": len(payload.line_item_splits),
     })
 
+    # Splits live on child claim rows, so the bill row isn't otherwise touched —
+    # bump its version explicitly so clients see the change for conflict detection.
+    bill.save(update_fields=["version", "updated_at"])
+
     # Refresh the bill to get updated data
     bill.refresh_from_db()
     return bill

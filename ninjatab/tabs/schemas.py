@@ -162,6 +162,7 @@ class LineItemSchema(BaseModel):
     value_display: Optional[Decimal] = None
     split_type: SplitTypeEnum
     person_claims: List[PersonLineItemClaimSchema]
+    version: int = 1
     created_at: datetime
     updated_at: datetime
 
@@ -181,6 +182,7 @@ class LineItemSchema(BaseModel):
                     'value_display': None,  # set by BillSchema when currency is available
                     'split_type': data.split_type,
                     'person_claims': person_claims_list,
+                    'version': data.version,
                     'created_at': data.created_at,
                     'updated_at': data.updated_at,
                 }
@@ -274,6 +276,7 @@ class BillSchema(BaseModel):
     total_amount_display: Optional[Decimal] = None
     settlement_total: Optional[int] = None
     receipt_image_url: str = ''
+    version: int = 1
     created_at: datetime
     updated_at: datetime
 
@@ -294,6 +297,7 @@ class BillSchema(BaseModel):
                         'value': li.value,
                         'split_type': li.split_type,
                         'person_claims': list(li.person_claims.all()) if hasattr(li.person_claims, 'all') else [],
+                        'version': li.version,
                         'created_at': li.created_at,
                         'updated_at': li.updated_at,
                         'currency': currency,
@@ -321,6 +325,7 @@ class BillSchema(BaseModel):
                     'total_amount_display': minor_to_decimal(total_amount, currency),
                     'settlement_total': settlement_total,
                     'receipt_image_url': _receipt_image_url(data),
+                    'version': data.version,
                     'created_at': data.created_at,
                     'updated_at': data.updated_at,
                 }
@@ -383,6 +388,7 @@ class BillListSchema(BaseModel):
     total_amount_display: Optional[Decimal] = None
     settlement_total: Optional[int] = None
     paid_by: Optional[TabPersonSchema] = None
+    version: int = 1
     created_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
@@ -410,6 +416,7 @@ class BillListSchema(BaseModel):
                 'total_amount_display': minor_to_decimal(total_amount, currency),
                 'settlement_total': settlement_total,
                 'paid_by': data.paid_by,
+                'version': data.version,
                 'created_at': data.created_at,
             }
         return data
@@ -439,6 +446,7 @@ class TabSchema(BaseModel):
     user_owes_display: Decimal = Decimal('0')
     user_owed: int = 0
     user_owed_display: Decimal = Decimal('0')
+    version: int = 1
     created_at: datetime
     updated_at: datetime
 
@@ -507,6 +515,7 @@ class TabSchema(BaseModel):
                     'user_owes_display': minor_to_decimal(user_owes, settlement_currency) or Decimal('0'),
                     'user_owed': user_owed,
                     'user_owed_display': minor_to_decimal(user_owed, settlement_currency) or Decimal('0'),
+                    'version': data.version,
                     'created_at': data.created_at,
                     'updated_at': data.updated_at,
                 }
@@ -528,6 +537,7 @@ class TabListSchema(BaseModel):
     all_settlements_paid: bool = True
     paid_settlements_count: int = 0
     total_settlements_count: int = 0
+    version: int = 1
     created_at: datetime
     updated_at: datetime
 
