@@ -5,19 +5,24 @@ from typing import Optional
 from ninjatab.tabs.receipt_scanning.postprocess import _to_float
 
 # Relative importance of each metric in the rolled-up ``total_score``. Financial
-# correctness dominates; secondary fields (translated names, language) are light.
-# Edit freely — only the rollup is affected, individual metrics are untouched.
+# correctness dominates, but item identification (name + per-item total) matters
+# for a bill-splitting app, so it carries real weight too. A weight of 0 keeps a
+# metric visible in the breakdown but out of the rollup. Edit freely — only the
+# rollup is affected, individual metrics are untouched.
 WEIGHTS = {
     "receipt_total_accuracy": 3.0,
-    "items_total_accuracy": 3.0,
+    "items_total_accuracy": 1.0,
     "item_count_match": 2.0,
-    "items_sum_vs_receipt_total": 2.0,
-    "items_sum_vs_items_total": 1.0,
-    "item_name_fuzzy_match": 1.0,
-    "item_translated_name_fuzzy_match": 0.5,
-    "currency_match": 1.0,
+    "items_sum_vs_receipt_total": 0.0,  # redundant + wrong when tax/charges exist
+    "items_sum_vs_items_total": 2.0,
+    "item_total_accuracy": 2.0,
+    "item_name_fuzzy_match": 2.5,
+    "item_translated_name_fuzzy_match": 1.5,
+    "item_quantity_accuracy": 0.5,
+    "item_price_per_quantity_accuracy": 0.5,
+    "currency_match": 0.5,
     "language_match": 0.5,
-    "date_match": 1.0,
+    "date_match": 0.5,
 }
 
 
@@ -31,14 +36,8 @@ def _total_accuracy(got, expected) -> Optional[float]:
     return max(0.0, 1.0 - abs(got - expected) / abs(expected))
 
 
-def _best_fuzzy_match(name: str, candidates: list[str]) -> float:
-    if not candidates:
-        return 0.0
-    name_lower = name.lower()
-    return max(
-        difflib.SequenceMatcher(None, name_lower, c.lower()).ratio()
-        for c in candidates
-    )
+def _fuzzy(a: str, b: str) -> float:
+    return difflib.SequenceMatcher(None, (a or "").lower(), (b or "").lower()).ratio()
 
 
 def _parse_date(value: Optional[str]) -> Optional[date]:
@@ -50,11 +49,88 @@ def _parse_date(value: Optional[str]) -> Optional[date]:
         return None
 
 
-def _avg_fuzzy(expected_names: list[str], result_names: list[str]) -> Optional[float]:
-    if not expected_names:
-        return None
-    scores = [_best_fuzzy_match(n, result_names) for n in expected_names if n]
-    return sum(scores) / len(scores) if scores else None
+def _item_count_score(result_items: list, expected_items: list) -> float:
+    """Graded item-count score: 1.0 when counts match, falling off with an
+    *escalating* penalty as the gap grows. The k-th miscounted item costs k
+    penalty units (so being off by several items hurts disproportionately),
+    normalised by the expected item count. A miscounted item whose total is zero
+    (e.g. a deposit/section line) incurs only half the penalty. The discrepant
+    items are taken as the cheapest on whichever side has too many/few, which is
+    where spurious or dropped lines usually sit."""
+    n_e = len(expected_items)
+    n_r = len(result_items)
+    if n_e == 0:
+        return 1.0 if n_r == 0 else 0.0
+    diff = abs(n_r - n_e)
+    if diff == 0:
+        return 1.0
+
+    side = result_items if n_r > n_e else expected_items
+    costs = sorted(abs(_to_float(i.get("total")) or 0.0) for i in side)
+    discrepant = costs[:diff]
+
+    penalty = 0.0
+    for k, cost in enumerate(discrepant, start=1):
+        unit = 0.5 if cost == 0.0 else 1.0
+        penalty += k * unit
+    penalty /= n_e
+    return max(0.0, 1.0 - penalty)
+
+
+def _align_items(expected_items: list, result_items: list) -> list[tuple[dict, Optional[dict]]]:
+    """Greedy one-to-one alignment of each expected item to its best-matching
+    (by name) result item. Each result item is consumed at most once, so a
+    single good result name can't be credited to several expected items.
+    Returns (expected_item, result_item_or_None) for every expected item."""
+    remaining = list(range(len(result_items)))
+    pairs = []
+    for exp in expected_items:
+        exp_name = exp.get("name") or ""
+        best_j, best_score = None, -1.0
+        for j in remaining:
+            score = _fuzzy(exp_name, result_items[j].get("name") or "")
+            if score > best_score:
+                best_score, best_j = score, j
+        if best_j is not None:
+            remaining.remove(best_j)
+            pairs.append((exp, result_items[best_j]))
+        else:
+            pairs.append((exp, None))
+    return pairs
+
+
+def _avg(values: list) -> Optional[float]:
+    vals = [v for v in values if v is not None]
+    return sum(vals) / len(vals) if vals else None
+
+
+def _aligned_text(pairs: list, key: str) -> Optional[float]:
+    """Partial credit per item: fuzzy ratio of the aligned result text to the
+    expected text (0 when the expected item went unmatched). Averaged over the
+    expected items that actually carry text for ``key``."""
+    scores = []
+    for exp, res in pairs:
+        expected_text = exp.get(key)
+        if not expected_text:
+            continue
+        scores.append(0.0 if res is None else _fuzzy(expected_text, res.get(key) or ""))
+    return _avg(scores)
+
+
+def _aligned_numeric(pairs: list, key: str) -> Optional[float]:
+    """Per-item numeric accuracy of ``key`` over aligned pairs (0 when the
+    expected item went unmatched or the result omitted the field). Averaged over
+    the expected items that carry a value for ``key``."""
+    scores = []
+    for exp, res in pairs:
+        if _to_float(exp.get(key)) is None:
+            continue
+        if res is None:
+            scores.append(0.0)
+        else:
+            acc = _total_accuracy(res.get(key), exp.get(key))
+            scores.append(acc if acc is not None else 0.0)
+    return _avg(scores)
 
 
 def score_result(result: dict, expected: dict) -> dict:
@@ -65,16 +141,16 @@ def score_result(result: dict, expected: dict) -> dict:
     result_items = result_ann.get("items") or []
     expected_items = expected_ann.get("items") or []
 
-    # Item count match
-    item_count_match = 1.0 if len(result_items) == len(expected_items) else 0.0
+    # Graded, escalating item-count score (zero-cost items penalised at half).
+    item_count_match = _item_count_score(result_items, expected_items)
 
-    # Receipt total accuracy
+    # Receipt total accuracy (model-reported grand total)
     receipt_total_accuracy = _total_accuracy(
         result_ann.get("receipt_total"),
         expected_ann.get("receipt_total"),
     )
 
-    # Items total accuracy
+    # Items total accuracy (model-reported subtotal)
     items_total_accuracy = _total_accuracy(
         result_ann.get("items_total"),
         expected_ann.get("items_total"),
@@ -86,15 +162,14 @@ def score_result(result: dict, expected: dict) -> dict:
     items_sum_vs_receipt_total = _total_accuracy(result_items_sum, expected_ann.get("receipt_total"))
     items_sum_vs_items_total = _total_accuracy(result_items_sum, expected_ann.get("items_total"))
 
-    # Item name fuzzy match (original receipt language names)
-    result_names = [i.get("name") or "" for i in result_items]
-    expected_names = [i.get("name") or "" for i in expected_items]
-    item_name_fuzzy_match = _avg_fuzzy(expected_names, result_names)
-
-    # Translated name fuzzy match (English names)
-    result_translated = [i.get("translated_name") or "" for i in result_items]
-    expected_translated = [i.get("translated_name") or "" for i in expected_items]
-    item_translated_name_fuzzy_match = _avg_fuzzy(expected_translated, result_translated)
+    # Per-item metrics over a one-to-one name alignment: partial credit for item
+    # text (name + translation) and per-item numeric fields.
+    pairs = _align_items(expected_items, result_items)
+    item_name_fuzzy_match = _aligned_text(pairs, "name")
+    item_translated_name_fuzzy_match = _aligned_text(pairs, "translated_name")
+    item_total_accuracy = _aligned_numeric(pairs, "total")
+    item_quantity_accuracy = _aligned_numeric(pairs, "quantity")
+    item_price_per_quantity_accuracy = _aligned_numeric(pairs, "price_per_quantity")
 
     # Currency code match (exact, case-insensitive)
     expected_currency = (expected_ann.get("currency_code") or "").upper()
@@ -128,8 +203,11 @@ def score_result(result: dict, expected: dict) -> dict:
         "items_sum_vs_items_total": items_sum_vs_items_total,
         "receipt_total_accuracy": receipt_total_accuracy,
         "items_total_accuracy": items_total_accuracy,
+        "item_total_accuracy": item_total_accuracy,
         "item_name_fuzzy_match": item_name_fuzzy_match,
         "item_translated_name_fuzzy_match": item_translated_name_fuzzy_match,
+        "item_quantity_accuracy": item_quantity_accuracy,
+        "item_price_per_quantity_accuracy": item_price_per_quantity_accuracy,
         "currency_match": currency_match,
         "language_match": language_match,
         "date_match": date_match,

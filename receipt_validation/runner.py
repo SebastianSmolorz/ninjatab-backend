@@ -1,5 +1,6 @@
 import json
 import mimetypes
+import textwrap
 import time
 import traceback
 import uuid
@@ -197,7 +198,9 @@ def run_pipeline(
                     case_uuid, record = fut.result()
                     label = cases[case_uuid]["establishment"] or case_uuid
                     if record["error"]:
-                        print(f"  {label:<28} ERR", flush=True)
+                        summary = record["error"].strip().splitlines()[-1]
+                        print(f"  {label:<28} ERR  {summary}", flush=True)
+                        print(textwrap.indent(record["error"].rstrip(), "        "), flush=True)
                     else:
                         wait_ms = (record["timings"] or {}).get("total_ms")
                         status = f"ok   {wait_ms} ms" if wait_ms is not None else "ok"
@@ -205,7 +208,7 @@ def run_pipeline(
                     output["cases"][case_uuid]["strategies"][strategy.name]["runs"].append(record)
 
     # Compute aggregates after all runs complete
-    score_keys = ["total_score", "receipt_total_accuracy", "items_total_accuracy", "item_count_match", "items_sum_vs_receipt_total", "items_sum_vs_items_total", "item_name_fuzzy_match", "item_translated_name_fuzzy_match", "currency_match", "language_match", "date_match"]
+    score_keys = ["total_score", "receipt_total_accuracy", "items_total_accuracy", "item_count_match", "items_sum_vs_receipt_total", "items_sum_vs_items_total", "item_total_accuracy", "item_name_fuzzy_match", "item_translated_name_fuzzy_match", "item_quantity_accuracy", "item_price_per_quantity_accuracy", "currency_match", "language_match", "date_match"]
     for case_uuid, case_out in output["cases"].items():
         for strategy_name, strategy_out in case_out["strategies"].items():
             runs_out = strategy_out["runs"]

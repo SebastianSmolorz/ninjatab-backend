@@ -297,7 +297,7 @@ STRATEGIES = [
     BaselineStrategy(),
     ConcurrentConsensusStrategy(),
     TieredConsensusStrategy(),
-    EscalatingStrategy(),
+    # EscalatingStrategy(),
 ]
 STRATEGIES_BY_NAME = {s.name: s for s in STRATEGIES}
 DEFAULT_STRATEGY = "baseline_mistral_ocr"
