@@ -297,24 +297,31 @@ STRATEGIES = [
     BaselineStrategy(),
     ConcurrentConsensusStrategy(),
     TieredConsensusStrategy(),
-    # EscalatingStrategy(),
+    EscalatingStrategy(),
 ]
 STRATEGIES_BY_NAME = {s.name: s for s in STRATEGIES}
 DEFAULT_STRATEGY = "baseline_mistral_ocr"
 
 
-def resolve_strategy(option=None) -> ReceiptScanStrategy:
-    """Resolve a ReceiptScanStrategy from an Option, by its name (``value``).
+def resolve_strategy(option_or_name=None) -> ReceiptScanStrategy:
+    """Resolve a ReceiptScanStrategy from the single ``STRATEGIES`` registry.
 
-    Falls back to ``settings.RECEIPT_SCAN_STRATEGY`` when the option is missing,
-    inactive, or holds a value that does not resolve to a known strategy, and to
-    the baseline strategy if that setting is itself unresolvable.
+    Accepts either a strategy name (``str``, used by the validation pipeline), an
+    Option (whose ``value`` is the name and which is ignored when inactive, used
+    by ``scan_receipt``), or ``None``. Falls back to
+    ``settings.RECEIPT_SCAN_STRATEGY`` when the input does not resolve to a known
+    strategy, and to the baseline strategy if that setting is itself unresolvable.
     """
     from django.conf import settings
 
     fallback_name = getattr(settings, "RECEIPT_SCAN_STRATEGY", DEFAULT_STRATEGY)
     fallback = STRATEGIES_BY_NAME.get(fallback_name) or STRATEGIES_BY_NAME[DEFAULT_STRATEGY]
 
-    if option is None or not option.active:
+    if option_or_name is None:
+        return fallback
+    if isinstance(option_or_name, str):
+        return STRATEGIES_BY_NAME.get(option_or_name) or fallback
+    option = option_or_name
+    if not option.active:
         return fallback
     return STRATEGIES_BY_NAME.get(option.value) or fallback

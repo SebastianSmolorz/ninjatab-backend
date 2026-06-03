@@ -152,11 +152,11 @@ def run_pipeline(
     sleep_between_runs: int = 0,
     concurrency: int = 0,
 ) -> dict:
-    from receipt_validation.variants import VARIANTS_BY_NAME
+    from ninjatab.tabs.receipt_scanning.strategies import resolve_strategy
 
     cases = _load_cases(case_uuids)
     selected_strategies = (
-        [VARIANTS_BY_NAME[n] for n in strategy_names if n in VARIANTS_BY_NAME]
+        [resolve_strategy(n) for n in strategy_names]
         if strategy_names
         else strategies
     )
@@ -226,6 +226,7 @@ def run_pipeline(
             aggregate["blocking_mean_ms"] = _mean(total_ms)
             aggregate["blocking_p50_ms"] = _percentile(total_ms, 0.50)
             aggregate["blocking_p95_ms"] = _percentile(total_ms, 0.95)
+            aggregate["blocking_p99_ms"] = _percentile(total_ms, 0.99)
             aggregate["api_mean_ms"] = _mean(mistral_ms)  # diagnostic only
             strategy_out["aggregate"] = aggregate
     print()

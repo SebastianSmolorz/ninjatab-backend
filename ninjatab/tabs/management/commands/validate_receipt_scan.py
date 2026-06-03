@@ -3,7 +3,7 @@ from pathlib import Path
 
 from django.core.management.base import BaseCommand
 
-from receipt_validation.variants import VARIANTS, VARIANTS_BY_NAME
+from ninjatab.tabs.receipt_scanning.strategies import STRATEGIES, STRATEGIES_BY_NAME
 from receipt_validation.runner import CASES_DIR, run_pipeline
 from receipt_validation.report import write_csv
 
@@ -22,7 +22,7 @@ class Command(BaseCommand):
         parser.add_argument(
             "--strategies",
             default="all",
-            help=f'Comma-separated strategy/variant names or "all". Available: {", ".join(VARIANTS_BY_NAME)}',
+            help=f'Comma-separated strategy names or "all". Available: {", ".join(STRATEGIES_BY_NAME)}',
         )
         parser.add_argument(
             "--runs",
@@ -59,7 +59,7 @@ class Command(BaseCommand):
         runs = options["runs"]
 
         if strategy_names:
-            unknown = [n for n in strategy_names if n not in VARIANTS_BY_NAME]
+            unknown = [n for n in strategy_names if n not in STRATEGIES_BY_NAME]
             if unknown:
                 self.stderr.write(self.style.ERROR(f"Unknown strategies: {', '.join(unknown)}"))
                 return
@@ -70,7 +70,7 @@ class Command(BaseCommand):
             case_uuids=case_uuids,
             strategy_names=strategy_names,
             runs_per_strategy=runs,
-            strategies=VARIANTS,
+            strategies=STRATEGIES,
             sleep_between_runs=options["sleep"],
             concurrency=options["concurrency"],
         )
@@ -116,6 +116,7 @@ class Command(BaseCommand):
         ms_keys = [
             ("blocking_p50_ms", "wait p50"),
             ("blocking_p95_ms", "wait p95"),
+            ("blocking_p99_ms", "wait p99"),
             ("api_mean_ms", "api"),
         ]
         all_keys = score_keys + ms_keys

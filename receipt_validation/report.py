@@ -25,6 +25,7 @@ _SCORE_COLUMNS = [
     ("success", "success_rate"),
     ("blocking_p50_ms", "blocking_p50_ms"),
     ("blocking_p95_ms", "blocking_p95_ms"),
+    ("blocking_p99_ms", "blocking_p99_ms"),
     ("blocking_mean_ms", "blocking_mean_ms"),
     ("api_mean_ms", "api_mean_ms"),
 ]
