@@ -107,7 +107,9 @@ def scan_receipt(image_key: str, tab, *, strategy=None) -> dict:
     annotation + date + presigned URL.
 
     The strategy is chosen from (in order): the `strategy` argument (name or
-    instance), then `settings.RECEIPT_SCAN_STRATEGY`, then the package default.
+    instance), then the `scan_strategy` Option (get_or_create'd from the
+    registry), falling back to the baseline strategy when that option is
+    inactive or holds an unresolvable value.
 
     Returns {"document_annotation": dict | None, "date": str, "image_url": str,
     "image_key": str, "_scan_metrics": dict}. The `_scan_metrics` key carries
@@ -117,13 +119,13 @@ def scan_receipt(image_key: str, tab, *, strategy=None) -> dict:
     """
     from ninjatab.tabs.receipt_scanning.base import ScanContext
     from ninjatab.tabs.receipt_scanning.strategies import (
-        DEFAULT_STRATEGY,
         STRATEGIES_BY_NAME,
+        resolve_strategy,
     )
+    from ninjatab.utilities.registry import SCAN_STRATEGY, ensure_option
 
     if strategy is None:
-        name = getattr(settings, "RECEIPT_SCAN_STRATEGY", DEFAULT_STRATEGY)
-        strategy = STRATEGIES_BY_NAME.get(name) or STRATEGIES_BY_NAME[DEFAULT_STRATEGY]
+        strategy = resolve_strategy(ensure_option(SCAN_STRATEGY))
     elif isinstance(strategy, str):
         strategy = STRATEGIES_BY_NAME[strategy]
 

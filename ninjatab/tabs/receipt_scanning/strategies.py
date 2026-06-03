@@ -296,3 +296,20 @@ STRATEGIES = [
 ]
 STRATEGIES_BY_NAME = {s.name: s for s in STRATEGIES}
 DEFAULT_STRATEGY = "baseline_mistral_ocr"
+
+
+def resolve_strategy(option=None) -> ReceiptScanStrategy:
+    """Resolve a ReceiptScanStrategy from an Option, by its name (``value``).
+
+    Falls back to ``settings.RECEIPT_SCAN_STRATEGY`` when the option is missing,
+    inactive, or holds a value that does not resolve to a known strategy, and to
+    the baseline strategy if that setting is itself unresolvable.
+    """
+    from django.conf import settings
+
+    fallback_name = getattr(settings, "RECEIPT_SCAN_STRATEGY", DEFAULT_STRATEGY)
+    fallback = STRATEGIES_BY_NAME.get(fallback_name) or STRATEGIES_BY_NAME[DEFAULT_STRATEGY]
+
+    if option is None or not option.active:
+        return fallback
+    return STRATEGIES_BY_NAME.get(option.value) or fallback
