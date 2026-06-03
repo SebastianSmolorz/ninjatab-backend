@@ -109,10 +109,27 @@ class ReceiptScanStrategy:
     name: str = "base"
     prompt: str = DOCUMENT_ANNOTATION_PROMPT
     model: str = "mistral-ocr-latest"
+    version: str = "1"
+
+    def __init__(self, *, name=None, model=None, prompt=None, version=None):
+        """Optionally override the class-level name/model/prompt/version on a
+        per-instance basis. Unset arguments keep the class default, so existing
+        zero-arg construction is unchanged. Used by the validation harness to
+        define configurable strategy variants."""
+        if name is not None:
+            self.name = name
+        if model is not None:
+            self.model = model
+        if prompt is not None:
+            self.prompt = prompt
+        if version is not None:
+            self.version = version
 
     def base_metrics(self, ctx: ScanContext) -> dict:
         return {
             "strategy": self.name,
+            "strategy_version": self.version,
+            "model": self.model,
             "tab_id": ctx.tab_id,
             "tab_default_currency": ctx.default_currency,
             "annotation_present": False,

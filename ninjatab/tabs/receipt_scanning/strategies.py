@@ -132,7 +132,8 @@ class ConcurrentConsensusStrategy(ReceiptScanStrategy):
 
     name = "concurrent_consensus"
 
-    def __init__(self, n_requests: int = 3):
+    def __init__(self, n_requests: int = 3, **kwargs):
+        super().__init__(**kwargs)
         self.n_requests = n_requests
 
     def pre_process(self, ctx: ScanContext) -> list[str]:
@@ -194,7 +195,8 @@ class TieredConsensusStrategy(ReceiptScanStrategy):
 
     name = "tiered_consensus"
 
-    def __init__(self, initial: int = 2, escalate_extra: int = 2):
+    def __init__(self, initial: int = 2, escalate_extra: int = 2, **kwargs):
+        super().__init__(**kwargs)
         self.initial = initial
         self.escalate_extra = escalate_extra
 
@@ -253,7 +255,8 @@ class EscalatingStrategy(ReceiptScanStrategy):
 
     name = "escalating"
 
-    def __init__(self, base: ReceiptScanStrategy = None, escalate_to: ReceiptScanStrategy = None):
+    def __init__(self, base: ReceiptScanStrategy = None, escalate_to: ReceiptScanStrategy = None, **kwargs):
+        super().__init__(**kwargs)
         self.base = base or BaselineStrategy()
         self.escalate_to = escalate_to or ConcurrentConsensusStrategy()
 
@@ -263,6 +266,7 @@ class EscalatingStrategy(ReceiptScanStrategy):
 
         if reconciled:
             first.metrics["strategy"] = self.name
+            first.metrics["strategy_version"] = self.version
             first.metrics["escalated"] = False
             first.metrics["escalation_reason"] = None
             first.metrics["escalation_base_strategy"] = self.base.name
@@ -271,6 +275,7 @@ class EscalatingStrategy(ReceiptScanStrategy):
         reason = "no_annotation" if first.document_annotation is None else "totals_unreconciled"
         second = self.escalate_to.run(ctx)
         second.metrics["strategy"] = self.name
+        second.metrics["strategy_version"] = self.version
         second.metrics["escalated"] = True
         second.metrics["escalation_reason"] = reason
         second.metrics["escalation_base_strategy"] = self.base.name
@@ -292,7 +297,7 @@ STRATEGIES = [
     BaselineStrategy(),
     ConcurrentConsensusStrategy(),
     TieredConsensusStrategy(),
-    EscalatingStrategy(),
+    # EscalatingStrategy(),
 ]
 STRATEGIES_BY_NAME = {s.name: s for s in STRATEGIES}
 DEFAULT_STRATEGY = "baseline_mistral_ocr"

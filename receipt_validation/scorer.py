@@ -4,6 +4,22 @@ from typing import Optional
 
 from ninjatab.tabs.receipt_scanning.postprocess import _to_float
 
+# Relative importance of each metric in the rolled-up ``total_score``. Financial
+# correctness dominates; secondary fields (translated names, language) are light.
+# Edit freely — only the rollup is affected, individual metrics are untouched.
+WEIGHTS = {
+    "receipt_total_accuracy": 3.0,
+    "items_total_accuracy": 3.0,
+    "item_count_match": 2.0,
+    "items_sum_vs_receipt_total": 2.0,
+    "items_sum_vs_items_total": 1.0,
+    "item_name_fuzzy_match": 1.0,
+    "item_translated_name_fuzzy_match": 0.5,
+    "currency_match": 1.0,
+    "language_match": 0.5,
+    "date_match": 1.0,
+}
+
 
 def _total_accuracy(got, expected) -> Optional[float]:
     got = _to_float(got)
@@ -118,6 +134,10 @@ def score_result(result: dict, expected: dict) -> dict:
         "language_match": language_match,
         "date_match": date_match,
     }
-    scored = [v for v in individual.values() if v is not None]
-    total_score = sum(scored) / len(scored) if scored else None
+    # Weighted average over the metrics that are present (non-None) for this case.
+    weighted = [
+        (WEIGHTS.get(k, 1.0), v) for k, v in individual.items() if v is not None
+    ]
+    weight_sum = sum(w for w, _ in weighted)
+    total_score = sum(w * v for w, v in weighted) / weight_sum if weight_sum else None
     return {"total_score": total_score, **individual}

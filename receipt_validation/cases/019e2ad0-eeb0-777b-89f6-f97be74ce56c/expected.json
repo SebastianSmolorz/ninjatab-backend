@@ -1,88 +1,97 @@
 {
-  "receipt_language": "Estonian",
-  "receipt_language_code": "et",
-  "items": [
-    {
-      "name": "Majaõlu 400ml",
-      "translated_name": "House beer 400ml",
-      "total": 32.5,
-      "quantity": 5,
-      "price_per_quantity": 6.5
-    },
-    {
-      "name": "Merut 750L",
-      "translated_name": "Merut 750L",
-      "total": 32.0,
-      "quantity": 1,
-      "price_per_quantity": 32.0
-    },
-    {
-      "name": "Pelmeenid Lambalihaga",
-      "translated_name": "Dumplings with Lamb",
-      "total": 14.9,
-      "quantity": 1,
-      "price_per_quantity": 14.9
-    },
-    {
-      "name": "Pelmeenid Pardi ja Trühvliga",
-      "translated_name": "Dumplings with Duck and Truffle",
-      "total": 16.9,
-      "quantity": 1,
-      "price_per_quantity": 16.9
-    },
-    {
-      "name": "Verivorst",
-      "translated_name": "Blood Sausage",
-      "total": 14.9,
-      "quantity": 1,
-      "price_per_quantity": 14.9
-    },
-    {
-      "name": "Verivorst",
-      "translated_name": "Blood Sausage",
-      "total": 14.9,
-      "quantity": 1,
-      "price_per_quantity": 14.9
-    },
-    {
-      "name": "Verivorst",
-      "translated_name": "Blood Sausage",
-      "total": 14.9,
-      "quantity": 1,
-      "price_per_quantity": 14.9
-    },
-    {
-      "name": "Pelmeenid Kanapuljongis",
-      "translated_name": "Dumplings in Chicken Broth",
-      "total": 12.9,
-      "quantity": 1,
-      "price_per_quantity": 12.9
-    },
-    {
-      "name": "Friikartul",
-      "translated_name": "French Fries",
-      "total": 5.5,
-      "quantity": 1,
-      "price_per_quantity": 5.5
-    },
-    {
-      "name": "Peipsi J\u00e4rve Kohafilee",
-      "translated_name": "Lake Peipsi Cod Fillet",
-      "total": 21.9,
-      "quantity": 1,
-      "price_per_quantity": 21.9
-    },
-    {
-      "name": "Mädärõigas 40ml",
-      "translated_name": "Horseradish 40ml",
-      "total": 52.0,
-      "quantity": 8,
-      "price_per_quantity": 6.5
-    }
-  ],
-  "receipt_total": 233.3,
-  "receipt_establishment_name": "MER restaurants 00",
-  "currency_code": "EUR",
-  "datetime_of_receipt": "2020-05-16T21:11:27",
-  "items_total": 233.3
+  "document_annotation": {
+    "receipt_language": "Estonian",
+    "receipt_language_code": "et",
+    "items": [
+      {
+        "name": "Majaõlu 400ml",
+        "translated_name": "House beer 400ml",
+        "total": 32.5,
+        "quantity": 5,
+        "price_per_quantity": 6.5
+      },
+      {
+        "name": "Merlot 75CL",
+        "translated_name": "Merlot 75CL",
+        "total": 32.0,
+        "quantity": 1,
+        "price_per_quantity": 32.0
+      },
+      {
+        "name": "Vanaemakook kohupiima-kirssidega",
+        "translated_name": "Grandma’s cake with curd cheese and cherries.",
+        "total": 0,
+        "quantity": 0,
+        "price_per_quantity": 12.90
+      },
+      {
+        "name": "Pelmeenid Lambalihaga",
+        "translated_name": "Dumplings with Lamb",
+        "total": 14.9,
+        "quantity": 1,
+        "price_per_quantity": 14.9
+      },
+      {
+        "name": "Pelmeenid Pardi ja Trühvliga",
+        "translated_name": "Dumplings with Duck and Truffle",
+        "total": 16.9,
+        "quantity": 1,
+        "price_per_quantity": 16.9
+      },
+      {
+        "name": "Verivorst",
+        "translated_name": "Blood Sausage",
+        "total": 14.9,
+        "quantity": 1,
+        "price_per_quantity": 14.9
+      },
+      {
+        "name": "Verivorst",
+        "translated_name": "Blood Sausage",
+        "total": 14.9,
+        "quantity": 1,
+        "price_per_quantity": 14.9
+      },
+      {
+        "name": "Verivorst",
+        "translated_name": "Blood Sausage",
+        "total": 14.9,
+        "quantity": 1,
+        "price_per_quantity": 14.9
+      },
+      {
+        "name": "Pelmeenid Kanapuljongis",
+        "translated_name": "Dumplings in Chicken Broth",
+        "total": 12.9,
+        "quantity": 1,
+        "price_per_quantity": 12.9
+      },
+      {
+        "name": "Friikartul",
+        "translated_name": "French Fries",
+        "total": 5.5,
+        "quantity": 1,
+        "price_per_quantity": 5.5
+      },
+      {
+        "name": "Peipsi J\u00e4rve Kohafilee",
+        "translated_name": "Lake Peipsi Cod Fillet",
+        "total": 21.9,
+        "quantity": 1,
+        "price_per_quantity": 21.9
+      },
+      {
+        "name": "Mädärõigas 40ml",
+        "translated_name": "Horseradish 40ml",
+        "total": 52.0,
+        "quantity": 8,
+        "price_per_quantity": 6.5
+      }
+    ],
+    "receipt_total": 233.3,
+    "receipt_establishment_name": "MER restaurants Oü",
+    "currency_code": "EUR",
+    "datetime_of_receipt": "2020-05-16T21:11:27",
+    "items_total": 233.3
+  }
 }

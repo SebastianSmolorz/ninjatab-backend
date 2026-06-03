@@ -3,6 +3,7 @@ import mimetypes
 import time
 import traceback
 import uuid
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
@@ -38,7 +39,19 @@ def _load_cases(case_uuids: Optional[list[str]] = None) -> dict[str, dict]:
             continue
         with open(expected_path) as f:
             expected = json.load(f)
-        cases[uuid_] = {"image_path": image_path, "expected": expected}
+        # Accept both shapes: a bare annotation or one wrapped in
+        # {"document_annotation": ...}. Normalise to the wrapped form so the
+        # scorer and establishment lookup work uniformly.
+        if "document_annotation" not in expected:
+            expected = {"document_annotation": expected}
+        establishment = (expected.get("document_annotation") or {}).get(
+            "receipt_establishment_name"
+        )
+        cases[uuid_] = {
+            "image_path": image_path,
+            "expected": expected,
+            "establishment": establishment,
+        }
     return cases
 
 
@@ -89,6 +102,26 @@ def run_strategy(strategy, image_path: Path) -> dict:
     }
 
 
+def _run_case(strategy, case_uuid: str, case_data: dict, run_idx: int) -> tuple[str, dict]:
+    """Run one strategy against one case, capturing any error. Safe to call from
+    a worker thread: it shares no mutable state (clients are created per call).
+    Returns (case_uuid, run record)."""
+    error = result = scores = timings = None
+    try:
+        result = run_strategy(strategy, case_data["image_path"])
+        timings = result.get("timings")
+        scores = score_result(result, case_data["expected"])
+    except Exception:
+        error = traceback.format_exc()
+    return case_uuid, {
+        "run": run_idx,
+        "result": result,
+        "scores": scores,
+        "timings": timings,
+        "error": error,
+    }
+
+
 def _stdev(values: list) -> Optional[float]:
     filtered = [v for v in values if v is not None]
     if len(filtered) < 2:
@@ -117,12 +150,13 @@ def run_pipeline(
     runs_per_strategy: int,
     strategies: list,
     sleep_between_runs: int = 0,
+    concurrency: int = 0,
 ) -> dict:
-    from receipt_validation.strategies import STRATEGIES_BY_NAME
+    from receipt_validation.variants import VARIANTS_BY_NAME
 
     cases = _load_cases(case_uuids)
     selected_strategies = (
-        [STRATEGIES_BY_NAME[n] for n in strategy_names if n in STRATEGIES_BY_NAME]
+        [VARIANTS_BY_NAME[n] for n in strategy_names if n in VARIANTS_BY_NAME]
         if strategy_names
         else strategies
     )
@@ -134,44 +168,43 @@ def run_pipeline(
 
     # Initialise output structure
     for case_uuid, case_data in cases.items():
-        expected = case_data["expected"]
-        establishment = (expected.get("document_annotation") or {}).get("receipt_establishment_name")
         output["cases"][case_uuid] = {
             "image_path": str(case_data["image_path"].relative_to(Path(__file__).parent.parent)),
-            "receipt_establishment_name": establishment,
-            "strategies": {s.name: {"runs": []} for s in selected_strategies},
+            "receipt_establishment_name": case_data["establishment"],
+            "strategies": {
+                s.name: {"version": s.version, "model": s.model, "runs": []}
+                for s in selected_strategies
+            },
         }
 
-    # runs × cases × strategies so consecutive runs are spread apart
-    for run_idx in range(1, runs_per_strategy + 1):
-        if run_idx > 1 and sleep_between_runs > 0:
-            time.sleep(sleep_between_runs)
-        for case_uuid, case_data in cases.items():
-            image_path = case_data["image_path"]
-            expected = case_data["expected"]
-            for strategy in selected_strategies:
-                error = None
-                result = None
-                scores = None
-                timings = None
-                try:
-                    result = run_strategy(strategy, image_path)
-                    timings = result.get("timings")
-                    scores = score_result(result, expected)
-                except Exception:
-                    error = traceback.format_exc()
-                print(".", end="", flush=True)
-
-                output["cases"][case_uuid]["strategies"][strategy.name]["runs"].append({
-                    "run": run_idx,
-                    "result": result,
-                    "scores": scores,
-                    "timings": timings,
-                    "error": error,
-                })
+    # strategy → run → case, so output groups by "strategy — run N" while the
+    # per-run sleep still spreads repeat runs of each case apart in time. Within
+    # a run the cases are fanned out concurrently (each scan is network-bound).
+    max_workers = concurrency or len(cases) or 1
+    for strategy in selected_strategies:
+        for run_idx in range(1, runs_per_strategy + 1):
+            if run_idx > 1 and sleep_between_runs > 0:
+                time.sleep(sleep_between_runs)
+            print(f"\n{strategy.name} v{strategy.version} — run {run_idx}", flush=True)
+            with ThreadPoolExecutor(max_workers=max_workers) as pool:
+                futures = [
+                    pool.submit(_run_case, strategy, case_uuid, case_data, run_idx)
+                    for case_uuid, case_data in cases.items()
+                ]
+                # Consume as_completed on the main thread: prints and appends are
+                # serialised here, so no locking is needed.
+                for fut in as_completed(futures):
+                    case_uuid, record = fut.result()
+                    label = cases[case_uuid]["establishment"] or case_uuid
+                    if record["error"]:
+                        print(f"  {label:<28} ERR", flush=True)
+                    else:
+                        wait_ms = (record["timings"] or {}).get("total_ms")
+                        status = f"ok   {wait_ms} ms" if wait_ms is not None else "ok"
+                        print(f"  {label:<28} {status}", flush=True)
+                    output["cases"][case_uuid]["strategies"][strategy.name]["runs"].append(record)
 
     # Compute aggregates after all runs complete
-    print()
     score_keys = ["total_score", "receipt_total_accuracy", "items_total_accuracy", "item_count_match", "items_sum_vs_receipt_total", "items_sum_vs_items_total", "item_name_fuzzy_match", "item_translated_name_fuzzy_match", "currency_match", "language_match", "date_match"]
     for case_uuid, case_out in output["cases"].items():
         for strategy_name, strategy_out in case_out["strategies"].items():
@@ -185,13 +218,15 @@ def run_pipeline(
             sd = _stdev(total_scores)
             aggregate["stability_score"] = max(0.0, 1.0 - sd) if sd is not None else None
 
+            # "Blocking" latency = wall-clock total_ms: pre + actual API work
+            # (concurrent calls counted once, sequential distinct calls summed)
+            # + post. This is the real time the user waits per scan.
             total_ms = [r["timings"].get("total_ms") for r in runs_out if r["timings"]]
             mistral_ms = [r["timings"].get("mistral_ms") for r in runs_out if r["timings"]]
-            aggregate["mean_total_ms"] = _mean(total_ms)
-            aggregate["mean_mistral_ms"] = _mean(mistral_ms)
-            aggregate["min_total_ms"] = min(total_ms) if total_ms else None
-            aggregate["max_total_ms"] = max(total_ms) if total_ms else None
-            aggregate["p95_total_ms"] = _percentile(total_ms, 0.95)
+            aggregate["blocking_mean_ms"] = _mean(total_ms)
+            aggregate["blocking_p50_ms"] = _percentile(total_ms, 0.50)
+            aggregate["blocking_p95_ms"] = _percentile(total_ms, 0.95)
+            aggregate["api_mean_ms"] = _mean(mistral_ms)  # diagnostic only
             strategy_out["aggregate"] = aggregate
     print()
 
