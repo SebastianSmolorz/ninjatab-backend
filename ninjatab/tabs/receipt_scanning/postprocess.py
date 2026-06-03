@@ -105,7 +105,7 @@ def _normalize_amounts_in_annotation(annotation: dict) -> None:
         if key in annotation:
             annotation[key] = _normalize_amount_str(annotation[key], dp)
     for item in annotation.get("items") or []:
-        for key in ("total", "price_per_quantity"):
+        for key in ("total", "price_per_quantity", "discount"):
             if key in item:
                 item[key] = _normalize_amount_str(item[key], dp)
     for charge in annotation.get("other_charges") or []:
@@ -149,6 +149,45 @@ def _collapse_redundant_translations(annotation: dict) -> None:
         translated = charge.get("translated_name")
         if name and translated and name.casefold() == translated.casefold():
             charge["translated_name"] = name
+
+
+def _apply_item_discounts(annotation: dict) -> int:
+    """Fold each item's printed item-level discount into its total.
+
+    The model extracts an item's pre-discount `total` plus, when a loyalty/
+    clubcard-style saving is printed against that one item, the saving in
+    `discount` (a negative string). We do the subtraction here rather than
+    asking the model to: net = total - |discount|. The pre-discount amount is
+    preserved in `original_total` for display, and `total` becomes the net
+    amount that feeds splitting and totals reconciliation downstream.
+
+    A discount that meets or exceeds the line total is almost certainly a
+    misparse, so it is dropped and the item left untouched. Returns the number
+    of items that had a discount applied. Mutates annotation in place."""
+    dp = _annotation_decimals(annotation)
+    applied = 0
+    for item in annotation.get("items") or []:
+        discount = _to_float(item.get("discount"))
+        if discount is None or discount == 0:
+            item.pop("discount", None)
+            continue
+        total = _to_float(item.get("total"))
+        if total is None:
+            item.pop("discount", None)
+            continue
+        net = round(total - abs(discount), dp)
+        if net < 0:
+            logger.warning(
+                "Item discount %s exceeds total %s for %r; dropping discount",
+                discount, total, item.get("name"),
+            )
+            item.pop("discount", None)
+            continue
+        item["original_total"] = f"{total:.{dp}f}"
+        item["discount"] = f"{-abs(discount):.{dp}f}"
+        item["total"] = f"{net:.{dp}f}"
+        applied += 1
+    return applied
 
 
 def _to_float(value) -> Optional[float]:
@@ -267,6 +306,7 @@ def standard_post_process(annotation: dict, default_currency: str) -> dict:
         "has_tip": False,
         "has_service_charge": False,
         "other_charges_count": 0,
+        "item_discounts_applied": 0,        # count of items with an item-level discount folded in
         "reconciliation_action": "none",    # "none" | "items_dropped" | "candidates_added"
         "reconciliation_items_delta": 0,
         "synthesized_total_only_item": False,
@@ -295,6 +335,7 @@ def standard_post_process(annotation: dict, default_currency: str) -> dict:
     metrics["currency_decimals"] = _annotation_decimals(annotation)
 
     _normalize_amounts_in_annotation(annotation)
+    metrics["item_discounts_applied"] = _apply_item_discounts(annotation)
     annotation["ai_items_total"] = annotation.pop("items_total", None)
     metrics["synthesized_total_only_item"] = _synthesize_total_only_item(annotation)
     items_before = list(annotation.get("items") or [])

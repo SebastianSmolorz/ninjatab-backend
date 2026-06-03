@@ -18,20 +18,28 @@ For each item:
   - If the item is already in English, set translated_name equal to name
   - Be aggressive here: the precision/conservatism rules that apply to amounts, items, and dates do NOT apply to translated_name - always produce a best-guess English translation rather than leaving it untranslated
 - quantity, price_per_quantity, total: see below
+- discount: see the item-level discount guidance below
 
 Only include price_per_quantity and quantity if clearly on the receipt.
 quantity: number of instanced of this item purchased. Set to 1 if it is not clear
 price_per_quantity: the price of this item per quantity
-total: the final price paid for that line item so quantity * price_per_quantity.
+total: the printed price of that line item BEFORE any item-level discount, so quantity * price_per_quantity. Do not subtract any discount from this value yourself - record the discount separately in `discount` (see below) and leave `total` as the printed pre-discount price.
 receipt_line_text: the raw, verbatim text of the printed receipt row(s) this item was extracted from, exactly as it appears (including any item code, quantity, and price as printed). If the item spans multiple printed rows, join them with " / ". This is used to verify the extraction against the receipt - copy the source text faithfully, do not clean it up.
 
-Do not include subtotal, tax, VAT, tip, gratuity, service charge, payment method, change, balance, loyalty adjustments, discounts, or any other fees as items - even if they affect the grand total. These are captured separately below.
+Item-level discounts (discount):
+Some receipts print a saving that applies to one specific item - typically a supermarket loyalty/clubcard saving shown on the row directly beneath that item (e.g. an item "Bananas 10.00" followed by a row like "CCC -1.00", meaning Bananas was reduced by 1.00 for a Clubcard saving).
+- When a discount/saving line clearly applies to a single preceding/adjacent item, record the saving amount in that item's `discount` field as a NEGATIVE decimal string (e.g. "-1.00"). Do NOT create a separate item for it, do NOT put it in other_charges, and do NOT subtract it from the item's `total` yourself.
+- If a single item has several discount lines that clearly apply to it, record only the printed discount amounts - if there is more than one, do not try to combine them; record the one printed discount amount per item. (One saving per item is by far the most common case.)
+- If a discount/saving line cannot be confidently attributed to one specific item (and is not a whole-basket discount as described below), do NOT extract it at all - leave it out entirely rather than guessing which item it belongs to.
+- Leave `discount` null for items with no item-specific saving.
+
+Do not include subtotal, tax, VAT, tip, gratuity, service charge, payment method, change, balance, loyalty adjustments, discounts, or any other fees as items - even if they affect the grand total. These are captured separately (item-level savings in `discount` above; receipt-level charges below).
 
 Extract receipt-level charges that affect the grand total into their dedicated fields:
 - tax: total tax/VAT amount on the receipt, if shown
 - tip: tip or gratuity amount, if shown
 - service_charge: service charge amount, if shown
-- other_charges: a list of any other receipt-level fees or discounts that affect the total but do not fit tax/tip/service_charge (for example: delivery fee, booking fee, cover charge, loyalty discount, voucher). Use a negative amount for discounts. Each entry should include name (as shown on the receipt), translated_name (English translation, or same value if already English), and amount.
+- other_charges: a list of any other receipt-level fees or discounts that affect the total but do not fit tax/tip/service_charge AND are not tied to a single item (for example: delivery fee, booking fee, cover charge, a voucher or loyalty discount applied to the whole basket/order rather than to one item). Use a negative amount for discounts. Each entry should include name (as shown on the receipt), translated_name (English translation, or same value if already English), and amount. Do NOT put item-specific savings here - those belong in the relevant item's `discount` field (see the item-level discount guidance above).
 
 Only populate these fields when the charge clearly affects the grand total. Leave them null if not present. Do not include line items in these fields, and do not include these charges in items.
 
@@ -51,7 +59,7 @@ Extract datetime_of_receipt from the receipt date/time.
 - If the receipt provides only a partial date or ambiguous date/time that cannot be confidently converted to ISO 8601, return null
 - If no receipt date/time is present, return null
 
-All monetary amounts (total, price_per_quantity, receipt_total, items_total, tax, tip, service_charge, other_charges.amount) must be returned as decimal strings normalized to US locale formatting:
+All monetary amounts (total, price_per_quantity, discount, receipt_total, items_total, tax, tip, service_charge, other_charges.amount) must be returned as decimal strings normalized to US locale formatting:
 - Use a dot (".") as the decimal separator
 - Do not include any thousands separators (no commas, no spaces, no dots between groups of digits)
 - Use the number of decimal places appropriate for the receipt's currency: 0 for currencies with no minor unit (e.g. JPY), 2 for most currencies (e.g. USD, EUR, GBP), 3 for currencies that use three decimals (e.g. JOD, KWD, BHD, OMR, TND). Match the precision shown on the receipt itself - never truncate "1.234" (a JOD amount) to "1.23"

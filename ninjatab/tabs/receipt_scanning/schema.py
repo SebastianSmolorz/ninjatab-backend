@@ -12,6 +12,11 @@ class _Item(BaseModel):
     total: str
     quantity: Optional[int] = None
     price_per_quantity: Optional[str] = None
+    # A loyalty/clubcard-style saving printed against this specific item, as a
+    # negative decimal string (e.g. "-1.00"). The model transcribes the printed
+    # saving here and leaves `total` as the pre-discount price; the server does
+    # the arithmetic (see `_apply_item_discounts`).
+    discount: Optional[str] = None
     # Raw OCR text of the printed receipt row(s) this item came from. Used for
     # debugging and line-item alignment in validation; ignored by splitting.
     receipt_line_text: Optional[str] = None
