@@ -28,3 +28,4 @@ class UserPaymentMethodAdmin(admin.ModelAdmin):
     list_filter = ['provider', 'is_preferred']
     search_fields = ['user__username', 'user__email', 'user__uuid']
     readonly_fields = ['uuid', 'created_at', 'updated_at']
+    raw_id_fields = ['user']
