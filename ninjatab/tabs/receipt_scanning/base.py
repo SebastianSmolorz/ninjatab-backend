@@ -59,7 +59,7 @@ def run_single_ocr(client: Mistral, image_url: str, prompt: str, model: str) -> 
         document=ImageURLChunk(image_url=image_url),
         document_annotation_format=response_format_from_pydantic_model(_Document),
         document_annotation_prompt=prompt,
-        timeout_ms=30_000,
+        timeout_ms=55_000,
     )
     call_ms = int((timezone.now() - started).total_seconds() * 1000)
 
