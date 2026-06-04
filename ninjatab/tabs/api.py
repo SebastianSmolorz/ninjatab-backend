@@ -754,6 +754,10 @@ def upload_receipt(request, tab_id: str, file: UploadedFile = File(...)):
                 properties=scan_metrics,
             )
 
+    # Surface whether a grand total was legibly printed on the receipt as a
+    # top-level field (also present inside document_annotation) so the client can
+    # flag "no total on receipt" without digging into the annotation.
+    result["receipt_total_visible"] = scan_metrics.get("receipt_total_visible")
     result["scan_session_id"] = image_key
     return result
 

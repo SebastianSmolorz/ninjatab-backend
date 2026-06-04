@@ -8,7 +8,10 @@ from django.db.models import F
 
 # Pure receipt-parsing pieces now live in the receipt_scanning package. Re-export
 # the schema and prompt here so existing imports keep working.
-from ninjatab.tabs.receipt_scanning.prompt import DOCUMENT_ANNOTATION_PROMPT  # noqa: F401
+from ninjatab.tabs.receipt_scanning.prompt import (  # noqa: F401
+    DOCUMENT_ANNOTATION_PROMPT,
+    DOCUMENT_ANNOTATION_PROMPT_LITERAL,
+)
 from ninjatab.tabs.receipt_scanning.schema import (  # noqa: F401
     _Document,
     _Item,

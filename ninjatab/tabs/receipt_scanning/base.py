@@ -35,6 +35,8 @@ class ScanContext:
     default_currency: str
     tab_id: str
     s3_base_key: Optional[str] = None  # already-uploaded key; copy source for extra requests
+    deskew_applied: bool = False  # guards against double-deskewing a reused ctx
+    deskew_angle: Optional[float] = None  # detected skew angle, once deskew has run
 
 
 @dataclass
@@ -51,8 +53,9 @@ def mistral_client() -> Mistral:
 
 def run_single_ocr(client: Mistral, image_url: str, prompt: str, model: str) -> dict:
     """Fire one OCR call and return {"annotation": dict|None,
-    "parse_error": bool, "ocr_pages": int, "ocr_markdown_chars": int,
-    "call_ms": int}. Malformed JSON is captured to Sentry, not raised."""
+    "ocr_markdown": str, "parse_error": bool, "ocr_pages": int,
+    "ocr_markdown_chars": int, "call_ms": int}. Malformed JSON is captured to
+    Sentry, not raised."""
     started = timezone.now()
     response = client.ocr.process(
         model=model,
@@ -63,12 +66,17 @@ def run_single_ocr(client: Mistral, image_url: str, prompt: str, model: str) -> 
     )
     call_ms = int((timezone.now() - started).total_seconds() * 1000)
 
+    pages = response.pages or []
+    ocr_markdown = "\n\n".join(p.markdown or "" for p in pages)
+    print(ocr_markdown)
+
     annotation = None
     parse_error = False
     raw = response.document_annotation
     if raw and isinstance(raw, str) and not raw.startswith("~?~"):
         try:
             annotation = json.loads(raw)
+            print(annotation)
         except json.JSONDecodeError as e:
             sentry_sdk.capture_exception(e, contexts={
                 "mistral_ocr": {"raw_length": len(raw), "raw_preview": raw[:500]},
@@ -78,9 +86,10 @@ def run_single_ocr(client: Mistral, image_url: str, prompt: str, model: str) -> 
 
     return {
         "annotation": annotation,
+        "ocr_markdown": ocr_markdown,
         "parse_error": parse_error,
-        "ocr_pages": len(response.pages or []),
-        "ocr_markdown_chars": sum(len(p.markdown or "") for p in (response.pages or [])),
+        "ocr_pages": len(pages),
+        "ocr_markdown_chars": len(ocr_markdown),
         "call_ms": call_ms,
     }
 
@@ -110,10 +119,11 @@ class ReceiptScanStrategy:
     prompt: str = DOCUMENT_ANNOTATION_PROMPT
     model: str = "mistral-ocr-latest"
     version: str = "1"
+    deskew: bool = True  # straighten the receipt text before OCR; skip via deskew=False
 
-    def __init__(self, *, name=None, model=None, prompt=None, version=None):
-        """Optionally override the class-level name/model/prompt/version on a
-        per-instance basis. Unset arguments keep the class default, so existing
+    def __init__(self, *, name=None, model=None, prompt=None, version=None, deskew=None):
+        """Optionally override the class-level name/model/prompt/version/deskew on
+        a per-instance basis. Unset arguments keep the class default, so existing
         zero-arg construction is unchanged. Used by the validation harness to
         define configurable strategy variants."""
         if name is not None:
@@ -124,6 +134,27 @@ class ReceiptScanStrategy:
             self.prompt = prompt
         if version is not None:
             self.version = version
+        if deskew is not None:
+            self.deskew = deskew
+
+    def _maybe_deskew(self, ctx: ScanContext) -> None:
+        """Straighten the receipt text in place, once per ScanContext. Rewrites
+        ctx.image_bytes (and content_type) to the deskewed JPEG and drops
+        s3_base_key so downstream references send the corrected bytes inline
+        rather than the stale S3 original. No-op when disabled or already run."""
+        if not self.deskew or ctx.deskew_applied:
+            return
+        # Imported lazily so the (heavy) cv2/numpy import is paid only when used.
+        from .deskew import deskew_bytes
+
+        deskewed, angle = deskew_bytes(ctx.image_bytes)
+        ctx.deskew_applied = True
+        ctx.deskew_angle = angle
+        if deskewed is not ctx.image_bytes:
+            ctx.image_bytes = deskewed
+            ctx.content_type = "image/jpeg"
+            ctx.s3_base_key = None  # S3 copy is now stale; force inline data URL
+        logger.info("Deskew applied (%s): angle=%.3f°", self.name, angle)
 
     def base_metrics(self, ctx: ScanContext) -> dict:
         return {
@@ -138,6 +169,8 @@ class ReceiptScanStrategy:
             "ocr_markdown_chars": 0,
             "mistral_call_ms": None,
             "date_parsed": False,
+            "deskew_applied": ctx.deskew_applied,
+            "deskew_angle": ctx.deskew_angle,
         }
 
     def run(self, ctx: ScanContext) -> ScanResult:
@@ -166,8 +199,10 @@ class ReceiptScanStrategy:
     # -- stages -----------------------------------------------------------
 
     def pre_process(self, ctx: ScanContext) -> list[str]:
-        """Return the list of image references (URLs) to OCR. Default: one."""
+        """Return the list of image references (URLs) to OCR. Default: one,
+        after straightening the receipt text (unless deskew is disabled)."""
         from .sources import default_ref
+        self._maybe_deskew(ctx)
         return [default_ref(ctx)]
 
     def call_mistral(self, prepared: list[str], ctx: ScanContext) -> list[dict]:

@@ -18,7 +18,9 @@ from .postprocess import (
     _is_reconciled,
     _items_receipt_gap,
     _to_float,
+    candidate_weight,
     field_consensus,
+    merge_candidates_by_voting,
     most_common_consensus,
     recompute_total_match,
     select_best_line_items,
@@ -108,6 +110,50 @@ def _build_result_from_candidates(
     return ScanResult(document_annotation=chosen, date=date_str, metrics=metrics)
 
 
+def _build_result_from_candidates_voted(
+    candidates: list,
+    candidate_metrics: list,
+    ocr_results: list[dict],
+    base_metrics: dict,
+    n_requested: int,
+) -> ScanResult:
+    """Combine candidates via reconciliation-weighted, cell-level voting (see
+    ``merge_candidates_by_voting``): the best-structured candidate provides the
+    row skeleton, then every item field and scalar is voted across the aligned
+    candidates, each weighted by how well its items reconcile to its
+    receipt_total. Drop-in alternative to ``_build_result_from_candidates``."""
+    metrics = dict(base_metrics)
+    metrics.update({
+        "consensus_n_requested": n_requested,
+        "consensus_n_candidates": sum(1 for c in candidates if c is not None),
+        "consensus_candidate_weights": [
+            round(candidate_weight(c), 3) if c else None for c in candidates
+        ],
+        "consensus_selection_method": "cell_voting",
+    })
+
+    anchor_idx, merged = merge_candidates_by_voting(candidates)
+    metrics["consensus_selected_index"] = anchor_idx
+
+    if anchor_idx is None or merged is None:
+        metrics["annotation_parse_error"] = all(o["parse_error"] for o in ocr_results)
+        metrics["consensus_selected_gap"] = None
+        return ScanResult(document_annotation=None, date=parse_receipt_date(None)[0], metrics=metrics)
+
+    chosen_ocr = ocr_results[anchor_idx]
+    metrics["ocr_pages"] = chosen_ocr["ocr_pages"]
+    metrics["ocr_markdown_chars"] = chosen_ocr["ocr_markdown_chars"]
+    metrics["annotation_parse_error"] = chosen_ocr["parse_error"]
+    metrics.update(candidate_metrics[anchor_idx])
+
+    metrics.update(recompute_total_match(merged))
+    metrics["consensus_selected_gap"] = _items_receipt_gap(merged)
+
+    date_str, parsed = parse_receipt_date(merged)
+    metrics["date_parsed"] = parsed
+    return ScanResult(document_annotation=merged, date=date_str, metrics=metrics)
+
+
 def _fire_concurrent(ref: str, n: int, prompt: str, model: str) -> list[dict]:
     """Fire n OCR calls on the same image reference concurrently."""
     client = mistral_client()
@@ -132,11 +178,12 @@ class ConcurrentConsensusStrategy(ReceiptScanStrategy):
 
     name = "concurrent_consensus"
 
-    def __init__(self, n_requests: int = 3, **kwargs):
+    def __init__(self, n_requests: int = 5, **kwargs):
         super().__init__(**kwargs)
         self.n_requests = n_requests
 
     def pre_process(self, ctx: ScanContext) -> list[str]:
+        self._maybe_deskew(ctx)
         return [default_ref(ctx)] * self.n_requests
 
     def call_mistral(self, prepared: list[str], ctx: ScanContext) -> list[dict]:
@@ -150,6 +197,53 @@ class ConcurrentConsensusStrategy(ReceiptScanStrategy):
     def post_process(self, ocr_results: list[dict], ctx: ScanContext) -> ScanResult:
         candidates, candidate_metrics = _postprocess_candidates(ocr_results, ctx)
         return _build_result_from_candidates(
+            candidates, candidate_metrics, ocr_results, self.base_metrics(ctx), self.n_requests,
+        )
+
+
+class MergeConsensusStrategy(ConcurrentConsensusStrategy):
+    """Same N concurrent OCR calls as ConcurrentConsensusStrategy, but combines
+    them by reconciliation-weighted, cell-level voting instead of picking one
+    best candidate wholesale: the best-structured candidate is only a row
+    skeleton, then each item field (text by weighted mode, numbers by weighted
+    median) and each scalar is voted across all candidates, weighting every
+    candidate by how well its items reconcile to its receipt_total. Targets
+    run-to-run numeric variance directly - a single bad pass can't swing a field
+    it is outvoted on, and a non-reconciling pass counts for less.
+
+     How merge_consensus works
+
+  1. Fan out: fire N OCR passes on the same image (default 3), concurrently. Each → a post-processed candidate annotation.
+  2. Weight each pass by trust (candidate_weight): items reconcile to receipt_total → 1.0; otherwise the weight decays with the relative gap (floor 0.25); no receipt_total → 0.5.
+  3. Pick an anchor (select_best_line_items): the best-structured candidate — reconciled, item count equal to the modal count among reconciled passes, has currency/date, smallest gap. This fixes the row skeleton (how many lines, in what order).
+  4. Align every other pass's items onto the anchor's rows by greedy one-to-one name similarity (≥0.5, each result item used once).
+  5. Vote each cell across the aligned passes, weighted by step 2: text (name/translated) by weighted mode, numbers (total, price_per_quantity, quantity) by weighted median. Scalars too: receipt_total by weighted median,
+  currency/establishment/date by mode.
+  6. Recompute items_total and the reconciliation flag from the voted rows.
+
+  The core idea: structure comes from the single best candidate, but every value is a weighted vote — so one pass's bad digit gets out-voted by the median, and a non-reconciling pass counts for less in every vote.
+
+  On unstable items (Pull & Bear)
+
+  Pull & Bear flips between 5 and 6 lines run-to-run because the model sometimes merges two items into one. Here's what merge does:
+
+  - The count is decided by majority, not one pass. The anchor is the candidate whose row count matches the modal reconciled count. If most passes see 6 rows, the skeleton is 6 rows — a pass that merged down to 5 doesn't get to set the structure.
+  (This is why Pull & Bear's count rose to ~0.97.)
+  - A short pass abstains, it doesn't corrupt. A 5-row pass aligns its 5 items onto 5 of the anchor's 6 rows; the 6th row simply receives no cell from it (None) and is filled by the passes that did split it correctly. So a merged-row pass neither
+  drags nor blocks that row — it just doesn't vote there.
+  - Important subtlety — reconciliation weight does not catch merging. Merging two lines keeps the sum unchanged, so a merged pass still reconciles (weight 1.0). That's exactly why the defense is the modal-count anchor selection, not the trust
+  weight.
+
+  Where it still can't help: voting only cleans random disagreement. Pull & Bear's item_total stayed ~0.69 because the contested line is a systematic ambiguity — the model is consistently unsure how to split it, so the majority value is itself
+  wrong, and there's nothing for the median to out-vote. And alignment only ever fills anchor rows — it never adds a row the anchor lacks, so if the majority itself merged, merge inherits that error.
+
+    """
+
+    name = "merge_consensus"
+
+    def post_process(self, ocr_results: list[dict], ctx: ScanContext) -> ScanResult:
+        candidates, candidate_metrics = _postprocess_candidates(ocr_results, ctx)
+        return _build_result_from_candidates_voted(
             candidates, candidate_metrics, ocr_results, self.base_metrics(ctx), self.n_requests,
         )
 
@@ -202,6 +296,7 @@ class TieredConsensusStrategy(ReceiptScanStrategy):
 
     def run(self, ctx: ScanContext) -> ScanResult:
         t0 = timezone.now()
+        self._maybe_deskew(ctx)
         ref = default_ref(ctx)
 
         b1_t = timezone.now()
@@ -296,6 +391,7 @@ class EscalatingStrategy(ReceiptScanStrategy):
 STRATEGIES = [
     BaselineStrategy(),
     ConcurrentConsensusStrategy(),
+    MergeConsensusStrategy(),
     TieredConsensusStrategy(),
     # EscalatingStrategy(),
 ]

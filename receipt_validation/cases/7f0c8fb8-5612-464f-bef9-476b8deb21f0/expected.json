@@ -1,0 +1,145 @@
+{
+  "document_annotation": {
+    "receipt_language": "English",
+    "receipt_language_code": "en",
+    "items": [
+      {
+        "name": "MECAIN FROUGH FRIED",
+        "translated_name": "MECAIN FROUGH FRIED",
+        "pre_discount_line_total": "1.90",
+        "post_discount_line_total": "0.00",
+        "discount": [
+          "-1.90"
+        ],
+        "receipt_line_text": "MECAIN FROUGH FRIED / Mectar Price Saving -\u00a31.90 / +\u00a31.90",
+        "total": "0.00"
+      },
+      {
+        "name": "JS REANGUR SANSANEI",
+        "translated_name": "JS REANGUR SANSANEI",
+        "pre_discount_line_total": "1.90",
+        "post_discount_line_total": "0.00",
+        "discount": [
+          "-1.90"
+        ],
+        "receipt_line_text": "JS REANGUR SANSANEI / Mectar Price Saving -\u00a31.90 / +\u00a31.90",
+        "total": "0.00"
+      },
+      {
+        "name": "JS YTD PASTA FLOOR",
+        "translated_name": "JS YTD PASTA FLOOR",
+        "pre_discount_line_total": "1.90",
+        "post_discount_line_total": "0.00",
+        "discount": [
+          "-1.90"
+        ],
+        "receipt_line_text": "JS YTD PASTA FLOOR / Mectar Price Saving -\u00a31.90 / +\u00a31.90",
+        "total": "0.00"
+      },
+      {
+        "name": "JS YTD TUNN LOAD FLOOR",
+        "translated_name": "JS YTD TUNN LOAD FLOOR",
+        "pre_discount_line_total": "1.90",
+        "post_discount_line_total": "0.00",
+        "discount": [
+          "-1.90"
+        ],
+        "receipt_line_text": "JS YTD TUNN LOAD FLOOR / Mectar Price Saving -\u00a31.90 / +\u00a31.90",
+        "total": "0.00"
+      },
+      {
+        "name": "JS SLID SUN COOK PLYPOWN",
+        "translated_name": "JS SLID SUN COOK PLYPOWN",
+        "pre_discount_line_total": "1.90",
+        "post_discount_line_total": "0.00",
+        "discount": [
+          "-1.90"
+        ],
+        "receipt_line_text": "JS SLID SUN COOK PLYPOWN / Mectar Price Saving -\u00a31.90 / +\u00a31.90",
+        "total": "0.00"
+      },
+      {
+        "name": "MCLIPPIES DAYS EXTING",
+        "translated_name": "MCLIPPIES DAYS EXTING",
+        "pre_discount_line_total": "0.60",
+        "post_discount_line_total": "0.00",
+        "discount": [
+          "-0.60"
+        ],
+        "receipt_line_text": "MCLIPPIES DAYS EXTING / SSTEP Price Saving -\u00a30.60",
+        "total": "0.00"
+      },
+      {
+        "name": "JS FT BURANAGAS",
+        "translated_name": "JS FT BURANAGAS",
+        "pre_discount_line_total": "1.00",
+        "post_discount_line_total": "0.00",
+        "discount": [
+          "-1.00"
+        ],
+        "receipt_line_text": "JS FT BURANAGAS / SSTEP Price Saving -\u00a31.00",
+        "total": "0.00"
+      },
+      {
+        "name": "JS MA MUK 1.136",
+        "translated_name": "JS MA MUK 1.136",
+        "pre_discount_line_total": "1136.00",
+        "post_discount_line_total": "1136.00",
+        "receipt_line_text": "JS MA MUK 1.136",
+        "total": "1136.00"
+      },
+      {
+        "name": "TWIN VEG PIZZA 4060",
+        "translated_name": "TWIN VEG PIZZA 4060",
+        "pre_discount_line_total": "1.95",
+        "post_discount_line_total": "1.95",
+        "receipt_line_text": "TWIN VEG PIZZA 4060 / JE 195",
+        "total": "1.95"
+      },
+      {
+        "name": "TWIN VEG PIZZA 4060",
+        "translated_name": "TWIN VEG PIZZA 4060",
+        "pre_discount_line_total": "1.95",
+        "post_discount_line_total": "1.95",
+        "receipt_line_text": "TWIN VEG PIZZA 4060 / JE 195",
+        "total": "1.95"
+      },
+      {
+        "name": "TWIN VEG PIZZA 4060",
+        "translated_name": "TWIN VEG PIZZA 4060",
+        "pre_discount_line_total": "1.95",
+        "post_discount_line_total": "1.95",
+        "receipt_line_text": "TWIN VEG PIZZA 4060 / JE 195",
+        "total": "1.95"
+      },
+      {
+        "name": "TWIN VEG PIZZA 4060",
+        "translated_name": "TWIN VEG PIZZA 4060",
+        "pre_discount_line_total": "1.95",
+        "post_discount_line_total": "1.95",
+        "receipt_line_text": "TWIN VEG PIZZA 4060 / JE 195",
+        "total": "1.95"
+      },
+      {
+        "name": "TWIN VEG PIZZA 4060",
+        "translated_name": "TWIN VEG PIZZA 4060",
+        "pre_discount_line_total": "1.95",
+        "post_discount_line_total": "1.95",
+        "receipt_line_text": "TWIN VEG PIZZA 4060 / JE 195",
+        "total": "1.95"
+      }
+    ],
+    "receipt_total": "109.48",
+    "receipt_total_visible": false,
+    "receipt_establishment_name": "Sainsbury's",
+    "currency_code": "GBP",
+    "datetime_of_receipt": null,
+    "tax": null,
+    "tip": null,
+    "service_charge": null,
+    "other_charges": null,
+    "ai_items_total": "15.34",
+    "items_total": 1145.75,
+    "totals_reconciled": false
+  }
+}

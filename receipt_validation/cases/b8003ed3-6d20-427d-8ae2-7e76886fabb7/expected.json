@@ -1,0 +1,187 @@
+{
+  "document_annotation": {
+    "receipt_language": "English",
+    "receipt_language_code": "en",
+    "items": [
+      {
+        "name": "Tesco Universal Bag For Life",
+        "translated_name": "Tesco Universal Bag For Life",
+        "pre_discount_line_total": "0.40",
+        "post_discount_line_total": "0.40",
+        "quantity": 1,
+        "price_per_quantity": null,
+        "receipt_line_text": "1 | Tesco Universal Bag For Life | \u00a30.40",
+        "total": "0.40"
+      },
+      {
+        "name": "Tesco British Natural Mineral Water Still 5l",
+        "translated_name": "Tesco British Natural Mineral Water Still 5l",
+        "pre_discount_line_total": "1.80",
+        "post_discount_line_total": "1.80",
+        "quantity": 1,
+        "price_per_quantity": null,
+        "receipt_line_text": "1 | Tesco British Natural Mineral Water Still 5l | \u00a31.80",
+        "total": "1.80"
+      },
+      {
+        "name": "Tesco Free Range Eggs Medium 6 Pack",
+        "translated_name": "Tesco Free Range Eggs Medium 6 Pack",
+        "pre_discount_line_total": "1.90",
+        "post_discount_line_total": "1.90",
+        "quantity": 1,
+        "price_per_quantity": null,
+        "receipt_line_text": "1 | Tesco Free Range Eggs Medium 6 Pack | \u00a31.90",
+        "total": "1.90"
+      },
+      {
+        "name": "Monster Energy Drink Ultra 4x500ml",
+        "translated_name": "Monster Energy Drink Ultra 4x500ml",
+        "pre_discount_line_total": "6.40",
+        "post_discount_line_total": "5.25",
+        "quantity": 1,
+        "price_per_quantity": null,
+        "discount": [
+          "-1.15"
+        ],
+        "receipt_line_text": "1 | Monster Energy Drink Ultra 4x500ml Cc \u00a35.25 | \u00a36.40",
+        "total": "5.25"
+      },
+      {
+        "name": "Tesco Finest Dine In Ranch Steaks With Peppercorn Melt 303g",
+        "translated_name": "Tesco Finest Dine In Ranch Steaks With Peppercorn Melt 303g",
+        "pre_discount_line_total": "8.00",
+        "post_discount_line_total": "8.00",
+        "quantity": 1,
+        "price_per_quantity": null,
+        "receipt_line_text": "1 | Tesco Finest Dine In Ranch Steaks With Peppercorn Melt 303g | \u00a38.00",
+        "total": "8.00"
+      },
+      {
+        "name": "Tesco Closed Cup Mushrooms 300g",
+        "translated_name": "Tesco Closed Cup Mushrooms 300g",
+        "pre_discount_line_total": "0.97",
+        "post_discount_line_total": "0.97",
+        "quantity": 1,
+        "price_per_quantity": null,
+        "receipt_line_text": "1 | Tesco Closed Cup Mushrooms 300g (c) | \u00a30.97 / Special Offer | \u00a30.37",
+        "total": "0.97"
+      },
+      {
+        "name": "Tesco 2 Steak Slice 300g",
+        "translated_name": "Tesco 2 Steak Slice 300g",
+        "pre_discount_line_total": "1.65",
+        "post_discount_line_total": "1.65",
+        "quantity": 1,
+        "price_per_quantity": null,
+        "receipt_line_text": "1 | Tesco 2 Steak Slice 300g | \u00a31.65",
+        "total": "1.65"
+      },
+      {
+        "name": "Banana Each",
+        "translated_name": "Banana Each",
+        "pre_discount_line_total": "1.74",
+        "post_discount_line_total": "1.74",
+        "quantity": 6,
+        "price_per_quantity": "0.29",
+        "receipt_line_text": "6 | Banana Each (c) \u00a30.29 each | \u00a31.74",
+        "total": "1.74"
+      },
+      {
+        "name": "Movitle's Mobnobe Milk Chocolate Biscuits 262g",
+        "translated_name": "Movitle's Mobnobe Milk Chocolate Biscuits 262g",
+        "pre_discount_line_total": "2.60",
+        "post_discount_line_total": "1.85",
+        "quantity": 1,
+        "price_per_quantity": null,
+        "discount": [
+          "-0.75"
+        ],
+        "receipt_line_text": "1 | Movitle's Mobnobe Milk Chocolate Biscuits 262g Cc \u00a31.85 | \u00a32.60",
+        "total": "1.85"
+      },
+      {
+        "name": "7 Days Double Croissant - Cocoa & Vanilla Flavour Fillings 60g",
+        "translated_name": "7 Days Double Croissant - Cocoa & Vanilla Flavour Fillings 60g",
+        "pre_discount_line_total": "0.70",
+        "post_discount_line_total": "0.55",
+        "quantity": 1,
+        "price_per_quantity": null,
+        "discount": [
+          "-0.15"
+        ],
+        "receipt_line_text": "1 | 7 Days Double Croissant - Cocoa & Vanilla Flavour Fillings 60g Cc 55p | \u00a30.70",
+        "total": "0.55"
+      },
+      {
+        "name": "7 Days Croissant With Cocoa Filling 60g",
+        "translated_name": "7 Days Croissant With Cocoa Filling 60g",
+        "pre_discount_line_total": "0.70",
+        "post_discount_line_total": "0.55",
+        "quantity": 1,
+        "price_per_quantity": null,
+        "discount": [
+          "-0.15"
+        ],
+        "receipt_line_text": "1 | 7 Days Croissant With Cocoa Filling 60g Cc 55p | \u00a30.70",
+        "total": "0.55"
+      },
+      {
+        "name": "Tesco Chocolate Chip Brioche Rolls 8 Pack",
+        "translated_name": "Tesco Chocolate Chip Brioche Rolls 8 Pack",
+        "pre_discount_line_total": "1.85",
+        "post_discount_line_total": "1.85",
+        "quantity": 1,
+        "price_per_quantity": null,
+        "receipt_line_text": "1 | Tesco Chocolate Chip Brioche Rolls 8 Pack | \u00a31.85",
+        "total": "1.85"
+      },
+      {
+        "name": "St. Pierre Sliced Brioche Burger Buns 4 Pack",
+        "translated_name": "St. Pierre Sliced Brioche Burger Buns 4 Pack",
+        "pre_discount_line_total": "2.55",
+        "post_discount_line_total": "2.55",
+        "quantity": 1,
+        "price_per_quantity": null,
+        "receipt_line_text": "1 | St. Pierre Sliced Brioche Burger Buns 4 Pack | \u00a32.55",
+        "total": "2.55"
+      },
+      {
+        "name": "Warburtons Twin Sliced Seeded Protein Bagels 4 Pack",
+        "translated_name": "Warburtons Twin Sliced Seeded Protein Bagels 4 Pack",
+        "pre_discount_line_total": "2.10",
+        "post_discount_line_total": "2.10",
+        "quantity": 1,
+        "price_per_quantity": null,
+        "receipt_line_text": "1 | Warburtons Twin Sliced Seeded Protein Bagels 4 Pack | \u00a32.10",
+        "total": "2.10"
+      },
+      {
+        "name": "Tesco Sweet & Salted Popcorn 110g",
+        "translated_name": "Tesco Sweet & Salted Popcorn 110g",
+        "pre_discount_line_total": "0.99",
+        "post_discount_line_total": "0.99",
+        "quantity": 1,
+        "price_per_quantity": null,
+        "receipt_line_text": "1 | Tesco Sweet & Salted Popcorn 110g | \u00a30.99",
+        "total": "0.99"
+      }
+    ],
+    "receipt_total": "28.53",
+    "receipt_establishment_name": "TESCO Trowbridge Frog Rd Express",
+    "currency_code": "GBP",
+    "datetime_of_receipt": "2026-05-23T10:47:00",
+    "tax": null,
+    "tip": null,
+    "service_charge": null,
+    "other_charges": [
+      {
+        "name": "Special Offer",
+        "translated_name": "Special Offer",
+        "amount": "-5.82"
+      }
+    ],
+    "ai_items_total": "28.53",
+    "items_total": 32.15,
+    "totals_reconciled": false
+  }
+}

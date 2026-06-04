@@ -6,6 +6,7 @@ these into a post-processing stage; `standard_post_process` is the default
 composition that mirrors current production behaviour.
 """
 
+import difflib
 import logging
 import re
 from collections import Counter
@@ -26,6 +27,7 @@ NON_CONTRIBUTING_KEYWORDS = (
     "tip", "tips", "gratuity",
     "subtotal", "sub total", "sub-total",
     "discount", "discounts", "voucher", "loyalty", "promo", "promotion",
+    "offer", "saving", "savings", "clubcard", "multibuy", "bogof",
     "rounding",
 )
 
@@ -105,9 +107,14 @@ def _normalize_amounts_in_annotation(annotation: dict) -> None:
         if key in annotation:
             annotation[key] = _normalize_amount_str(annotation[key], dp)
     for item in annotation.get("items") or []:
-        for key in ("total", "price_per_quantity", "discount"):
+        for key in ("total", "pre_discount_line_total", "post_discount_line_total", "price_per_quantity"):
             if key in item:
                 item[key] = _normalize_amount_str(item[key], dp)
+        discount = item.get("discount")
+        if isinstance(discount, list):
+            item["discount"] = [_normalize_amount_str(d, dp) for d in discount]
+        elif discount is not None:
+            item["discount"] = _normalize_amount_str(discount, dp)
     for charge in annotation.get("other_charges") or []:
         if "amount" in charge:
             charge["amount"] = _normalize_amount_str(charge["amount"], dp)
@@ -151,43 +158,97 @@ def _collapse_redundant_translations(annotation: dict) -> None:
             charge["translated_name"] = name
 
 
+def _coerce_item_discounts(value) -> list[float]:
+    """Coerce an item's ``discount`` into a list of non-zero floats. The model is
+    asked for a list of negative strings (one per printed saving), but tolerate a
+    bare string/number too since the raw OCR JSON is not schema-validated."""
+    raw = value if isinstance(value, list) else [value]
+    out = []
+    for entry in raw:
+        amount = _to_float(entry)
+        if amount is not None and amount != 0:
+            out.append(amount)
+    return out
+
+
 def _apply_item_discounts(annotation: dict) -> int:
-    """Fold each item's printed item-level discount into its total.
+    """Resolve each item's canonical net `total` from the model's pre/post line
+    totals and discounts, so downstream (splitting, scoring, items_total) sees a
+    single charged amount per item.
 
-    The model extracts an item's pre-discount `total` plus, when a loyalty/
-    clubcard-style saving is printed against that one item, the saving in
-    `discount` (a negative string). We do the subtraction here rather than
-    asking the model to: net = total - |discount|. The pre-discount amount is
-    preserved in `original_total` for display, and `total` becomes the net
-    amount that feeds splitting and totals reconciliation downstream.
+    The model transcribes a `pre_discount_line_total` (regular printed price) and,
+    when a discounted/charged price is printed, a `post_discount_line_total`
+    (e.g. a Clubcard/CC price), plus any printed savings in `discount`. We pick
+    the net charged amount per the items_total rule:
+      - post_discount_line_total when present;
+      - else pre_discount_line_total when there is no item-level discount;
+      - else (discount present, no printed charged price) pre - sum(|discount|),
+        the only case where the server does the arithmetic.
+    `total` is set to the net charged amount, the normalized `pre_discount_line_total`
+    and `post_discount_line_total` (= net) are kept in the output so the full
+    breakdown is visible, and `discount` holds the list of individual savings
+    (synthesized from the pre/post gap when the model gave no explicit saving).
 
-    A discount that meets or exceeds the line total is almost certainly a
-    misparse, so it is dropped and the item left untouched. Returns the number
-    of items that had a discount applied. Mutates annotation in place."""
+    Discounts that meet or exceed the line total are almost certainly a misparse,
+    so they are dropped and the pre-discount price kept. An item that already
+    carries a `total` (e.g. a synthesized total-only item) and no pre/post is left
+    untouched. Returns the number of items that ended up with a discount. Mutates
+    annotation in place."""
     dp = _annotation_decimals(annotation)
-    applied = 0
+    discounted = 0
     for item in annotation.get("items") or []:
-        discount = _to_float(item.get("discount"))
-        if discount is None or discount == 0:
-            item.pop("discount", None)
-            continue
-        total = _to_float(item.get("total"))
-        if total is None:
-            item.pop("discount", None)
-            continue
-        net = round(total - abs(discount), dp)
-        if net < 0:
+        discounts = _coerce_item_discounts(item.get("discount"))
+        pre = _to_float(item.get("pre_discount_line_total"))
+        post = _to_float(item.get("post_discount_line_total"))
+        saving = sum(abs(d) for d in discounts)
+
+        if post is not None:
+            net = post
+        elif pre is not None and not discounts:
+            net = pre
+        elif pre is not None:
+            net = round(pre - saving, dp)
+        else:
+            # No pre/post from the model: keep any pre-existing `total` as-is.
+            net = _to_float(item.get("total"))
+
+        # Drop savings that don't reconcile with the printed prices (misparse).
+        if discounts and net is not None and net < 0:
             logger.warning(
-                "Item discount %s exceeds total %s for %r; dropping discount",
-                discount, total, item.get("name"),
+                "Item discount(s) %s exceed line total (pre=%s post=%s) for %r; dropping discount",
+                discounts, pre, post, item.get("name"),
             )
+            discounts = []
+            net = pre if pre is not None else _to_float(item.get("total"))
+
+        if net is not None:
+            item["total"] = f"{net:.{dp}f}"
+
+        # When the model gives a charged price below the regular price but no
+        # explicit saving line, surface the implied saving so it is itemised and
+        # visible (e.g. a transcribed Clubcard/CC price with no separate "-x.xx").
+        if not discounts and pre is not None and net is not None and round(pre - net, dp) >= 10 ** -dp:
+            discounts = [-round(pre - net, dp)]
+
+        # Keep the resolved pre/post line totals in the saved annotation so the
+        # full discount breakdown is visible. post mirrors the net charged amount
+        # (`total`); `original_total` would duplicate pre, so it is dropped.
+        if pre is not None:
+            item["pre_discount_line_total"] = f"{pre:.{dp}f}"
+        else:
+            item.pop("pre_discount_line_total", None)
+        if net is not None:
+            item["post_discount_line_total"] = f"{net:.{dp}f}"
+        else:
+            item.pop("post_discount_line_total", None)
+        item.pop("original_total", None)
+
+        if discounts:
+            item["discount"] = [f"{-abs(d):.{dp}f}" for d in discounts]
+            discounted += 1
+        else:
             item.pop("discount", None)
-            continue
-        item["original_total"] = f"{total:.{dp}f}"
-        item["discount"] = f"{-abs(discount):.{dp}f}"
-        item["total"] = f"{net:.{dp}f}"
-        applied += 1
-    return applied
+    return discounted
 
 
 def _to_float(value) -> Optional[float]:
@@ -203,8 +264,19 @@ def _to_float(value) -> Optional[float]:
         return None
 
 
+def _item_charged_total(item: dict) -> Optional[float]:
+    """The amount an item contributes to items_total: the post-discount (charged)
+    line total when available, falling back to the resolved net `total`, then to
+    the pre-discount line total."""
+    for key in ("post_discount_line_total", "total", "pre_discount_line_total"):
+        value = _to_float(item.get(key))
+        if value is not None:
+            return value
+    return None
+
+
 def _items_sum(items: list[dict], decimals: int = 2) -> float:
-    return round(sum(_to_float(i.get("total")) or 0 for i in items), decimals)
+    return round(sum(_item_charged_total(i) or 0 for i in items), decimals)
 
 
 def _reconcile_items_with_total(annotation: dict) -> list[dict]:
@@ -299,6 +371,7 @@ def standard_post_process(annotation: dict, default_currency: str) -> dict:
         "items_total": None,
         "ai_items_total": None,
         "receipt_total": None,
+        "receipt_total_visible": None,      # model's report of whether a grand total is legibly printed
         "items_match_receipt_total": None,  # None when receipt_total absent
         "items_receipt_gap": None,
         "ai_vs_server_total_divergence": None,
@@ -359,6 +432,7 @@ def standard_post_process(annotation: dict, default_currency: str) -> dict:
     metrics["items_total"] = items_total_f
     metrics["ai_items_total"] = ai_items_total_f
     metrics["receipt_total"] = receipt_total_f
+    metrics["receipt_total_visible"] = annotation.get("receipt_total_visible")
     if receipt_total_f is not None and items_total_f is not None:
         gap = round(items_total_f - receipt_total_f, 6)
         metrics["items_receipt_gap"] = gap
@@ -501,3 +575,154 @@ def most_common_consensus(candidates: list[dict]) -> Optional[int]:
         if score > best_score:
             best_score, best_idx = score, idx
     return best_idx
+
+
+# --- reconciliation-weighted, cell-level consensus -------------------------
+#
+# The selection-based consensus above takes one candidate's items wholesale.
+# The voting consensus below instead keeps the best candidate only as a row
+# skeleton and votes each cell across all candidates, weighting every candidate
+# by how well its items reconcile to its receipt_total. Text fields use a
+# weighted mode, numeric fields a weighted median, so a single bad pass cannot
+# swing a field it is outvoted on.
+
+def candidate_weight(annotation: Optional[dict]) -> float:
+    """Trust weight for a candidate: 1.0 when its items reconcile to
+    receipt_total, decaying with the relative gap (floored so an unreconciled
+    candidate still contributes a little), 0.5 when there is no receipt_total to
+    check against, 0.0 for a missing candidate."""
+    if not annotation:
+        return 0.0
+    gap = _items_receipt_gap(annotation)
+    if gap is None:
+        return 0.5
+    if gap < _annotation_tolerance(annotation):
+        return 1.0
+    receipt_total = _to_float(annotation.get("receipt_total")) or 0.0
+    rel = gap / receipt_total if receipt_total else 1.0
+    return max(0.25, 1.0 - rel)
+
+
+def _weighted_mode(values_weights) -> Optional[object]:
+    """Value with the highest summed weight (ties broken by first appearance).
+    None values are ignored."""
+    totals: dict = {}
+    order: list = []
+    for value, weight in values_weights:
+        if value is None:
+            continue
+        if value not in totals:
+            totals[value] = 0.0
+            order.append(value)
+        totals[value] += weight
+    if not order:
+        return None
+    return max(order, key=lambda v: totals[v])
+
+
+def _weighted_median(values_weights) -> Optional[float]:
+    """Weighted median of numeric (value, weight) pairs. None if no values."""
+    pairs = sorted((v, w) for v, w in values_weights if v is not None and w > 0)
+    if not pairs:
+        return None
+    half = sum(w for _, w in pairs) / 2.0
+    cumulative = 0.0
+    for value, weight in pairs:
+        cumulative += weight
+        if cumulative >= half:
+            return value
+    return pairs[-1][0]
+
+
+def _align_to_anchor(anchor_items: list[dict], other_items: list[dict]) -> list[Optional[dict]]:
+    """Greedy one-to-one alignment of ``other_items`` onto ``anchor_items`` by
+    name similarity. Returns a list parallel to ``anchor_items`` holding the
+    matched other-item (or None when nothing matches above a minimal similarity,
+    so unrelated rows are not forced together)."""
+    remaining = list(range(len(other_items)))
+    matched: list[Optional[dict]] = []
+    for anchor_item in anchor_items:
+        anchor_name = (anchor_item.get("name") or "").lower()
+        best_j, best_score = None, -1.0
+        for j in remaining:
+            other_name = (other_items[j].get("name") or "").lower()
+            score = difflib.SequenceMatcher(None, anchor_name, other_name).ratio()
+            if score > best_score:
+                best_score, best_j = score, j
+        if best_j is not None and best_score >= 0.5:
+            remaining.remove(best_j)
+            matched.append(other_items[best_j])
+        else:
+            matched.append(None)
+    return matched
+
+
+def _vote_item(anchor_item: dict, cells: list[tuple[dict, float]], decimals: int) -> dict:
+    """Vote one merged item from aligned (item, weight) cells. Starts from the
+    anchor row, then overlays voted core fields: text by weighted mode, numerics
+    by weighted median, formatted to the receipt currency's precision."""
+    item = dict(anchor_item)
+    for key in ("name", "translated_name"):
+        voted = _weighted_mode((it.get(key), w) for it, w in cells)
+        if voted is not None:
+            item[key] = voted
+    for key in ("total", "pre_discount_line_total", "price_per_quantity"):
+        voted = _weighted_median((_to_float(it.get(key)), w) for it, w in cells)
+        if voted is not None:
+            item[key] = f"{voted:.{decimals}f}"
+    quantity = _weighted_median((_to_float(it.get("quantity")), w) for it, w in cells)
+    if quantity is not None:
+        item["quantity"] = int(quantity) if float(quantity).is_integer() else quantity
+
+    # Keep the discount breakdown consistent with the voted prices: the charged
+    # (post-discount) total mirrors the voted net `total`, and the saving is
+    # re-derived from the voted pre/post gap.
+    total = _to_float(item.get("total"))
+    pre = _to_float(item.get("pre_discount_line_total"))
+    if total is not None:
+        item["post_discount_line_total"] = f"{total:.{decimals}f}"
+        if pre is not None and round(pre - total, decimals) >= 10 ** -decimals:
+            item["discount"] = [f"{-round(pre - total, decimals):.{decimals}f}"]
+        else:
+            item.pop("discount", None)
+    return item
+
+
+def merge_candidates_by_voting(candidates: list[dict]) -> tuple[Optional[int], Optional[dict]]:
+    """Reconciliation-weighted, cell-level consensus across candidates.
+
+    Uses the best-structured candidate (``select_best_line_items``) as the row
+    skeleton, aligns every candidate's items onto it, then votes each item field
+    and each scalar field across the aligned candidates — each candidate weighted
+    by ``candidate_weight``. Returns (anchor_index, merged_annotation), or
+    (None, None) when no candidate is usable."""
+    anchor_idx = select_best_line_items(candidates)
+    if anchor_idx is None:
+        return None, None
+
+    anchor = candidates[anchor_idx]
+    weighted = [(c, candidate_weight(c)) for c in candidates if c]
+    decimals = _annotation_decimals(anchor)
+    anchor_items = anchor.get("items") or []
+
+    aligned = [(_align_to_anchor(anchor_items, c.get("items") or []), w) for c, w in weighted]
+
+    merged_items = []
+    for row, anchor_item in enumerate(anchor_items):
+        cells = [(matched[row], w) for matched, w in aligned if matched[row] is not None]
+        if not cells:
+            cells = [(anchor_item, candidate_weight(anchor) or 1.0)]
+        merged_items.append(_vote_item(anchor_item, cells, decimals))
+
+    merged = dict(anchor)
+    merged["items"] = merged_items
+
+    receipt_total = _weighted_median((_to_float(c.get("receipt_total")), w) for c, w in weighted)
+    if receipt_total is not None:
+        merged["receipt_total"] = f"{receipt_total:.{decimals}f}"
+    for key in ("currency_code", "receipt_establishment_name", "datetime_of_receipt"):
+        voted = _weighted_mode((c.get(key), w) for c, w in weighted)
+        if voted is not None:
+            merged[key] = voted
+
+    return anchor_idx, merged

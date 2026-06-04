@@ -1,0 +1,35 @@
+{
+  "document_annotation": {
+    "receipt_language": "English",
+    "receipt_language_code": "en",
+    "items": [
+      {
+        "name": "Veggie Patty Sub",
+        "translated_name": "Veggie Patty Sub",
+        "total": "14.50",
+        "quantity": 1,
+        "price_per_quantity": "14.50",
+        "receipt_line_text": "1 | 12\" | Veggie Patty Sub | $14.50"
+      },
+      {
+        "name": "RothsStylChkn Sub",
+        "translated_name": "6\" Rotisserie Style Chicken Sub",
+        "total": "11.95",
+        "quantity": 1,
+        "price_per_quantity": "11.95",
+        "receipt_line_text": "1 | 6\" | RothsStylChkn Sub | $11.95"
+      }
+    ],
+    "receipt_total": "26.45",
+    "receipt_establishment_name": "Subway",
+    "currency_code": "AUD",
+    "datetime_of_receipt": "2015-06-01T04:50:29",
+    "tax": "2.40",
+    "tip": null,
+    "service_charge": null,
+    "other_charges": null,
+    "ai_items_total": "26.45",
+    "items_total": 26.45,
+    "totals_reconciled": true
+  }
+}

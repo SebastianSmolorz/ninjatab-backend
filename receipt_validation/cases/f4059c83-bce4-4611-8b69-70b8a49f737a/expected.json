@@ -1,0 +1,145 @@
+{
+  "document_annotation": {
+    "receipt_language": "English",
+    "receipt_language_code": "en",
+    "items": [
+      {
+        "name": "CP 2 PINT WHOLE",
+        "translated_name": "Co-op 2 PINT WHOLE",
+        "pre_discount_line_total": "1.20",
+        "post_discount_line_total": "1.20",
+        "quantity": 1,
+        "price_per_quantity": null,
+        "receipt_line_text": "1 | CP 2 PINT WHOLE | \u00a31.20 | \u00a31.20 B",
+        "total": "1.20"
+      },
+      {
+        "name": "BirdsE Cod FishF",
+        "translated_name": "Birds Eye Cod Fillet",
+        "pre_discount_line_total": "4.25",
+        "post_discount_line_total": "4.25",
+        "quantity": 1,
+        "price_per_quantity": null,
+        "receipt_line_text": "1 | BirdsE Cod FishF | \u00a34.25 | \u00a34.25 B",
+        "total": "4.25"
+      },
+      {
+        "name": "Bahlsn Dark Choc",
+        "translated_name": "Bahlsen Dark Chocolate",
+        "pre_discount_line_total": "2.40",
+        "post_discount_line_total": "2.40",
+        "quantity": 1,
+        "price_per_quantity": null,
+        "receipt_line_text": "1 | Bahlsn Dark Choc | \u00a32.40 | \u00a32.40 R",
+        "total": "2.40"
+      },
+      {
+        "name": "Bahlsn Dark Choc",
+        "translated_name": "Bahlsen Dark Chocolate",
+        "pre_discount_line_total": "2.40",
+        "post_discount_line_total": "2.40",
+        "quantity": 1,
+        "price_per_quantity": null,
+        "receipt_line_text": "1 | Bahlsn Dark Choc | \u00a32.40 | \u00a32.40 R",
+        "total": "2.40"
+      },
+      {
+        "name": "CP KING PRAWNS",
+        "translated_name": "Co-op King Prawns",
+        "pre_discount_line_total": "4.25",
+        "post_discount_line_total": "4.25",
+        "quantity": 1,
+        "price_per_quantity": null,
+        "receipt_line_text": "1 | CP KING PRAWNS | \u00a34.25 | \u00a34.25 B",
+        "total": "4.25"
+      },
+      {
+        "name": "CP CKN MORS 400G",
+        "translated_name": "CP Chicken Morsels 400G",
+        "pre_discount_line_total": "4.00",
+        "post_discount_line_total": "4.00",
+        "quantity": 1,
+        "price_per_quantity": null,
+        "receipt_line_text": "1 | CP CKN MORS 400G | \u00a34.00 | \u00a34.00 B",
+        "total": "4.00"
+      },
+      {
+        "name": "CP I Chrry TOMTO",
+        "translated_name": "Co-op Cherry Tomatoes",
+        "pre_discount_line_total": "2.35",
+        "post_discount_line_total": "2.35",
+        "quantity": 1,
+        "price_per_quantity": null,
+        "receipt_line_text": "1 | CP I Chrry TOMTO | \u00a32.35 | \u00a32.35 B",
+        "total": "2.35"
+      },
+      {
+        "name": "CP IRR B Potatoe",
+        "translated_name": "Co-op Irregular Baby Potatoes",
+        "pre_discount_line_total": "1.90",
+        "post_discount_line_total": "1.90",
+        "quantity": 1,
+        "price_per_quantity": null,
+        "receipt_line_text": "1 | CP IRR B Potatoe | \u00a31.90 | \u00a31.90 B",
+        "total": "1.90"
+      },
+      {
+        "name": "AMB RICE POT",
+        "translated_name": "Ambient Rice Pot",
+        "pre_discount_line_total": "1.10",
+        "post_discount_line_total": "1.10",
+        "quantity": 1,
+        "price_per_quantity": null,
+        "receipt_line_text": "1 | AMB RICE POT | \u00a31.10 | \u00a31.10 B",
+        "total": "1.10"
+      },
+      {
+        "name": "AMB RICE POT",
+        "translated_name": "Ambient Rice Pot",
+        "pre_discount_line_total": "1.10",
+        "post_discount_line_total": "1.10",
+        "quantity": 1,
+        "price_per_quantity": null,
+        "receipt_line_text": "1 | AMB RICE POT | \u00a31.10 | \u00a31.10 B",
+        "total": "1.10"
+      },
+      {
+        "name": "CP FRSH PRSLY",
+        "translated_name": "Co-op Fresh Parsley",
+        "pre_discount_line_total": "0.65",
+        "post_discount_line_total": "0.65",
+        "quantity": 1,
+        "price_per_quantity": null,
+        "receipt_line_text": "1 | CP FRSH PRSLY | \u00a30.65 | \u00a30.65 B",
+        "total": "0.65"
+      },
+      {
+        "name": "CP WHITE SOURDOU",
+        "translated_name": "Co-op White Sourdough",
+        "pre_discount_line_total": "2.75",
+        "post_discount_line_total": "2.75",
+        "quantity": 1,
+        "price_per_quantity": null,
+        "receipt_line_text": "1 | CP WHITE SOURDOU | \u00a32.75 | \u00a32.75 B",
+        "total": "2.75"
+      }
+    ],
+    "receipt_total": "27.90",
+    "receipt_establishment_name": "Co-op",
+    "currency_code": "GBP",
+    "datetime_of_receipt": "2022-05-26T16:46:33",
+    "tax": null,
+    "tip": null,
+    "service_charge": null,
+    "other_charges": [
+      {
+        "name": "Multi-save",
+        "translated_name": "Multi-save",
+        "amount": "-0.45"
+      }
+    ],
+    "ai_items_total": "27.90",
+    "items_total": 28.35,
+    "totals_reconciled": false
+  }
+}

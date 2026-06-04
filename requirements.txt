@@ -25,6 +25,8 @@ importlib_metadata==8.7.1
 invoke==2.2.1
 jmespath==1.1.0
 mistralai==2.4.5
+numpy==2.4.6
+opencv-python-headless==4.13.0.92
 opentelemetry-api==1.39.1
 opentelemetry-exporter-otlp-proto-common==1.39.1
 opentelemetry-exporter-otlp-proto-http==1.39.1

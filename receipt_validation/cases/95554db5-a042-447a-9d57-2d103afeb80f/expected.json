@@ -1,0 +1,71 @@
+{
+  "document_annotation": {
+    "receipt_language": "English",
+    "receipt_language_code": "en",
+    "items": [
+      {
+        "name": "CUSHEL Q/TOILT RX12",
+        "translated_name": "Cushel Toilet Tissue RX12",
+        "pre_discount_line_total": "13.25",
+        "post_discount_line_total": "9.25",
+        "discount": [
+          "-4.00"
+        ],
+        "receipt_line_text": "*CUSHEL Q/TOILT RX12 \u00a313.25 / Nectar Price Saving -\u00a34.00",
+        "total": "9.25",
+        "quantity": 1
+      },
+      {
+        "name": "TTD OLIVE BREAD 400G",
+        "translated_name": "Tesco Olive Bread 400g",
+        "pre_discount_line_total": "2.10",
+        "post_discount_line_total": "2.10",
+        "receipt_line_text": "TTD OLIVE BREAD 400G \u00a32.10",
+        "total": "2.10",
+        "quantity": 1
+      },
+      {
+        "name": "JS BLUEBERRY MUFINX4",
+        "translated_name": "Jus Rol Blueberry Muffins x4",
+        "pre_discount_line_total": "2.00",
+        "post_discount_line_total": "1.00",
+        "discount": [
+          "-1.00"
+        ],
+        "receipt_line_text": "JS BLUEBERRY MUFINX4 \u00a32.00 / Nectar Price Saving -\u00a31.00",
+        "total": "1.00",
+        "quantity": 1
+      },
+      {
+        "name": "TTD BRIO BURG BUNX4",
+        "translated_name": "Tesco Brio Burger Buns x4",
+        "pre_discount_line_total": "1.50",
+        "post_discount_line_total": "1.00",
+        "discount": [
+          "-0.50"
+        ],
+        "receipt_line_text": "TTD BRIO BURG BUNX4 \u00a31.50 / Nectar Price Saving -\u00a30.50",
+        "total": "1.00",
+        "quantity": 1
+      }
+    ],
+    "receipt_total": "13.35",
+    "receipt_total_visible": true,
+    "receipt_establishment_name": "Sainsbury's",
+    "currency_code": "GBP",
+    "datetime_of_receipt": "2026-05-29T12:22:29",
+    "tax": null,
+    "tip": null,
+    "service_charge": null,
+    "other_charges": [
+      {
+        "name": "PROMOTIONS",
+        "translated_name": "PROMOTIONS",
+        "amount": "-5.50"
+      }
+    ],
+    "ai_items_total": "13.35",
+    "items_total": 13.35,
+    "totals_reconciled": true
+  }
+}
