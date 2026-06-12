@@ -19,7 +19,7 @@ from django.conf import settings
 from django.contrib import admin
 from django.urls import path
 
-from ninjatab.tabs.api import tab_router, bill_router
+from ninjatab.tabs.api import tab_router, bill_router, group_router
 from ninjatab.utilities.api import config_router, health_router
 from ninjatab.auth.api import auth_router
 from ninjatab.marketing.api import marketing_router
@@ -28,6 +28,7 @@ from ninja import NinjaAPI
 api = NinjaAPI(docs_url="/docs" if settings.DEBUG else None)
 api.add_router("/tabs", tab_router)
 api.add_router("/bills", bill_router)
+api.add_router("/groups", group_router)
 api.add_router("/auth", auth_router)
 api.add_router("/marketing", marketing_router)
 api.add_router("/config", config_router)

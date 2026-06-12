@@ -442,6 +442,8 @@ class TabSchema(BaseModel):
     totals_by_currency_display: dict[str, Decimal] = {}
     group_spend: Optional[int] = None
     group_spend_display: Optional[Decimal] = None
+    group_id: Optional[str] = None
+    period_index: Optional[int] = None
     user_owes: int = 0
     user_owes_display: Decimal = Decimal('0')
     user_owed: int = 0
@@ -511,6 +513,8 @@ class TabSchema(BaseModel):
                     'totals_by_currency_display': totals_by_currency_display,
                     'group_spend': group_spend_val,
                     'group_spend_display': group_spend_display,
+                    'group_id': str(data.group.uuid) if data.group_id else None,
+                    'period_index': data.period_index,
                     'user_owes': user_owes,
                     'user_owes_display': minor_to_decimal(user_owes, settlement_currency) or Decimal('0'),
                     'user_owed': user_owed,
@@ -532,6 +536,7 @@ class TabListSchema(BaseModel):
     is_archived: bool
     is_pro: bool
     is_demo: bool
+    period_index: Optional[int] = None
     bill_count: int
     people_count: int
     all_settlements_paid: bool = True
@@ -554,6 +559,118 @@ class TabCreateSchema(BaseModel):
 
 class TabUpdateSchema(BaseModel):
     settlement_currency: CurrencyEnum = None
+
+
+# ---------------------------------------------------------------------------
+# House (TabGroup) schemas
+# ---------------------------------------------------------------------------
+
+class GroupMemberSchema(BaseModel):
+    id: str
+    name: str
+    user: Optional[UserSchema] = None
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+    @model_validator(mode='before')
+    @classmethod
+    def extract(cls, data: Any) -> Any:
+        if hasattr(data, 'uuid'):
+            return {
+                'id': str(data.uuid),
+                'name': data.name,
+                'user': data.user,
+                'created_at': data.created_at,
+                'updated_at': data.updated_at,
+            }
+        return data
+
+
+class PeriodSummarySchema(BaseModel):
+    id: str
+    name: str
+    period_index: Optional[int] = None
+    is_settled: bool
+    is_archived: bool
+    bill_count: int = 0
+    settlement_currency: CurrencyEnum
+    settlement_currency_settled_total: Optional[int] = None
+    settlement_currency_settled_total_display: Optional[Decimal] = None
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+    @model_validator(mode='before')
+    @classmethod
+    def extract(cls, data: Any) -> Any:
+        if hasattr(data, 'uuid') and hasattr(data, 'is_settled'):
+            settled_total = data.settlement_currency_settled_total
+            return {
+                'id': str(data.uuid),
+                'name': data.name,
+                'period_index': data.period_index,
+                'is_settled': data.is_settled,
+                'is_archived': data.is_archived,
+                'bill_count': len(data.bills.all()),
+                'settlement_currency': data.settlement_currency,
+                'settlement_currency_settled_total': settled_total,
+                'settlement_currency_settled_total_display': minor_to_decimal(
+                    settled_total, data.settlement_currency
+                ),
+                'created_at': data.created_at,
+                'updated_at': data.updated_at,
+            }
+        return data
+
+
+class GroupDetailSchema(BaseModel):
+    id: str
+    name: str
+    description: str
+    default_currency: CurrencyEnum
+    settlement_currency: CurrencyEnum
+    invite_code: Optional[str] = None
+    is_archived: bool
+    members: List[GroupMemberSchema]
+    current_period: Optional[PeriodSummarySchema] = None
+    periods: List[PeriodSummarySchema] = []
+    group_total_spend: int = 0
+    group_total_spend_display: Optional[Decimal] = None
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class GroupListSchema(BaseModel):
+    id: UUID = Field(validation_alias="uuid")
+    name: str
+    description: str
+    default_currency: CurrencyEnum
+    settlement_currency: CurrencyEnum
+    is_archived: bool
+    member_count: int = 0
+    period_count: int = 0
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class GroupCreateSchema(BaseModel):
+    name: str
+    description: str = ""
+    default_currency: CurrencyEnum = CurrencyEnum.GBP
+    settlement_currency: CurrencyEnum = CurrencyEnum.GBP
+    members: List[TabPersonCreateSchema] = Field(min_length=1)
+
+
+class GroupMemberCreateSchema(BaseModel):
+    name: str
+    user_id: Optional[str] = None
 
 
 class SettlementSchema(BaseModel):
@@ -671,4 +788,16 @@ class ContactSchema(BaseModel):
 
 class ClaimInviteSchema(BaseModel):
     person_id: str
+    email: EmailStr
+
+
+class GroupInviteInfoSchema(BaseModel):
+    group_id: str
+    group_name: str
+    members: List[InvitePersonSchema]
+    user_already_member: bool = False
+
+
+class ClaimGroupInviteSchema(BaseModel):
+    member_id: str
     email: EmailStr

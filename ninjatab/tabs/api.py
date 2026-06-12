@@ -17,6 +17,7 @@ from django.contrib.auth import get_user_model
 
 from ninjatab.tabs.models import *
 from ninjatab.tabs.schemas import *
+from ninjatab.currencies.currency_utils import minor_to_decimal
 from ninjatab.tabs.simp import simp_tab
 from ninjatab.currencies.exchange import convert_amount, ExchangeRateNotFoundError, clear_rate_cache
 from ninjatab.auth.bearer import JWTBearer
@@ -30,6 +31,7 @@ User = get_user_model()
 
 tab_router = Router(tags=["tabs"], auth=JWTBearer())
 bill_router = Router(tags=["bills"], auth=JWTBearer())
+group_router = Router(tags=["groups"], auth=JWTBearer())
 
 logger = logging.getLogger("app")
 
@@ -38,6 +40,22 @@ TABS_PAGE_SIZE = 5
 
 TAB_CURSOR_ORDER = '-created_at,-id'
 BILL_CURSOR_ORDER = '-date,-id'
+
+
+def _annotate_tab_list(qs):
+    """Annotate a Tab queryset with the counts TabListSchema needs."""
+    unpaid_settlements = Settlement.objects.filter(tab=OuterRef('pk'), paid=False)
+    people_count_subquery = Subquery(
+        TabPerson.objects.filter(tab=OuterRef('pk')).values('tab').annotate(c=Count('id')).values('c'),
+        output_field=IntegerField(),
+    )
+    return qs.annotate(
+        bill_count=Count('bills', distinct=True),
+        people_count=people_count_subquery,
+        all_settlements_paid=~Exists(unpaid_settlements),
+        paid_settlements_count=Count('settlements', filter=Q(settlements__paid=True), distinct=True),
+        total_settlements_count=Count('settlements', distinct=True),
+    )
 
 
 def _apply_tab_cursor(qs, cursor: str | None):
@@ -115,6 +133,72 @@ def _sync_contacts_for_tab(tab):
             Contact.objects.get_or_create(owner_id=uid_b, contact_user_id=uid_a)
 
 
+def _close_tab(tab, actor):
+    """Settle a tab in place: snapshot total spend, freeze it, emit analytics.
+
+    `tab` must already be loaded. Raises HttpError(400) if it has no settleable
+    bills. Shared by the `/close` endpoint and the house period-roll flow.
+    """
+    bills = list(tab.bills.prefetch_related('line_items').exclude(status=BillStatus.ARCHIVED.value))
+    if not bills:
+        raise HttpError(400, "Cannot settle a tab with no bills")
+
+    # Snapshot total spent in settlement currency (minor units)
+    total = 0
+    for bill in bills:
+        bill_total = sum((li.value or 0) for li in bill.line_items.all())
+        if bill.currency != tab.settlement_currency:
+            bill_total = convert_amount(bill_total, bill.currency, tab.settlement_currency)
+        total += bill_total
+
+    tab.is_settled = True
+    tab.settlement_currency_settled_total = total
+    tab.save()
+
+    safe_capture(getattr(actor, "uuid", None), "tab_settled", properties={
+        "tab_id": str(tab.uuid),
+        "bill_count": len(bills),
+        "settlement_currency": tab.settlement_currency,
+        "total_minor_units": total,
+    })
+    return total
+
+
+def _create_period_tab(group, base_name, period_index=1):
+    """Create a fresh period Tab for a house and project the roster into it.
+
+    Copies each TabGroupMember to a TabPerson (name + user link, traced via the
+    `member` FK). The new tab starts empty of bills.
+    """
+    tab = Tab.objects.create(
+        name=base_name,
+        default_currency=group.default_currency,
+        settlement_currency=group.settlement_currency,
+        created_by=group.created_by,
+        group=group,
+        period_index=period_index,
+    )
+    for member in group.members.all():
+        TabPerson.objects.create(
+            tab=tab,
+            name=member.name,
+            user=member.user,
+            member=member,
+        )
+    _sync_contacts_for_tab(tab)
+    return tab
+
+
+def _serialize_tab(tab_id):
+    """Re-fetch a tab by pk with the standard prefetch set used for TabSchema."""
+    return Tab.objects.select_related('group').prefetch_related(
+        'people__user',
+        'bills__line_items',
+        'settlements__from_person__user',
+        'settlements__to_person__user__payment_methods',
+    ).get(id=tab_id)
+
+
 @tab_router.post("/", response=TabSchema)
 @transaction.atomic
 def create_tab(request, payload: TabCreateSchema):
@@ -162,19 +246,17 @@ def create_tab(request, payload: TabCreateSchema):
 
 @tab_router.get("/", response=CursorPageSchema[TabListSchema])
 def list_tabs(request, cursor: str = None, archived: bool = False):
-    """List tabs. Pass ?archived=true to list archived (deleted) tabs instead of active ones."""
-    unpaid_settlements = Settlement.objects.filter(tab=OuterRef('pk'), paid=False)
-    people_count_subquery = Subquery(
-        TabPerson.objects.filter(tab=OuterRef('pk')).values('tab').annotate(c=Count('id')).values('c'),
-        output_field=IntegerField(),
+    """List the user's standalone tabs (one entry per tab).
+
+    House periods are deliberately excluded — they belong to a house (TabGroup)
+    and are surfaced via ``GET /groups/`` and ``GET /groups/{id}/periods``. Pass
+    ?archived=true to list archived (deleted) tabs instead of active ones.
+    """
+    qs = (
+        Tab.objects.accessible_by(request.auth)
+        .filter(is_archived=archived, group__isnull=True)
     )
-    qs = Tab.objects.accessible_by(request.auth).filter(is_archived=archived).annotate(
-        bill_count=Count('bills', distinct=True),
-        people_count=people_count_subquery,
-        all_settlements_paid=~Exists(unpaid_settlements),
-        paid_settlements_count=Count('settlements', filter=Q(settlements__paid=True), distinct=True),
-        total_settlements_count=Count('settlements', distinct=True),
-    )
+    qs = _annotate_tab_list(qs)
     items, next_cursor = _apply_tab_cursor(qs, cursor)
     return {"items": items, "next_cursor": next_cursor}
 
@@ -332,40 +414,48 @@ def close_tab(request, tab_id: str):
         ),
         uuid=tab_id,
     )
-    # Prevent settling a tab with no bills
-    bills = list(tab.bills.prefetch_related('line_items').exclude(status=BillStatus.ARCHIVED.value))
-    if not bills:
-        raise HttpError(400, "Cannot settle a tab with no bills")
 
-    # Snapshot total spent in settlement currency (minor units)
-    total = 0
-    for bill in bills:
-        bill_total = sum((li.value or 0) for li in bill.line_items.all())
-        if bill.currency != tab.settlement_currency:
-            bill_total = convert_amount(bill_total, bill.currency, tab.settlement_currency)
-        total += bill_total
-
-    tab.is_settled = True
-    tab.settlement_currency_settled_total = total
-    tab.save()
-
-    safe_capture(request.auth.uuid, "tab_settled", properties={
-        "tab_id": str(tab.uuid),
-        "bill_count": len(bills),
-        "settlement_currency": tab.settlement_currency,
-        "total_minor_units": total,
-    })
+    _close_tab(tab, request.auth)
 
     # Refresh to get updated data
-    tab.refresh_from_db()
-    tab = Tab.objects.prefetch_related(
-        'people__user',
-        'bills__line_items',
-        'settlements__from_person__user',
-        'settlements__to_person__user__payment_methods'
-    ).get(id=tab.id)
+    return _serialize_tab(tab.id)
 
-    return tab
+
+@tab_router.post("/{tab_id}/settle-period", response=TabSchema)
+@transaction.atomic
+def settle_period(request, tab_id: str):
+    """Settle the current period of a house and open a fresh one.
+
+    Closes this tab (snapshotting its total and freezing it) and spawns a new
+    period Tab in the same house with the roster copied in. Returns the new
+    active period. Only valid for tabs that belong to a house.
+    """
+    tab = get_object_or_404(
+        Tab.objects.accessible_by(request.auth).select_related('group'),
+        uuid=tab_id,
+    )
+    if tab.group_id is None:
+        raise HttpError(400, "This tab is not part of a house")
+    if tab.is_settled:
+        raise HttpError(400, "This period is already settled")
+
+    # Lock the period row so two concurrent rolls can't both spawn a new period.
+    Tab.objects.select_for_update().filter(id=tab.id).first()
+
+    group = tab.group
+    next_index = (tab.period_index or 1) + 1
+
+    _close_tab(tab, request.auth)
+    new_tab = _create_period_tab(group, base_name=tab.name, period_index=next_index)
+
+    safe_capture(request.auth.uuid, "period_rolled", properties={
+        "group_id": str(group.uuid),
+        "closed_tab_id": str(tab.uuid),
+        "new_tab_id": str(new_tab.uuid),
+        "period_index": next_index,
+    })
+
+    return _serialize_tab(new_tab.id)
 
 
 @tab_router.post("/{tab_id}/archive")
@@ -1055,6 +1145,241 @@ def delete_bill(request, bill_id: str):
         "bill_id": bill_uuid,
     })
 
+    return {"success": True}
+
+
+# ---------------------------------------------------------------------------
+# Houses (TabGroup) — ongoing tabs that retain people across settle-ups
+# ---------------------------------------------------------------------------
+
+def _tab_settlement_total(tab, settlement_currency):
+    """Live total spend of a tab in `settlement_currency` (minor units).
+
+    Returns (total, ok); ok is False if a currency conversion was unavailable.
+    Requires `bills__line_items` to be prefetched on `tab`.
+    """
+    total = 0
+    for bill in tab.bills.all():
+        if bill.status == BillStatus.ARCHIVED.value:
+            continue
+        bill_total = sum((li.value or 0) for li in bill.line_items.all())
+        if bill.currency != settlement_currency:
+            try:
+                bill_total = convert_amount(bill_total, bill.currency, settlement_currency)
+            except ExchangeRateNotFoundError:
+                return 0, False
+        total += bill_total
+    return total, True
+
+
+def _reload_group(group_id):
+    """Re-fetch a group with everything GroupDetailSchema needs prefetched."""
+    return TabGroup.objects.prefetch_related(
+        'members__user',
+        'tabs__bills__line_items',
+    ).get(id=group_id)
+
+
+def _group_detail_payload(group):
+    """Build the GroupDetailSchema dict, including spend aggregated across periods."""
+    periods = sorted(group.tabs.all(), key=lambda t: t.created_at, reverse=True)
+    current = None
+    total = 0
+    for p in periods:
+        if p.is_settled:
+            total += p.settlement_currency_settled_total or 0
+        elif not p.is_archived:
+            if current is None:
+                current = p
+            live, ok = _tab_settlement_total(p, group.settlement_currency)
+            if ok:
+                total += live
+
+    return {
+        "id": str(group.uuid),
+        "name": group.name,
+        "description": group.description,
+        "default_currency": group.default_currency,
+        "settlement_currency": group.settlement_currency,
+        "invite_code": str(group.invite_code) if group.invite_code else None,
+        "is_archived": group.is_archived,
+        "members": list(group.members.all()),
+        "current_period": current,
+        "periods": periods,
+        "group_total_spend": total,
+        "group_total_spend_display": minor_to_decimal(total, group.settlement_currency),
+        "created_at": group.created_at,
+        "updated_at": group.updated_at,
+    }
+
+
+@group_router.post("/", response=GroupDetailSchema)
+@transaction.atomic
+def create_group(request, payload: GroupCreateSchema):
+    """Create a house with a roster and open its first period."""
+    group = TabGroup.objects.create(
+        name=payload.name,
+        description=payload.description,
+        default_currency=payload.default_currency,
+        settlement_currency=payload.settlement_currency,
+        created_by=request.auth,
+    )
+
+    for member_data in payload.members:
+        user = None
+        if member_data.user_id:
+            user = get_object_or_404(User, uuid=member_data.user_id)
+            if not user.first_name:
+                user.first_name = member_data.name
+                user.save(update_fields=["first_name"])
+        TabGroupMember.objects.create(group=group, name=member_data.name, user=user)
+
+    _create_period_tab(group, base_name=payload.name, period_index=1)
+
+    safe_capture(request.auth.uuid, "group_created", properties={
+        "group_id": str(group.uuid),
+        "member_count": len(payload.members),
+        "settlement_currency": payload.settlement_currency,
+    })
+
+    return _group_detail_payload(_reload_group(group.id))
+
+
+@group_router.get("/", response=CursorPageSchema[GroupListSchema])
+def list_groups(request, cursor: str = None, archived: bool = False):
+    """List houses. Pass ?archived=true to list archived houses instead."""
+    qs = TabGroup.objects.accessible_by(request.auth).filter(is_archived=archived).annotate(
+        member_count=Count('members', distinct=True),
+        period_count=Count('tabs', distinct=True),
+    )
+    items, next_cursor = _apply_tab_cursor(qs, cursor)
+    return {"items": items, "next_cursor": next_cursor}
+
+
+@group_router.get("/{group_id}", response=GroupDetailSchema)
+def retrieve_group(request, group_id: str):
+    """Retrieve a house with its roster, current period, and period history."""
+    group = get_object_or_404(TabGroup.objects.accessible_by(request.auth), uuid=group_id)
+    return _group_detail_payload(_reload_group(group.id))
+
+
+@group_router.get("/{group_id}/periods", response=CursorPageSchema[TabListSchema])
+def list_group_periods(request, group_id: str, cursor: str = None):
+    """List a house's periods (current + settled history), newest first.
+
+    Returns the same TabListSchema the individual-tabs list uses, so the client
+    can reuse its tab-row rendering for period history.
+    """
+    group = get_object_or_404(TabGroup.objects.accessible_by(request.auth), uuid=group_id)
+    qs = _annotate_tab_list(group.tabs.all())
+    items, next_cursor = _apply_tab_cursor(qs, cursor)
+    return {"items": items, "next_cursor": next_cursor}
+
+
+@group_router.post("/{group_id}/members", response=GroupDetailSchema)
+@transaction.atomic
+def add_group_member(request, group_id: str, payload: GroupMemberCreateSchema):
+    """Add a member to a house. Also projects them into the current open period."""
+    group = get_object_or_404(TabGroup.objects.accessible_by(request.auth), uuid=group_id)
+    name = payload.name.strip()
+    if not name:
+        raise HttpError(400, "Name cannot be empty")
+    if group.members.filter(name=name).exists():
+        raise HttpError(400, "A member with that name already exists in this house")
+
+    user = None
+    if payload.user_id:
+        user = get_object_or_404(User, uuid=payload.user_id)
+    member = TabGroupMember.objects.create(group=group, name=name, user=user)
+
+    current = group.current_period
+    if current and not current.people.filter(name=name).exists():
+        TabPerson.objects.create(tab=current, name=name, user=user, member=member)
+        if user:
+            _sync_contacts_for_tab(current)
+
+    return _group_detail_payload(_reload_group(group.id))
+
+
+@group_router.delete("/{group_id}/members/{member_id}")
+@transaction.atomic
+def remove_group_member(request, group_id: str, member_id: str):
+    """Remove a member from a house (stops projecting them into future periods).
+
+    Historical periods keep their person rows. The current open period's person
+    is detached too, unless they're already on a bill or settlement there.
+    """
+    group = get_object_or_404(TabGroup.objects.accessible_by(request.auth), uuid=group_id)
+    member = get_object_or_404(TabGroupMember, uuid=member_id, group=group)
+
+    current = group.current_period
+    if current:
+        person = current.people.filter(member=member).first()
+        if person:
+            referenced = (
+                PersonLineItemClaim.objects.filter(person=person).exists()
+                or Bill.objects.filter(Q(paid_by=person) | Q(creator=person)).exists()
+                or Settlement.objects.filter(Q(from_person=person) | Q(to_person=person)).exists()
+            )
+            if referenced:
+                raise HttpError(400, "Cannot remove a member who is already on a bill or settlement in the current period")
+            person.delete()
+
+    member.delete()
+    return {"success": True}
+
+
+@group_router.get("/invite/{invite_code}", response=GroupInviteInfoSchema, auth=None)
+def get_group_invite(request, invite_code: str):
+    """Get house info for an invite page — no auth required."""
+    group = get_object_or_404(TabGroup, invite_code=invite_code)
+    unclaimed = list(group.members.filter(user__isnull=True))
+
+    user_already_member = False
+    user = JWTBearer()(request)
+    if user:
+        user_already_member = group.members.filter(user=user).exists()
+
+    return {
+        "group_id": str(group.uuid),
+        "group_name": group.name,
+        "members": unclaimed,
+        "user_already_member": user_already_member,
+    }
+
+
+@group_router.post("/invite/{invite_code}/claim", response=MagicLinkSuccessSchema, auth=None)
+@transaction.atomic
+def claim_group_invite(request, invite_code: str, payload: ClaimGroupInviteSchema):
+    """Claim a placeholder member of a house — no auth required."""
+    group = get_object_or_404(TabGroup, invite_code=invite_code)
+    member = get_object_or_404(TabGroupMember, uuid=payload.member_id, group=group, user__isnull=True)
+
+    authed_user = JWTBearer()(request)
+    if authed_user and group.members.filter(user=authed_user).exists():
+        raise HttpError(400, "You are already a member of this house")
+
+    user, _ = User.objects.get_or_create(
+        email=payload.email.lower(), defaults={"username": payload.email.lower()}
+    )
+    if group.members.filter(user=user).exists():
+        raise HttpError(400, "This email is already associated with a member of this house")
+    if not user.first_name:
+        user.first_name = member.name
+        user.save(update_fields=["first_name"])
+    member.user = user
+    member.save()
+
+    # Carry the claim through to the current open period's projected person.
+    current = group.current_period
+    if current:
+        person = current.people.filter(member=member, user__isnull=True).first()
+        if person:
+            person.user = user
+            person.save(update_fields=["user", "updated_at"])
+            _sync_contacts_for_tab(current)
+
+    safe_capture(user.uuid, "group_invite_claimed", properties={"group_id": str(group.uuid)})
     return {"success": True}
 
 

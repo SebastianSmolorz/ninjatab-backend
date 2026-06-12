@@ -59,15 +59,125 @@ class VersionedModel(models.Model):
 
 class TabManager(models.Manager):
     def accessible_by(self, user):
+        # A user can reach a tab if they own it, are a person on it, or are a
+        # member of the house (TabGroup) it belongs to. The group clause grants
+        # a member access to every period of the house, including ones that
+        # predate them joining.
         return self.filter(
-            Q(created_by=user) | Q(people__user=user)
+            Q(created_by=user)
+            | Q(people__user=user)
+            | Q(group__members__user=user)
         ).distinct()
+
+
+class TabGroupManager(models.Manager):
+    def accessible_by(self, user):
+        return self.filter(
+            Q(created_by=user) | Q(members__user=user)
+        ).distinct()
+
+
+class TabGroup(BaseModel):
+    """An ongoing "house" that owns a sequence of period Tabs.
+
+    Each settlement period is a regular Tab linked via ``Tab.group``. Settling a
+    period closes its Tab and spawns a fresh one with the roster copied in, so a
+    house retains the same people month after month while each period stays an
+    immutable record of its own spend.
+    """
+    name = models.CharField(max_length=255)
+    description = models.TextField(blank=True)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='created_groups',
+        null=True,
+        blank=True
+    )
+    default_currency = models.CharField(
+        max_length=3,
+        choices=Currency.choices,
+        default=Currency.GBP
+    )
+    settlement_currency = models.CharField(
+        max_length=3,
+        choices=Currency.choices,
+        default=Currency.GBP,
+        help_text="Currency used for calculating settlements"
+    )
+    is_archived = models.BooleanField(default=False)
+    invite_code = models.UUIDField(default=uuid.uuid4, unique=True, null=True, blank=True)
+
+    objects = TabGroupManager()
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return self.name
+
+    def rotate_invite_code(self):
+        self.invite_code = uuid.uuid4()
+        self.save(update_fields=["invite_code"])
+
+    @property
+    def current_period(self):
+        """The single open, non-archived period Tab, or None."""
+        return (
+            self.tabs.filter(is_settled=False, is_archived=False)
+            .order_by('-created_at')
+            .first()
+        )
+
+
+class TabGroupMember(BaseModel):
+    """Canonical roster entry for a house, optionally linked to a User.
+
+    This is the source of truth for "who is in the house". Each period's
+    TabPerson rows are projected from these members at roll time.
+    """
+    group = models.ForeignKey(
+        TabGroup,
+        on_delete=models.CASCADE,
+        related_name='members'
+    )
+    name = models.CharField(max_length=255)
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='group_memberships'
+    )
+
+    class Meta:
+        ordering = ['created_at']
+        unique_together = [['group', 'name']]
+        indexes = [
+            models.Index(fields=['group', 'user']),
+            models.Index(fields=['user']),
+        ]
+
+    def __str__(self):
+        return f"{self.name} in {self.group.name}"
 
 
 class Tab(VersionedModel, BaseModel):
     """A tab that tracks shared expenses"""
     name = models.CharField(max_length=255)
     description = models.TextField(blank=True)
+    group = models.ForeignKey(
+        TabGroup,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='tabs',
+        help_text="The house this tab is a settlement period of (null for standalone tabs)"
+    )
+    period_index = models.PositiveIntegerField(
+        null=True, blank=True,
+        help_text="1-based position of this period within its house (display only)"
+    )
     created_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.CASCADE,
@@ -104,6 +214,14 @@ class Tab(VersionedModel, BaseModel):
         indexes = [
             models.Index(fields=['-created_at', '-id']),
         ]
+        constraints = [
+            # A house has at most one open period at a time.
+            models.UniqueConstraint(
+                fields=['group'],
+                condition=Q(group__isnull=False, is_settled=False, is_archived=False),
+                name='uniq_active_period_per_group',
+            ),
+        ]
 
     def __str__(self):
         return self.name
@@ -127,6 +245,14 @@ class TabPerson(BaseModel):
         null=True,
         blank=True,
         related_name='tab_people'
+    )
+    member = models.ForeignKey(
+        'TabGroupMember',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='tab_people',
+        help_text="The house member this period person was projected from (null for standalone tabs)"
     )
 
     class Meta:

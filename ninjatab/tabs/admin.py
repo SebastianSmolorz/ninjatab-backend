@@ -1,7 +1,7 @@
 from django.contrib import admin
 from django.db.models import Count, Sum
 from django.utils.html import format_html
-from .models import Tab, TabPerson, Bill, LineItem, PersonLineItemClaim, Settlement, Contact, SplitType
+from .models import Tab, TabPerson, Bill, LineItem, PersonLineItemClaim, Settlement, Contact, SplitType, TabGroup, TabGroupMember
 from ninjatab.currencies.currency_utils import minor_to_decimal
 
 
@@ -470,3 +470,41 @@ class ContactAdmin(admin.ModelAdmin):
         qs = super().get_queryset(request)
         return qs.select_related('owner', 'contact_user')
 
+
+
+class TabGroupMemberInline(admin.TabularInline):
+    model = TabGroupMember
+    extra = 1
+    fields = ['uuid', 'name', 'user', 'created_at']
+    readonly_fields = ['uuid', 'created_at']
+    raw_id_fields = ['user']
+
+    def get_queryset(self, request):
+        return super().get_queryset(request).select_related('user')
+
+
+@admin.register(TabGroup)
+class TabGroupAdmin(admin.ModelAdmin):
+    list_display = ['uuid', 'name', 'created_by', 'settlement_currency', 'is_archived', 'created_at']
+    ordering = ['-uuid']
+    list_filter = ['is_archived', 'settlement_currency', 'created_at']
+    search_fields = ['uuid', 'name', 'created_by__email', 'created_by__first_name']
+    readonly_fields = ['uuid', 'invite_code', 'created_at', 'updated_at']
+    raw_id_fields = ['created_by']
+    inlines = [TabGroupMemberInline]
+
+    def get_queryset(self, request):
+        return super().get_queryset(request).select_related('created_by')
+
+
+@admin.register(TabGroupMember)
+class TabGroupMemberAdmin(admin.ModelAdmin):
+    list_display = ['uuid', 'name', 'group', 'user', 'created_at']
+    ordering = ['-uuid']
+    list_filter = ['created_at']
+    search_fields = ['uuid', 'name', 'group__name', 'user__email', 'user__first_name']
+    readonly_fields = ['uuid', 'created_at', 'updated_at']
+    raw_id_fields = ['group', 'user']
+
+    def get_queryset(self, request):
+        return super().get_queryset(request).select_related('group', 'user')
