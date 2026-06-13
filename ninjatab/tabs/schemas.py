@@ -595,6 +595,7 @@ class PeriodSummarySchema(BaseModel):
     is_settled: bool
     is_archived: bool
     bill_count: int = 0
+    default_currency: CurrencyEnum
     settlement_currency: CurrencyEnum
     settlement_currency_settled_total: Optional[int] = None
     settlement_currency_settled_total_display: Optional[Decimal] = None
@@ -615,6 +616,7 @@ class PeriodSummarySchema(BaseModel):
                 'is_settled': data.is_settled,
                 'is_archived': data.is_archived,
                 'bill_count': len(data.bills.all()),
+                'default_currency': data.default_currency,
                 'settlement_currency': data.settlement_currency,
                 'settlement_currency_settled_total': settled_total,
                 'settlement_currency_settled_total_display': minor_to_decimal(
