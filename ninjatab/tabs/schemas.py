@@ -659,6 +659,9 @@ class GroupListSchema(BaseModel):
     is_archived: bool
     member_count: int = 0
     period_count: int = 0
+    current_period_id: Optional[str] = None
+    current_period_spend: int = 0
+    current_period_spend_display: Optional[Decimal] = None
     created_at: datetime
     updated_at: datetime
 

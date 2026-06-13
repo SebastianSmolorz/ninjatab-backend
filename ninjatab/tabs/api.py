@@ -1249,12 +1249,36 @@ def create_group(request, payload: GroupCreateSchema):
 
 @group_router.get("/", response=CursorPageSchema[GroupListSchema])
 def list_groups(request, cursor: str = None, archived: bool = False):
-    """List houses. Pass ?archived=true to list archived houses instead."""
-    qs = TabGroup.objects.accessible_by(request.auth).filter(is_archived=archived).annotate(
-        member_count=Count('members', distinct=True),
-        period_count=Count('tabs', distinct=True),
+    """List houses. Pass ?archived=true to list archived houses instead.
+
+    Each house carries its current open period's id and *live* spend (not the
+    cumulative house total), so the list can show "£x this period" and have it
+    reset to zero the moment a period is settled and a fresh one opens.
+    """
+    qs = (
+        TabGroup.objects.accessible_by(request.auth)
+        .filter(is_archived=archived)
+        .annotate(
+            member_count=Count('members', distinct=True),
+            period_count=Count('tabs', distinct=True),
+        )
+        .prefetch_related('tabs__bills__line_items')
     )
     items, next_cursor = _apply_tab_cursor(qs, cursor)
+
+    for group in items:
+        current = next(
+            (
+                t for t in sorted(group.tabs.all(), key=lambda t: t.created_at, reverse=True)
+                if not t.is_settled and not t.is_archived
+            ),
+            None,
+        )
+        spend, _ok = _tab_settlement_total(current, group.settlement_currency) if current else (0, True)
+        group.current_period_id = str(current.uuid) if current else None
+        group.current_period_spend = spend
+        group.current_period_spend_display = minor_to_decimal(spend, group.settlement_currency)
+
     return {"items": items, "next_cursor": next_cursor}
 
 

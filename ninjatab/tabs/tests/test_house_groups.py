@@ -208,6 +208,43 @@ def test_create_group_opens_first_period():
 
 
 @pytest.mark.django_db
+def test_list_groups_reports_current_period_spend_and_resets_on_settle():
+    """The list shows each house's CURRENT period id + live spend, which resets
+    to zero once the period is settled and a fresh one opens."""
+    creator = _user("a@x.com")
+    group = _make_group(creator, ["Alice"])
+    p1 = _open_period(group)
+    _add_bill(p1, p1.people.get(name="Alice"), value=2500)
+
+    client = Client()
+    item = client.get("/api/groups/", **_auth(creator)).json()["items"][0]
+    assert item["current_period_id"] == str(p1.uuid)
+    assert item["current_period_spend"] == 2500
+
+    # Settle the period — a fresh empty period opens, so live spend resets to 0.
+    resp = _post(client, f"/api/tabs/{p1.uuid}/settle-period", {}, creator)
+    new_id = resp.json()["id"]
+
+    item = client.get("/api/groups/", **_auth(creator)).json()["items"][0]
+    assert item["current_period_id"] == new_id
+    assert item["current_period_id"] != str(p1.uuid)
+    assert item["current_period_spend"] == 0
+
+
+@pytest.mark.django_db
+def test_list_groups_returns_multiple_houses():
+    creator = _user("a@x.com")
+    g1 = _make_group(creator, ["Alice"])
+    _open_period(g1)
+    g2 = _make_group(creator, ["Bob"])
+    _open_period(g2)
+
+    client = Client()
+    items = client.get("/api/groups/", **_auth(creator)).json()["items"]
+    assert {i["id"] for i in items} == {str(g1.uuid), str(g2.uuid)}
+
+
+@pytest.mark.django_db
 def test_group_detail_aggregates_spend_across_periods():
     creator = _user("a@x.com")
     group = _make_group(creator, ["Alice"])
