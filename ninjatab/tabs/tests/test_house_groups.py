@@ -112,9 +112,10 @@ def test_settle_period_rolls_roster_and_freezes_old():
     assert resp.status_code == 200, resp.content
     body = resp.json()
 
-    # Old period is frozen with a snapshot total.
+    # Old period is frozen with a snapshot total and a settled timestamp.
     period.refresh_from_db()
     assert period.is_settled is True
+    assert period.settled_at is not None
     assert period.settlement_currency_settled_total == 2000
 
     # Response is a NEW, empty active period with the same roster.
@@ -291,5 +292,9 @@ def test_list_group_periods_returns_all_periods_newest_first():
     items = client.get(f"/api/groups/{group.uuid}/periods", **_auth(creator)).json()["items"]
     assert [t["id"] for t in items] == [p2_id, str(p1.uuid)]  # newest first
     assert [t["period_index"] for t in items] == [2, 1]
-    # The settled period is flagged as such for the history UI.
-    assert next(t for t in items if t["id"] == str(p1.uuid))["is_settled"] is True
+    # The settled period is flagged as such for the history UI, with a settled date.
+    settled = next(t for t in items if t["id"] == str(p1.uuid))
+    assert settled["is_settled"] is True
+    assert settled["settled_at"] is not None
+    # The still-open period has no settled date.
+    assert next(t for t in items if t["id"] == p2_id)["settled_at"] is None

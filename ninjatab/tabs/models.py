@@ -197,6 +197,10 @@ class Tab(VersionedModel, BaseModel):
         help_text="Currency used for calculating settlements"
     )
     is_settled = models.BooleanField(default=False)
+    settled_at = models.DateTimeField(
+        null=True, blank=True,
+        help_text="When this period was settled (null while still open)"
+    )
     is_archived = models.BooleanField(default=False)
     settlement_currency_settled_total = models.IntegerField(
         null=True, blank=True,

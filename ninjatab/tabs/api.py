@@ -14,6 +14,7 @@ from django.db import transaction, IntegrityError
 from django.db.models import Q, Count, Exists, OuterRef, Subquery, Sum, IntegerField
 from django.db.models.functions import Coalesce
 from django.contrib.auth import get_user_model
+from django.utils import timezone
 
 from ninjatab.tabs.models import *
 from ninjatab.tabs.schemas import *
@@ -152,6 +153,7 @@ def _close_tab(tab, actor):
         total += bill_total
 
     tab.is_settled = True
+    tab.settled_at = timezone.now()
     tab.settlement_currency_settled_total = total
     tab.save()
 

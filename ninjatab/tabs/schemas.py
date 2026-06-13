@@ -533,6 +533,7 @@ class TabListSchema(BaseModel):
     description: str
     default_currency: CurrencyEnum
     is_settled: bool
+    settled_at: Optional[datetime] = None
     is_archived: bool
     is_pro: bool
     is_demo: bool
@@ -593,6 +594,7 @@ class PeriodSummarySchema(BaseModel):
     name: str
     period_index: Optional[int] = None
     is_settled: bool
+    settled_at: Optional[datetime] = None
     is_archived: bool
     bill_count: int = 0
     default_currency: CurrencyEnum
@@ -614,6 +616,7 @@ class PeriodSummarySchema(BaseModel):
                 'name': data.name,
                 'period_index': data.period_index,
                 'is_settled': data.is_settled,
+                'settled_at': data.settled_at,
                 'is_archived': data.is_archived,
                 'bill_count': len(data.bills.all()),
                 'default_currency': data.default_currency,
