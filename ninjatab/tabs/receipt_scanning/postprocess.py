@@ -103,7 +103,7 @@ def _normalize_amounts_in_annotation(annotation: dict) -> None:
     """In-place: rewrite all amount strings on the annotation to use '.' as
     decimal separator so the mobile client parses them correctly."""
     dp = get_decimal_places((annotation.get("currency_code") or "").strip().upper())
-    for key in ("receipt_total", "items_total", "tax", "tip", "service_charge"):
+    for key in ("receipt_total", "items_total"):
         if key in annotation:
             annotation[key] = _normalize_amount_str(annotation[key], dp)
     for item in annotation.get("items") or []:
@@ -115,9 +115,9 @@ def _normalize_amounts_in_annotation(annotation: dict) -> None:
             item["discount"] = [_normalize_amount_str(d, dp) for d in discount]
         elif discount is not None:
             item["discount"] = _normalize_amount_str(discount, dp)
-    for charge in annotation.get("other_charges") or []:
-        if "amount" in charge:
-            charge["amount"] = _normalize_amount_str(charge["amount"], dp)
+    for adjustment in annotation.get("adjustments") or []:
+        if "amount" in adjustment:
+            adjustment["amount"] = _normalize_amount_str(adjustment["amount"], dp)
 
 
 def _synthesize_total_only_item(annotation: dict) -> bool:
@@ -151,11 +151,11 @@ def _collapse_redundant_translations(annotation: dict) -> None:
         translated = item.get("translated_name")
         if name and translated and name.casefold() == translated.casefold():
             item["translated_name"] = name
-    for charge in annotation.get("other_charges") or []:
-        name = charge.get("name")
-        translated = charge.get("translated_name")
+    for adjustment in annotation.get("adjustments") or []:
+        name = adjustment.get("name")
+        translated = adjustment.get("translated_name")
         if name and translated and name.casefold() == translated.casefold():
-            charge["translated_name"] = name
+            adjustment["translated_name"] = name
 
 
 def _coerce_item_discounts(value) -> list[float]:
@@ -285,8 +285,8 @@ def _reconcile_items_with_total(annotation: dict) -> list[dict]:
 
     - If items_total > receipt_total: try removing suspicious items already in
       the items list (matched on translated_name).
-    - If items_total < receipt_total: try adding from the dedicated
-      tax/tip/service_charge/other_charges fields back into items.
+    - If items_total < receipt_total: try adding the receipt-level adjustments
+      back into items.
 
     Returns the (possibly unchanged) items list."""
     items: list[dict] = list(annotation.get("items") or [])
@@ -328,26 +328,34 @@ def _reconcile_items_with_total(annotation: dict) -> list[dict]:
     return items
 
 
+_ADJUSTMENT_KIND_LABELS = {
+    "tax": "Tax",
+    "tip": "Tip",
+    "discount": "Discount",
+    "fee": "Fee",
+    "other": "Charge",
+}
+
+
 def _candidate_additions(annotation: dict) -> list[dict]:
-    """Build a list of item-shaped dicts from the dedicated charge fields,
-    used when items_total is below receipt_total and we suspect a contributing
-    charge was misrouted into tax/tip/service_charge/other_charges.
+    """Build a list of item-shaped dicts from the receipt-level adjustments, used
+    when items_total is below receipt_total and we suspect a contributing charge
+    (tax/tip/fee) was not represented as a line item.
 
     Item totals are emitted as strings formatted to the receipt currency's
-    precision, matching the type the model-returned items use."""
+    precision, matching the type the model-returned items use. Adjustment amounts
+    are signed, so a subtractive adjustment (discount) yields a negative-total
+    candidate."""
     dp = _annotation_decimals(annotation)
     out: list[dict] = []
-    for key, label in (("tax", "Tax"), ("tip", "Tip"), ("service_charge", "Service charge")):
-        amount = _to_float(annotation.get(key))
-        if amount is not None:
-            out.append({"name": label, "translated_name": label, "total": f"{amount:.{dp}f}"})
-    for charge in annotation.get("other_charges") or []:
-        amount = _to_float(charge.get("amount"))
+    for adjustment in annotation.get("adjustments") or []:
+        amount = _to_float(adjustment.get("amount"))
         if amount is None:
             continue
+        label = adjustment.get("name") or _ADJUSTMENT_KIND_LABELS.get(adjustment.get("kind"), "Charge")
         out.append({
-            "name": charge.get("name") or "Charge",
-            "translated_name": charge.get("translated_name") or charge.get("name") or "Charge",
+            "name": label,
+            "translated_name": adjustment.get("translated_name") or label,
             "total": f"{amount:.{dp}f}",
         })
     return out
@@ -376,9 +384,8 @@ def standard_post_process(annotation: dict, default_currency: str) -> dict:
         "items_receipt_gap": None,
         "ai_vs_server_total_divergence": None,
         "has_tax": False,
-        "has_tip": False,
-        "has_service_charge": False,
-        "other_charges_count": 0,
+        "has_tip": False,                   # tip / gratuity / service charge (one kind)
+        "adjustments_count": 0,
         "item_discounts_applied": 0,        # count of items with an item-level discount folded in
         "reconciliation_action": "none",    # "none" | "items_dropped" | "candidates_added"
         "reconciliation_items_delta": 0,
@@ -445,10 +452,10 @@ def standard_post_process(annotation: dict, default_currency: str) -> dict:
         metrics["ai_vs_server_total_divergence"] = (
             abs(items_total_f - ai_items_total_f) > tolerance
         )
-    metrics["has_tax"] = annotation.get("tax") is not None
-    metrics["has_tip"] = annotation.get("tip") is not None
-    metrics["has_service_charge"] = annotation.get("service_charge") is not None
-    metrics["other_charges_count"] = len(annotation.get("other_charges") or [])
+    adjustments = annotation.get("adjustments") or []
+    metrics["adjustments_count"] = len(adjustments)
+    metrics["has_tax"] = any(a.get("kind") == "tax" for a in adjustments)
+    metrics["has_tip"] = any(a.get("kind") == "tip" for a in adjustments)
 
     return metrics
 

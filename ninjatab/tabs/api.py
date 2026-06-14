@@ -688,7 +688,7 @@ def claim_invite(request, invite_code: str, payload: ClaimInviteSchema):
     return {"success": True}
 
 
-@tab_router.post("/{tab_id}/upload-receipt")
+@tab_router.post("/{tab_id}/upload-receipt", response=ReceiptScanResultSchema)
 def upload_receipt(request, tab_id: str, file: UploadedFile = File(...)):
     """Upload a receipt image, run OCR, and return parsed annotation."""
     from ninjatab.tabs.receipt_service import (

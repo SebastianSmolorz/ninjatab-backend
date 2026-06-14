@@ -353,6 +353,60 @@ class ScanOutcomeSchema(BaseModel):
     outcome: str
 
 
+class ReceiptAdjustmentSchema(BaseModel):
+    """A receipt-level (basket-level) charge or discount that affects the grand
+    total: sales tax, a tip/gratuity/service charge, a basket discount/voucher,
+    or a fee. Not tied to any single item."""
+    model_config = ConfigDict(extra="allow")
+    name: Optional[str] = None
+    translated_name: Optional[str] = None
+    kind: Optional[str] = None          # tax | tip | discount | fee | other
+    amount: Optional[str] = None        # signed decimal: negative = discount, positive = charge
+
+
+class ReceiptScanItemSchema(BaseModel):
+    """A purchased line item parsed from the receipt, after server-side discount
+    resolution. `total` is the net charged amount used for splitting."""
+    model_config = ConfigDict(extra="allow")
+    name: Optional[str] = None
+    translated_name: Optional[str] = None
+    quantity: Optional[int] = None
+    price_per_quantity: Optional[str] = None
+    pre_discount_line_total: Optional[str] = None
+    post_discount_line_total: Optional[str] = None
+    total: Optional[str] = None
+    discount: Optional[List[str]] = None    # item-level savings, each a negative decimal
+    receipt_line_text: Optional[str] = None
+
+
+class ReceiptAnnotationSchema(BaseModel):
+    """Parsed and post-processed receipt contents returned by a scan."""
+    model_config = ConfigDict(extra="allow")
+    receipt_language: Optional[str] = None
+    receipt_language_code: Optional[str] = None
+    items: List[ReceiptScanItemSchema] = []
+    adjustments: Optional[List[ReceiptAdjustmentSchema]] = None
+    currency_code: Optional[str] = None
+    receipt_establishment_name: Optional[str] = None
+    datetime_of_receipt: Optional[str] = None
+    receipt_total: Optional[str] = None
+    receipt_total_visible: Optional[bool] = None
+    items_total: Optional[float] = None     # server-computed sum of item totals
+    ai_items_total: Optional[str] = None    # model's own sum, kept as a cross-check
+    totals_reconciled: Optional[bool] = None  # whether items_total matches receipt_total
+
+
+class ReceiptScanResultSchema(BaseModel):
+    """Response for POST /tabs/{tab_id}/upload-receipt."""
+    model_config = ConfigDict(extra="allow")
+    document_annotation: Optional[ReceiptAnnotationSchema] = None
+    date: Optional[str] = None
+    image_url: Optional[str] = None
+    image_key: Optional[str] = None
+    receipt_total_visible: Optional[bool] = None
+    scan_session_id: Optional[str] = None
+
+
 class BillUpdateSchema(BaseModel):
     """Schema for updating bill fields"""
     description: Optional[str] = None
