@@ -13,9 +13,10 @@ from ninjatab.tabs.receipt_scanning.prompt import (  # noqa: F401
     DOCUMENT_ANNOTATION_PROMPT_LITERAL,
 )
 from ninjatab.tabs.receipt_scanning.schema import (  # noqa: F401
+    _Adjustment,
+    _AdjustmentKind,
     _Document,
     _Item,
-    _OtherCharge,
 )
 
 logger = logging.getLogger("app")

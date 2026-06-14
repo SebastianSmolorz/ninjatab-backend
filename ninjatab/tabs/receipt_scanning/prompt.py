@@ -16,7 +16,7 @@ A purchased item block is one purchased good or service plus any immediately ass
 Therefore, one output item may correspond to multiple physical printed rows on the receipt. The main purchased item row and its directly attached discount/saving/loyalty-price row(s) should be treated as one item block, not as separate items.
 
 Extract all purchased goods or services that contribute to the receipt total into items.
-Do not include receipt-level charges such as tax, tip, service charge, or other fees/discounts in items - those are captured separately below. Item-specific discounts/savings that clearly belong to a purchased item are captured inside that item's `discount` field.
+Do not include receipt-level charges such as tax, tip, service charge, or other fees/discounts in items - those are captured separately as receipt-level adjustments below. Item-specific discounts/savings that clearly belong to a purchased item are captured inside that item's `discount` field.
 
 CRITICAL - one output item per primary purchased item row / purchased item block. Do not create one output item for every physical printed line.
 
@@ -60,9 +60,9 @@ For this purpose, the phrase "line item" means the whole purchased item block, n
 - If only a regular price AND a printed saving figure are shown (no separate charged price), set pre_discount_line_total = the regular price, put the printed saving in `discount`, and leave post_discount_line_total NULL. Do not subtract - the server computes the charged amount.
 - Convert pence values such as "55p" to decimal strings such as "0.55" when transcribing, but do not otherwise compute or adjust the printed figures.
 - Do NOT include "Cc £5.25", "Clubcard £5.25", "Clubcard Price £5.25", "Cc 55p", or similar loyalty price markers in the item name. They are pricing/discount information, not part of the product name.
-- When a saving line clearly belongs to the item directly above it, record the printed or derived saving in THAT item's `discount` list as a NEGATIVE decimal string (e.g. ["-1.00"]). Do NOT create a separate item for the saving line, do NOT add it to other_charges, do NOT merge the saving's label or amount into the item's name, and do NOT subtract it from pre_discount_line_total yourself - leave pre_discount_line_total as the printed pre-discount price and put the charged amount in post_discount_line_total.
+- When a saving line clearly belongs to the item directly above it, record the printed or derived saving in THAT item's `discount` list as a NEGATIVE decimal string (e.g. ["-1.00"]). Do NOT create a separate item for the saving line, do NOT add it to adjustments, do NOT merge the saving's label or amount into the item's name, and do NOT subtract it from pre_discount_line_total yourself - leave pre_discount_line_total as the printed pre-discount price and put the charged amount in post_discount_line_total.
 - `discount` is a LIST. If a single item shows more than one separate saving line that each clearly apply to it, record EACH printed saving as its own negative string entry in that item's `discount` list (e.g. ["-1.00", "-0.50"]). Do not add them together yourself - record each printed amount separately. One saving per item is the most common case, in which the list has a single entry.
-- Multi-buy / multi-save promotions (e.g. "Multi-save", "Multibuy", "Mix & Match", "Meal Deal", "2 for £3", "3 for 2") are ITEM-LEVEL discounts, NOT basket/receipt-level discounts, even though they reference more than one unit. The single printed saving row usually appears immediately UNDERNEATH the group of qualifying item rows (often two or more rows of the same product). Attach the WHOLE printed saving amount to the `discount` list of the item block printed directly above the saving line (the last qualifying row). Do NOT split the saving across the qualifying rows (that would be arithmetic), do NOT drop it, and do NOT move it to other_charges just because it spans several units.
+- Multi-buy / multi-save promotions (e.g. "Multi-save", "Multibuy", "Mix & Match", "Meal Deal", "2 for £3", "3 for 2") are ITEM-LEVEL discounts, NOT basket/receipt-level discounts, even though they reference more than one unit. The single printed saving row usually appears immediately UNDERNEATH the group of qualifying item rows (often two or more rows of the same product). Attach the WHOLE printed saving amount to the `discount` list of the item block printed directly above the saving line (the last qualifying row). Do NOT split the saving across the qualifying rows (that would be arithmetic), do NOT drop it, and do NOT move it to adjustments just because it spans several units.
 - Prefer the explicit negative saving amount printed on the receipt when it is clearly visible and clearly attached to the item.
 - If no explicit negative saving is visible, but a regular price and a loyalty/Clubcard/CC discounted price are both printed for the same item block, derive the discount from those two printed prices.
 - If a saving line or loyalty price cannot be confidently attributed to a specific item OR to a specific adjacent group of qualifying items (as with a multi-buy), and is not a whole-basket discount as described below, do NOT extract it at all - leave it out entirely rather than guessing which item it belongs to. A multi-buy saving printed directly under its qualifying item rows IS confidently attributable - attach it to the item directly above per the multi-buy rule.
@@ -107,35 +107,42 @@ Printed/OCR text:
 1 | AMB RICE POT | £1.10
   | Multi-save | £-0.45
 
-Here the "Multi-save £-0.45" is item-level, not basket-level. Extract two AMB RICE POT items, and apply the whole "-0.45" saving as a `discount` on the single row directly above the saving line (the second AMB RICE POT). Do not split it across both rows and do not put it in other_charges.
+Here the "Multi-save £-0.45" is item-level, not basket-level. Extract two AMB RICE POT items, and apply the whole "-0.45" saving as a `discount` on the single row directly above the saving line (the second AMB RICE POT). Do not split it across both rows and do not put it in adjustments.
 
-Do not output "Cc £5.25", "Cc 55p", "Clubcard Price", "Special Offer", "Multi-save", or similar pricing/discount text as separate items. Do not put item-specific Clubcard/CC or multi-buy savings in other_charges when they clearly belong to a purchased item or its qualifying group. Keep pre_discount_line_total as the regular/pre-discount price, put the charged amount in post_discount_line_total, and record the saving in `discount`.
+Do not output "Cc £5.25", "Cc 55p", "Clubcard Price", "Special Offer", "Multi-save", or similar pricing/discount text as separate items. Do not put item-specific Clubcard/CC or multi-buy savings in adjustments when they clearly belong to a purchased item or its qualifying group. Keep pre_discount_line_total as the regular/pre-discount price, put the charged amount in post_discount_line_total, and record the saving in `discount`.
 
 Rows whose name is only a promotion/discount label, such as "Special Offer", "Promotion", "Savings", "Clubcard Price", "Cc", "Voucher", "Multi-save", "Multibuy", "Mix & Match", "Meal Deal", or similar, are not purchased goods or services.
 
 Do not output these rows as items.
 
 If such a row clearly belongs to the purchased item directly above it, attach it to that item's `discount` list.
-If it is a basket-level discount that separately affects the grand total, put it in `other_charges`.
+If it is a basket-level discount that separately affects the grand total, put it in `adjustments`.
 If it is only an informational summary of savings already captured at item level, do not extract it again.
 
-Do not include subtotal, tax, VAT, tip, gratuity, service charge, payment method, change, balance, loyalty adjustments, discounts, or any other fees as items - even if they affect the grand total. These are captured separately: item-level savings in `discount` above; receipt-level charges below.
+Do not include subtotal, tax, VAT, tip, gratuity, service charge, payment method, change, balance, loyalty adjustments, discounts, or any other fees as items - even if they affect the grand total. These are captured separately: item-level savings in `discount` above; receipt-level charges in `adjustments` below.
 
-Extract receipt-level charges that affect the grand total into their dedicated fields:
-- tax: total tax/VAT amount on the receipt, if shown
-- tip: tip or gratuity amount, if shown
-- service_charge: service charge amount, if shown
-- other_charges: a list of any other receipt-level fees or discounts that affect the total but do not fit tax/tip/service_charge AND are not tied to any specific item or group of items (for example: delivery fee, booking fee, cover charge, a voucher or discount applied to the whole order/total such as "£5 off £40 spend", a percentage off the whole bill, or staff/loyalty discount taken off the order total). A discount belongs here ONLY when it reduces the whole order total rather than specific products. Use a negative amount for discounts. Each entry should include name (as shown on the receipt), translated_name (English translation, or same value if already English), and amount. Do NOT put item-specific savings here, and do NOT put multi-buy / multi-save / "X for Y" / mix & match / meal-deal savings here - those are item-level and belong in the relevant item's `discount` field, even though they span more than one unit.
+Extract receipt-level charges and discounts that affect the grand total into the `adjustments` list. An adjustment is a receipt-level (basket-level) charge or discount that is NOT tied to any specific item or group of items - for example sales tax/VAT added on top of the items, a tip/gratuity/service charge, a delivery/booking/cover fee, or a basket-level discount/voucher applied to the whole order (such as "£5 off £40 spend", a percentage off the whole bill, or a staff/loyalty discount taken off the order total).
 
-Only populate these fields when the charge clearly affects the grand total. Leave them null if not present. Do not include line items in these fields, and do not include these charges in items.
+Each adjustment entry has:
+- name: the label exactly as printed on the receipt
+- translated_name: the English translation of the label (or the same value if already English)
+- kind: one of "tax" (sales tax/VAT added on top of the items), "tip" (a tip, gratuity, or service charge - treat all three as the same kind), "discount" (a basket-level coupon/voucher/member discount off the whole order), "fee" (delivery/booking/cover charge), or "other"
+- amount: a decimal string, NEGATIVE for subtractive adjustments (discounts, coupons, vouchers) and POSITIVE for additive adjustments (tax, tip, service charge, fees)
+
+Rules for adjustments:
+- Only include an adjustment when it clearly affects the grand total. Leave `adjustments` null if the receipt has none.
+- Do NOT include VAT/sales tax that is already baked into the item line totals. Record tax as an adjustment only when it is added on top of the items to reach the grand total.
+- Do NOT include item-specific savings here, and do NOT include multi-buy / multi-save / "X for Y" / mix & match / meal-deal savings here - those are item-level and belong in the relevant item's `discount` field, even though they span more than one unit.
+- Do NOT include cash-rounding lines (e.g. "Rounding -0.02") as adjustments.
+- Do NOT include purchased goods or services here, and do NOT include these adjustments in items.
 
 Do not duplicate savings summaries.
 
 If the receipt shows both "Savings" and "Promotions" with the same amount, and they appear to refer to the same overall promotional saving total, do not output both.
 
-If item-level discounts have already been captured in item `discount` fields, do not also output the receipt's total savings/promotions summary in `other_charges`. That would double-count the same discount.
+If item-level discounts have already been captured in item `discount` fields, do not also output the receipt's total savings/promotions summary in `adjustments`. That would double-count the same discount.
 
-Only use `other_charges` for receipt-level fees or discounts that are separate from item-level discounts and actually need to be applied to reconcile the grand total.
+Only use `adjustments` for receipt-level fees or discounts that are separate from item-level discounts and actually need to be applied to reconcile the grand total.
 
 Extract receipt_total as the final total charged on the receipt. If the receipt does not explicitly display a grand total, return null - do not calculate, sum, or otherwise invent a receipt_total from the items or charges.
 
@@ -162,7 +169,7 @@ Extract datetime_of_receipt from the receipt date/time.
 - If the receipt provides only a partial date or ambiguous date/time that cannot be confidently converted to ISO 8601, return null
 - If no receipt date/time is present, return null
 
-All monetary amounts (pre_discount_line_total, post_discount_line_total, price_per_quantity, each entry in discount, receipt_total, items_total, tax, tip, service_charge, other_charges.amount) must be returned as decimal strings normalized to US locale formatting:
+All monetary amounts (pre_discount_line_total, post_discount_line_total, price_per_quantity, each entry in discount, receipt_total, items_total, adjustments.amount) must be returned as decimal strings normalized to US locale formatting:
 - Use a dot (".") as the decimal separator
 - Do not include any thousands separators (no commas, no spaces, no dots between groups of digits)
 - Use the number of decimal places appropriate for the receipt's currency: 0 for currencies with no minor unit (e.g. JPY), 2 for most currencies (e.g. USD, EUR, GBP), 3 for currencies that use three decimals (e.g. JOD, KWD, BHD, OMR, TND). Match the precision shown on the receipt itself - never truncate "1.234" (a JOD amount) to "1.23"
@@ -199,14 +206,11 @@ For each item:
 
 Discount / saving rows (e.g. "Multi-save -0.45", "Cc -1.15", "Special Offer -1.00", "Voucher -2.00"):
 - These are NOT purchased goods, so do not output them as items.
-- Transcribe every such row into other_charges as a separate entry: name = the label printed verbatim, translated_name = its English translation (or same), amount = the printed amount as a negative decimal string.
+- Transcribe every such row into adjustments as a separate entry: name = the label printed verbatim, translated_name = its English translation (or same), kind = "discount", amount = the printed amount as a negative decimal string.
 - Do NOT decide whether a saving is item-level or basket-level, and do NOT attach it to an item - the server attributes discounts during post-processing using the order and text you provide.
 
 Receipt-level fields (only when printed; otherwise null):
-- tax: total tax/VAT amount.
-- tip: tip/gratuity amount.
-- service_charge: service charge amount.
-- other_charges: in addition to the discount rows above, any printed fee or charge that is not tax/tip/service_charge (delivery fee, booking fee, cover charge, etc.), as {name, translated_name, amount}. Positive for fees, negative for discounts.
+- adjustments: in addition to the discount rows above, every printed receipt-level charge - tax/VAT, a tip/gratuity/service charge, and any other fee (delivery, booking, cover, etc.) - as {name, translated_name, kind, amount}. kind is one of "tax", "tip" (covers tip/gratuity/service charge), "discount", "fee", "other". amount is positive for charges/fees and negative for discounts. Just transcribe each printed row; do not compute or reconcile.
 - receipt_total: the grand total printed on the receipt, verbatim. If no grand total is printed, null - never sum or invent it.
 - items_total: leave null. The server computes it.
 - receipt_establishment_name: the merchant/establishment name if shown.
