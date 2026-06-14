@@ -64,11 +64,14 @@ class _Item(BaseModel):
     discount: Optional[list[str]] = Field(
         default=None,
         description=(
-            "Item-level savings literally printed on the receipt for THIS item, each as a "
-            "negative decimal string (e.g. ['-1.00'], or ['-1.00', '-0.50'] when several "
-            "savings apply to one item). Includes loyalty/Clubcard/CC and multi-buy savings "
-            "attached to this item. Never compute a saving by subtracting one printed price "
-            "from another. Leave null if this item has no visible item-specific saving."
+            "Item-level savings printed on the receipt for THIS item, each as a negative "
+            "decimal string (e.g. ['-1.00'], or ['-1.00', '-0.50'] when several savings apply "
+            "to one item). Includes loyalty/Clubcard/CC, multi-buy, and standalone 'Special "
+            "Offer'/promotion rows printed directly under this item. A saving is always a "
+            "reduction, so record it negative even when the printed figure has no minus sign "
+            "(the receipt's minus is often lost). Roll up every such row, including when this "
+            "item carries more than one. Never compute a saving by subtracting one printed "
+            "price from another. Leave null if this item has no visible item-specific saving."
         ),
     )
     post_discount_line_total: Optional[str] = Field(
@@ -103,8 +106,11 @@ class _Adjustment(BaseModel):
         description=(
             "The kind of receipt-level adjustment: 'tax' (sales tax/VAT added on top of the "
             "items), 'tip' (a tip, gratuity, or service charge - all the same concept), "
-            "'discount' (a basket-level coupon/voucher/member discount off the whole order), "
-            "'fee' (delivery/booking/cover charge), or 'other'."
+            "'discount' (ONLY a globally-applied discount off the whole order - a loyalty/"
+            "membership/staff/military discount or a whole-basket coupon/voucher; NEVER an "
+            "item-specific 'Special Offer', promotion, multi-buy, or Clubcard/CC saving, which "
+            "belong in the relevant item's `discount`), 'fee' (delivery/booking/cover charge), "
+            "or 'other'."
         ),
     )
     amount: str = Field(
@@ -125,11 +131,13 @@ class _Document(BaseModel):
         description=(
             "Receipt-level (basket-level) charges and discounts that affect the grand total and "
             "are NOT tied to any specific item: sales tax added on top of the items, a tip/"
-            "gratuity/service charge, basket-level discounts/coupons/vouchers, and fees "
-            "(delivery, booking, cover). An adjustment is additive (positive amount) or "
-            "subtractive (negative amount). Do NOT include: VAT/tax already baked into item "
-            "line totals; item-level savings (those go in each item's `discount`); or cash-"
-            "rounding lines. Leave null if the receipt has none."
+            "gratuity/service charge, globally-applied discounts/coupons/vouchers (loyalty/"
+            "membership/staff/military, or a whole-order coupon), and fees (delivery, booking, "
+            "cover). An adjustment is additive (positive amount) or subtractive (negative "
+            "amount). Do NOT include: VAT/tax already baked into item line totals; item-level "
+            "savings such as a 'Special Offer'/promotion/multi-buy/Clubcard saving attached to "
+            "a specific item (those go in that item's `discount`, even when several items each "
+            "have one); or cash-rounding lines. Leave null if the receipt has none."
         ),
     )
     receipt_total: Optional[str] = Field(
