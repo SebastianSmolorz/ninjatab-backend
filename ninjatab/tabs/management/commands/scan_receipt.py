@@ -74,6 +74,13 @@ class Command(BaseCommand):
         else:
             self.stdout.write(self.style.WARNING("Dry run (no --save): expected.json not written."))
 
-        # Print the full strategy result (annotation + timings + metrics).
+        # Highlight the items_total calculated by post-processing
+        # (postprocess.standard_post_process) next to the printed receipt_total.
+        self.stdout.write("\nTotals (post-processing):")
+        self.stdout.write(f"  items_total (calculated): {annotation.get('items_total')}")
+        self.stdout.write(f"  receipt_total:            {annotation.get('receipt_total')}")
+
+        # Print the entire strategy output: post-processed annotation, timings
+        # and metrics (which includes the server-calculated items_total).
         self.stdout.write("\nFull strategy result:")
         self.stdout.write(json.dumps(result, indent=2, default=str))

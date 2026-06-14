@@ -212,7 +212,6 @@ Discount / saving rows (e.g. "Multi-save -0.45", "Cc -1.15", "Special Offer -1.0
 Receipt-level fields (only when printed; otherwise null):
 - adjustments: in addition to the discount rows above, every printed receipt-level charge - tax/VAT, a tip/gratuity/service charge, and any other fee (delivery, booking, cover, etc.) - as {name, translated_name, kind, amount}. kind is one of "tax", "tip" (covers tip/gratuity/service charge), "discount", "fee", "other". amount is positive for charges/fees and negative for discounts. Just transcribe each printed row; do not compute or reconcile.
 - receipt_total: the grand total printed on the receipt, verbatim. If no grand total is printed, null - never sum or invent it.
-- items_total: leave null. The server computes it.
 - receipt_establishment_name: the merchant/establishment name if shown.
 - currency_code: ISO 4217 (e.g. GBP, EUR, USD), from an explicit symbol/code/label, or from a strong locale signal (address, language, tax label); null if not confident.
 - datetime_of_receipt: ISO 8601 when the printed date/time converts cleanly; null for partial/ambiguous/absent.

@@ -148,14 +148,14 @@ class _Document(BaseModel):
             "the items reconcile to it. When False, receipt_total must be null."
         ),
     )
-    items_total: Optional[str] = Field(
-        default=None,
-        description=(
-            "The model's own sum of all item post_discount_line_total values, as a cross-check. "
-            "The server recomputes this independently; report the honest charged sum even if it "
-            "does not match receipt_total - do not adjust items to force agreement."
-        ),
-    )
+    # items_total: Optional[str] = Field(
+    #     default=None,
+    #     description=(
+    #         "The model's own sum of all item post_discount_line_total values, as a cross-check. "
+    #         "The server recomputes this independently; report the honest charged sum even if it "
+    #         "does not match receipt_total - do not adjust items to force agreement."
+    #     ),
+    # )
     receipt_establishment_name: Optional[str] = Field(default=None, description="The merchant / establishment name shown on the receipt, if available.")
     currency_code: Optional[str] = Field(default=None, description="ISO 4217 currency code (e.g. GBP, EUR, USD); null if it cannot be confidently determined.")
     datetime_of_receipt: Optional[str] = Field(default=None, description="The receipt date/time as an ISO 8601 string; null if partial, ambiguous, or absent.")
