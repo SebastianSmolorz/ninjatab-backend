@@ -1355,6 +1355,40 @@ def remove_group_member(request, group_id: str, member_id: str):
     return {"success": True}
 
 
+@group_router.post("/{group_id}/leave")
+@transaction.atomic
+def leave_group(request, group_id: str):
+    """Leave a house: fully unlink the requesting user from it.
+
+    Nulls their roster ``TabGroupMember.user`` and their ``TabPerson.user`` on
+    every period (current + settled), so they lose all access to the house and
+    its history. The person rows stay behind as unlinked placeholders, keeping
+    each period's spend record intact. If the leaver created the house, the
+    owner link (``created_by``) is cleared too — there are no owner-only
+    actions, and a null ``created_by`` is already a supported state — so they
+    don't retain access through it. They (or anyone) can be re-invited later as
+    long as someone is still on the house.
+    """
+    group = get_object_or_404(TabGroup.objects.accessible_by(request.auth), uuid=group_id)
+    user = request.auth
+
+    is_member = group.members.filter(user=user).exists()
+    is_creator = group.created_by_id == user.id
+    if not is_member and not is_creator:
+        raise HttpError(400, "You are not a member of this house")
+
+    group.members.filter(user=user).update(user=None)
+    TabPerson.objects.filter(tab__group=group, user=user).update(user=None)
+
+    if is_creator:
+        Tab.objects.filter(group=group, created_by=user).update(created_by=None)
+        group.created_by = None
+        group.save(update_fields=["created_by", "updated_at"])
+
+    safe_capture(user.uuid, "group_left", properties={"group_id": str(group.uuid)})
+    return {"success": True}
+
+
 @group_router.get("/invite/{invite_code}", response=GroupInviteInfoSchema, auth=None)
 def get_group_invite(request, invite_code: str):
     """Get house info for an invite page — no auth required."""

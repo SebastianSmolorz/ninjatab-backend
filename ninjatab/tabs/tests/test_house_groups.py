@@ -287,6 +287,62 @@ def test_member_linked_user_can_access_group_and_periods():
 
 
 @pytest.mark.django_db
+def test_member_can_leave_house_and_loses_access():
+    creator = _user("creator@x.com")
+    member_user = _user("bob@x.com")
+    group = _make_group(creator, ["Alice", "Bob"])
+    group.members.filter(name="Bob").update(user=member_user)
+    p1 = _open_period(group)
+    _add_bill(p1, p1.people.get(name="Alice"), value=1000)
+
+    client = Client()
+    # Settle so there's also a settled period with Bob linked.
+    _post(client, f"/api/tabs/{p1.uuid}/settle-period", {}, creator)
+
+    resp = _post(client, f"/api/groups/{group.uuid}/leave", {}, member_user)
+    assert resp.status_code == 200
+
+    # Roster member kept as an unlinked placeholder; person rows kept but unlinked.
+    assert group.members.get(name="Bob").user_id is None
+    assert TabPerson.objects.filter(tab__group=group, name="Bob").exists()
+    assert not TabPerson.objects.filter(tab__group=group, user=member_user).exists()
+
+    # Bob loses all access; the creator keeps theirs.
+    assert client.get(f"/api/groups/{group.uuid}", **_auth(member_user)).status_code == 404
+    assert client.get(f"/api/groups/{group.uuid}", **_auth(creator)).status_code == 200
+
+
+@pytest.mark.django_db
+def test_creator_can_leave_and_owner_link_cleared():
+    creator = _user("creator@x.com")
+    group = _make_group(creator, ["Alice"])
+    group.members.filter(name="Alice").update(user=creator)
+    p1 = _open_period(group)
+
+    client = Client()
+    resp = _post(client, f"/api/groups/{group.uuid}/leave", {}, creator)
+    assert resp.status_code == 200
+
+    group.refresh_from_db()
+    p1.refresh_from_db()
+    assert group.created_by_id is None
+    assert p1.created_by_id is None
+    assert client.get(f"/api/groups/{group.uuid}", **_auth(creator)).status_code == 404
+
+
+@pytest.mark.django_db
+def test_non_member_cannot_leave():
+    creator = _user("creator@x.com")
+    group = _make_group(creator, ["Alice"])
+    _open_period(group)
+    stranger = _user("nope@x.com")
+
+    client = Client()
+    resp = _post(client, f"/api/groups/{group.uuid}/leave", {}, stranger)
+    assert resp.status_code == 404
+
+
+@pytest.mark.django_db
 def test_add_member_projects_into_current_period():
     creator = _user("a@x.com")
     group = _make_group(creator, ["Alice"])
