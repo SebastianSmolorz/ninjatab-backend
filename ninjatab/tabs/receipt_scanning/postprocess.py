@@ -158,6 +158,40 @@ def _collapse_redundant_translations(annotation: dict) -> None:
             adjustment["translated_name"] = name
 
 
+def _attribute_item_adjustments(annotation: dict) -> int:
+    """Fold item-flagged adjustments back onto the items they belong to.
+
+    The model now records every saving in `adjustments`, flagging item-specific
+    ones with relates_to_item=true and related_item_index pointing at the item.
+    Here we move each such saving into that item's working `discount` list (so the
+    downstream item-discount machinery is unchanged) and drop it from adjustments.
+
+    An adjustment that relates to an item but cannot be resolved (missing/out-of-
+    range index) is left in adjustments as a basket-level entry so it still affects
+    reconciliation. The relates_to_item / related_item_index helper keys are
+    stripped from every surviving adjustment so the saved annotation keeps its
+    prior shape. Returns the count of attributed savings. Mutates in place."""
+    items = annotation.get("items") or []
+    adjustments = annotation.get("adjustments") or []
+    survivors: list[dict] = []
+    attributed = 0
+    for adjustment in adjustments:
+        relates = adjustment.get("relates_to_item")
+        index = adjustment.get("related_item_index")
+        amount = _to_float(adjustment.get("amount"))
+        if relates and isinstance(index, int) and 0 <= index < len(items) and amount:
+            item = items[index]
+            discount = item.get("discount")
+            item["discount"] = (discount if isinstance(discount, list) else []) + [adjustment["amount"]]
+            attributed += 1
+            continue
+        adjustment.pop("relates_to_item", None)
+        adjustment.pop("related_item_index", None)
+        survivors.append(adjustment)
+    annotation["adjustments"] = survivors or None
+    return attributed
+
+
 def _coerce_item_discounts(value) -> list[float]:
     """Coerce an item's ``discount`` into a list of non-zero floats. The model is
     asked for a list of negative strings (one per printed saving), but tolerate a
@@ -386,6 +420,7 @@ def standard_post_process(annotation: dict, default_currency: str) -> dict:
         "has_tax": False,
         "has_tip": False,                   # tip / gratuity / service charge (one kind)
         "adjustments_count": 0,
+        "item_adjustments_attributed": 0,   # count of item-flagged adjustments folded back onto items
         "item_discounts_applied": 0,        # count of items with an item-level discount folded in
         "reconciliation_action": "none",    # "none" | "items_dropped" | "candidates_added"
         "reconciliation_items_delta": 0,
@@ -415,6 +450,7 @@ def standard_post_process(annotation: dict, default_currency: str) -> dict:
     metrics["currency_decimals"] = _annotation_decimals(annotation)
 
     _normalize_amounts_in_annotation(annotation)
+    metrics["item_adjustments_attributed"] = _attribute_item_adjustments(annotation)
     metrics["item_discounts_applied"] = _apply_item_discounts(annotation)
     annotation["ai_items_total"] = annotation.pop("items_total", None)
     metrics["synthesized_total_only_item"] = _synthesize_total_only_item(annotation)

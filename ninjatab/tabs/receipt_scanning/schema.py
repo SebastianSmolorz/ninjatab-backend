@@ -27,8 +27,10 @@ from pydantic import BaseModel, Field
 class _Item(BaseModel):
     # Field order is deliberately transcribe-then-parse: the raw line text is
     # committed first so the parsed numeric fields below are read off text the
-    # model has already transcribed, and pre -> discount -> post mirrors the
-    # arithmetic dependency (paid = pre - discount).
+    # model has already transcribed. Item-level savings are NOT recorded here -
+    # every discount/saving row goes into the receipt-level `adjustments` list
+    # (with relates_to_item / related_item_index pointing back at the item it
+    # belongs to); the server attributes and folds them in during post-processing.
     receipt_line_text: Optional[str] = Field(
         default=None,
         description=(
@@ -61,30 +63,17 @@ class _Item(BaseModel):
             "invent it."
         ),
     )
-    discount: Optional[list[str]] = Field(
-        default=None,
-        description=(
-            "Item-level savings printed on the receipt for THIS item, each as a negative "
-            "decimal string (e.g. ['-1.00'], or ['-1.00', '-0.50'] when several savings apply "
-            "to one item). Includes loyalty/Clubcard/CC, multi-buy, and standalone 'Special "
-            "Offer'/promotion rows printed directly under this item. A saving is always a "
-            "reduction, so record it negative even when the printed figure has no minus sign "
-            "(the receipt's minus is often lost). Roll up every such row, including when this "
-            "item carries more than one. Never compute a saving by subtracting one printed "
-            "price from another. Leave null if this item has no visible item-specific saving."
-        ),
-    )
     post_discount_line_total: Optional[str] = Field(
         default=None,
         description=(
-            "The final total actually PAID for this line (the line's paid total): "
-            "((quantity * price_per_quantity) - item-level discounts). Transcribe it ONLY when "
-            "a charged/discounted price is printed directly (e.g. a loyalty/Clubcard/CC price). "
-            "For an item with no item-level discount, set it equal to pre_discount_line_total. "
-            "If only a saving line is printed (no separate charged price), leave this null - the "
-            "server derives the paid amount. This is the value that contributes to items_total. "
-            "It includes sales tax only when tax is baked into the line; leave tax to receipt-"
-            "level adjustments when it is added separately."
+            "The final per-line price actually charged when the receipt prints a discounted/"
+            "charged price directly on the item row (e.g. a loyalty/Clubcard/CC price like "
+            "'Cc £5.25'). Transcribe that printed charged amount here. For an item with no "
+            "printed discounted price, set it equal to pre_discount_line_total. Leave null only "
+            "when neither a regular nor a charged price is printed. Do NOT subtract savings "
+            "yourself - separate saving rows go in `adjustments` and the server folds them in. "
+            "It includes sales tax only when tax is baked into the line; tax added separately is "
+            "a receipt-level adjustment."
         ),
     )
 
@@ -98,26 +87,50 @@ class _AdjustmentKind(str, Enum):
 
 
 class _Adjustment(BaseModel):
-    """A receipt-level (basket-level) charge or discount. By definition it is not
-    tied to any specific item, so it necessarily affects the grand total paid."""
-    name: str = Field(description="The adjustment label exactly as printed on the receipt.")
+    """A charge or discount printed on the receipt that is not a purchased good.
+
+    This covers BOTH receipt-level (basket-level) entries - tax, tip, fees, whole-
+    order discounts - AND item-level savings (Special Offer, multi-buy, Clubcard/CC).
+    Item-level savings are flagged with relates_to_item=true and point back at the
+    item they belong to via related_item_index; the server folds them into that
+    item's price during post-processing. This keeps attribution out of generation."""
+    name: str = Field(description="The adjustment / saving label exactly as printed on the receipt.")
     translated_name: str = Field(description="English translation of the label (equal to name if already English).")
     kind: _AdjustmentKind = Field(
         description=(
-            "The kind of receipt-level adjustment: 'tax' (sales tax/VAT added on top of the "
-            "items), 'tip' (a tip, gratuity, or service charge - all the same concept), "
-            "'discount' (ONLY a globally-applied discount off the whole order - a loyalty/"
-            "membership/staff/military discount or a whole-basket coupon/voucher; NEVER an "
-            "item-specific 'Special Offer', promotion, multi-buy, or Clubcard/CC saving, which "
-            "belong in the relevant item's `discount`), 'fee' (delivery/booking/cover charge), "
-            "or 'other'."
+            "The kind of adjustment: 'tax' (sales tax/VAT added on top of the items), 'tip' (a "
+            "tip, gratuity, or service charge - all the same concept), 'discount' (ANY saving/"
+            "reduction, whether a whole-order loyalty/membership/staff/military discount or "
+            "coupon/voucher, OR an item-specific 'Special Offer', promotion, multi-buy, or "
+            "Clubcard/CC saving), 'fee' (delivery/booking/cover charge), or 'other'."
         ),
     )
     amount: str = Field(
         description=(
             "The signed amount as a decimal string: NEGATIVE for subtractive adjustments "
-            "(discounts, coupons, vouchers) and POSITIVE for additive adjustments (tax, tip, "
-            "service charge, fees)."
+            "(discounts, coupons, vouchers, savings) and POSITIVE for additive adjustments "
+            "(tax, tip, service charge, fees). A saving is always negative even when the printed "
+            "figure has no minus sign (the receipt's minus is often lost)."
+        ),
+    )
+    relates_to_item: bool = Field(
+        default=False,
+        description=(
+            "True when this adjustment is a saving/charge tied to ONE specific purchased item "
+            "(e.g. a 'Special Offer', multi-buy/'Multi-save', or Clubcard/CC saving printed "
+            "directly under an item). False for genuinely receipt-level entries (tax, tip, "
+            "fees, whole-order discounts) that are not attributable to a single item. When "
+            "true, set related_item_index to that item's position."
+        ),
+    )
+    related_item_index: Optional[int] = Field(
+        default=None,
+        description=(
+            "When relates_to_item is true, the 0-based index of the item in the `items` list "
+            "that this saving/charge belongs to (the item printed directly above a saving row "
+            "is the one it applies to; for a multi-buy spanning several rows, the last "
+            "qualifying row). Leave null when relates_to_item is false, or when the saving "
+            "cannot be confidently attributed to a specific item."
         ),
     )
 
@@ -129,15 +142,17 @@ class _Document(BaseModel):
     adjustments: Optional[list[_Adjustment]] = Field(
         default=None,
         description=(
-            "Receipt-level (basket-level) charges and discounts that affect the grand total and "
-            "are NOT tied to any specific item: sales tax added on top of the items, a tip/"
-            "gratuity/service charge, globally-applied discounts/coupons/vouchers (loyalty/"
-            "membership/staff/military, or a whole-order coupon), and fees (delivery, booking, "
-            "cover). An adjustment is additive (positive amount) or subtractive (negative "
-            "amount). Do NOT include: VAT/tax already baked into item line totals; item-level "
-            "savings such as a 'Special Offer'/promotion/multi-buy/Clubcard saving attached to "
-            "a specific item (those go in that item's `discount`, even when several items each "
-            "have one); or cash-rounding lines. Leave null if the receipt has none."
+            "Every printed charge or saving that is not itself a purchased good. This includes "
+            "BOTH receipt-level entries - sales tax added on top of the items, a tip/gratuity/"
+            "service charge, whole-order discounts/coupons/vouchers (loyalty/membership/staff/"
+            "military), and fees (delivery, booking, cover) - AND item-level savings such as a "
+            "'Special Offer'/promotion/multi-buy/Clubcard saving printed against a specific "
+            "item. Flag each item-level saving with relates_to_item=true and point it at its "
+            "item via related_item_index; leave receipt-level entries relates_to_item=false. The "
+            "server attributes the item-level ones and folds them into the item's price. Each "
+            "amount is additive (positive) or subtractive (negative). Do NOT include: VAT/tax "
+            "already baked into item line totals, or cash-rounding lines. Leave null if the "
+            "receipt has neither charges nor savings."
         ),
     )
     receipt_total: Optional[str] = Field(
