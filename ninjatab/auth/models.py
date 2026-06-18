@@ -30,6 +30,8 @@ class UserPaymentMethod(models.Model):
         PAYPAL = "paypal", "PayPal"
         MONZO = "monzo", "Monzo"
         REVOLUT = "revolut", "Revolut"
+        CASHAPP = "cashapp", "Cash App"
+        VENMO = "venmo", "Venmo"
 
     uuid = models.UUIDField(default=uuid7, unique=True, editable=False, db_index=True)
     created_at = models.DateTimeField(auto_now_add=True)
