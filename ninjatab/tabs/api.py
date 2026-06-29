@@ -1019,9 +1019,15 @@ def list_bills(request, tab_id: str = None, cursor: str = None, mine: bool = Fal
     if tab_id:
         qs = qs.filter(tab__uuid=tab_id)
     if mine:
+        # Both claim conditions sit in one Q so they match the *same* claim row:
+        # the caller's own claim, and only when it actually owes something (a
+        # zero-share claim still has a row but shouldn't count as "yours").
         qs = qs.filter(
             Q(paid_by__user=request.auth)
-            | Q(line_items__person_claims__person__user=request.auth)
+            | Q(
+                line_items__person_claims__person__user=request.auth,
+                line_items__person_claims__calculated_amount__gt=0,
+            )
         ).distinct()
     qs = qs.select_related('paid_by__user', 'tab').prefetch_related('line_items')
     items, next_cursor = _apply_bill_cursor(qs, cursor)
