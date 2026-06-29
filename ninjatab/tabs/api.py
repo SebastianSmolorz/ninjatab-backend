@@ -1008,8 +1008,9 @@ def submit_bill_splits(request, bill_id: str, payload: BillSplitSubmitSchema):
 
 
 @bill_router.get("/", response=CursorPageSchema[BillListSchema])
-def list_bills(request, tab_id: str = None, cursor: str = None):
-    """List all bills, optionally filtered by tab"""
+def list_bills(request, tab_id: str = None, cursor: str = None, mine: bool = False):
+    """List all bills, optionally filtered by tab. With mine=true, restrict to
+    bills the caller is involved in (paid for, or has a claim on)."""
     qs = Bill.objects.filter(tab__in=Tab.objects.accessible_by(request.auth))
     if tab_id:
         qs = qs.filter(tab__uuid=tab_id)
