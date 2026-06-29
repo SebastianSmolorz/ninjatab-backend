@@ -1012,11 +1012,17 @@ def submit_bill_splits(request, bill_id: str, payload: BillSplitSubmitSchema):
 
 
 @bill_router.get("/", response=CursorPageSchema[BillListSchema])
-def list_bills(request, tab_id: str = None, cursor: str = None):
-    """List all bills, optionally filtered by tab"""
+def list_bills(request, tab_id: str = None, cursor: str = None, mine: bool = False):
+    """List all bills, optionally filtered by tab. With mine=true, restrict to
+    bills the caller is involved in (paid for, or has a claim on)."""
     qs = Bill.objects.filter(tab__in=Tab.objects.accessible_by(request.auth))
     if tab_id:
         qs = qs.filter(tab__uuid=tab_id)
+    if mine:
+        qs = qs.filter(
+            Q(paid_by__user=request.auth)
+            | Q(line_items__person_claims__person__user=request.auth)
+        ).distinct()
     qs = qs.select_related('paid_by__user', 'tab').prefetch_related('line_items')
     items, next_cursor = _apply_bill_cursor(qs, cursor)
     return {"items": items, "next_cursor": next_cursor}
