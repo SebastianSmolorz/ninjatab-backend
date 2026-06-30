@@ -55,6 +55,26 @@ def _is_likely_non_contributing(name: Optional[str]) -> bool:
     return bool(name) and _NON_CONTRIBUTING_RE.search(name) is not None
 
 
+# Narrower groups (subset of NON_CONTRIBUTING_KEYWORDS) used to tag items the
+# client should default to a proportional split. Subtotal/discount/rounding are
+# deliberately excluded — they are not charges to redistribute.
+_CATEGORY_RES = (
+    ("tax", re.compile(r"\b(?:tax|vat|gst|hst|pst)\b", re.IGNORECASE)),
+    ("tip", re.compile(r"\b(?:tips?|gratuity)\b", re.IGNORECASE)),
+    ("service", re.compile(r"\b(?:service\s*charge|surcharge|service\s*fee)\b", re.IGNORECASE)),
+)
+
+
+def _categorize_item_name(name: Optional[str]) -> str:
+    """Classify a line-item name as 'tax' | 'tip' | 'service' | 'item'. Used to
+    tell the client which scanned rows should default to a proportional split."""
+    if name:
+        for category, regex in _CATEGORY_RES:
+            if regex.search(name):
+                return category
+    return "item"
+
+
 def _normalize_amount_str(value, currency_decimals: int = 2):
     """Normalize an amount string to use '.' as the decimal separator and no
     thousands separators. Handles both '.'-decimal (US: 1,234.56) and
@@ -309,6 +329,10 @@ def standard_post_process(annotation: dict, default_currency: str) -> dict:
 
     annotation["items_total"] = _items_sum(items_after, _annotation_decimals(annotation))
     _collapse_redundant_translations(annotation)
+    for item in items_after:
+        item["category"] = _categorize_item_name(
+            item.get("name") or item.get("translated_name")
+        )
 
     receipt_total_f = _to_float(annotation.get("receipt_total"))
     items_total_f = _to_float(annotation.get("items_total"))
