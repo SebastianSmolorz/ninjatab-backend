@@ -161,6 +161,7 @@ class LineItemSchema(BaseModel):
     value: int
     value_display: Optional[Decimal] = None
     split_type: SplitTypeEnum
+    proportional: bool = False
     person_claims: List[PersonLineItemClaimSchema]
     version: int = 1
     created_at: datetime
@@ -181,6 +182,7 @@ class LineItemSchema(BaseModel):
                     'value': data.value,
                     'value_display': None,  # set by BillSchema when currency is available
                     'split_type': data.split_type,
+                    'proportional': data.proportional,
                     'person_claims': person_claims_list,
                     'version': data.version,
                     'created_at': data.created_at,
@@ -233,6 +235,7 @@ class LineItemCreateSchema(BaseModel):
     translated_name: str = ''
     value: int
     split_type: SplitTypeEnum = SplitTypeEnum.SHARES
+    proportional: bool = False
     person_splits: List[PersonSplitCreateSchema] = []
 
     @field_validator('person_splits')
@@ -296,6 +299,7 @@ class BillSchema(BaseModel):
                         'translated_name': li.translated_name,
                         'value': li.value,
                         'split_type': li.split_type,
+                        'proportional': li.proportional,
                         'person_claims': list(li.person_claims.all()) if hasattr(li.person_claims, 'all') else [],
                         'version': li.version,
                         'created_at': li.created_at,
@@ -370,6 +374,7 @@ class BillSplitSubmitSchema(BaseModel):
 
 class LineItemSplitSubmitSchema(BaseModel):
     line_item_id: str
+    proportional: bool = False
     person_splits: List['PersonSplitSubmitSchema']
 
 

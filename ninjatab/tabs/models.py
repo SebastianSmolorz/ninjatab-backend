@@ -347,6 +347,10 @@ class LineItem(VersionedModel, BaseModel):
         choices=SplitType.choices,
         default=SplitType.SHARES
     )
+    # Proportional items (tax/tip) are stored as ordinary SHARES splits whose
+    # weights are each person's claimed subtotal; this flag just records the
+    # intent so clients can re-derive those weights when sibling splits change.
+    proportional = models.BooleanField(default=False)
 
     class Meta:
         ordering = ['created_at']

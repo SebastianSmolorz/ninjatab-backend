@@ -874,7 +874,8 @@ def create_bill(request, payload: BillCreateSchema):
                     description=line_item_data.description,
                     translated_name=line_item_data.translated_name,
                     value=line_item_data.value,
-                    split_type=line_item_data.split_type
+                    split_type=line_item_data.split_type,
+                    proportional=line_item_data.proportional,
                 )
 
                 # Create person claims if provided
@@ -985,6 +986,12 @@ def submit_bill_splits(request, bill_id: str, payload: BillSplitSubmitSchema):
             uuid=line_item_split.line_item_id,
             bill=bill
         )
+
+        # Persist the proportional flag (cleared when the user overrides to a
+        # manual split). Only save on change to avoid a needless version bump.
+        if line_item.proportional != line_item_split.proportional:
+            line_item.proportional = line_item_split.proportional
+            line_item.save(update_fields=['proportional'])
 
         # Delete existing claims for this line item
         PersonLineItemClaim.objects.filter(line_item=line_item).delete()
