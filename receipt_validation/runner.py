@@ -208,7 +208,7 @@ def run_pipeline(
                     output["cases"][case_uuid]["strategies"][strategy.name]["runs"].append(record)
 
     # Compute aggregates after all runs complete
-    score_keys = ["total_score", "receipt_total_accuracy", "items_total_accuracy", "item_count_match", "items_sum_vs_receipt_total", "items_sum_vs_items_total", "item_total_accuracy", "item_name_fuzzy_match", "item_translated_name_fuzzy_match", "item_quantity_accuracy", "item_price_per_quantity_accuracy", "currency_match", "language_match", "date_match"]
+    score_keys = ["total_score", "receipt_total_accuracy", "items_total_accuracy", "item_count_match", "items_sum_vs_receipt_total", "items_sum_vs_items_total", "item_total_accuracy", "item_name_fuzzy_match", "item_translated_name_fuzzy_match", "item_quantity_accuracy", "item_price_per_quantity_accuracy", "subtotal_accuracy", "items_sum_vs_subtotal", "charge_amount_accuracy", "charge_included_flag_match", "charge_kind_match", "charge_count_match", "item_adjustment_amount_accuracy", "currency_match", "language_match", "date_match"]
     for case_uuid, case_out in output["cases"].items():
         for strategy_name, strategy_out in case_out["strategies"].items():
             runs_out = strategy_out["runs"]

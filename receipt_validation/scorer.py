@@ -14,7 +14,7 @@ WEIGHTS = {
     "items_total_accuracy": 1.0,
     "item_count_match": 2.0,
     "items_sum_vs_receipt_total": 0.0,  # redundant + wrong when tax/charges exist
-    "items_sum_vs_items_total": 2.0,
+    "items_sum_vs_items_total": 1.0,
     "item_total_accuracy": 2.0,
     "item_name_fuzzy_match": 2.5,
     "item_translated_name_fuzzy_match": 1.5,
@@ -23,6 +23,14 @@ WEIGHTS = {
     "currency_match": 0.5,
     "language_match": 0.5,
     "date_match": 0.5,
+    # v2 ledger metrics
+    "subtotal_accuracy": 1.5,
+    "items_sum_vs_subtotal": 2.5,   # the direct row-doubling detector
+    "charge_amount_accuracy": 2.0,
+    "charge_included_flag_match": 2.0,  # a wrong flag shifts the whole split
+    "charge_kind_match": 0.5,
+    "charge_count_match": 1.0,
+    "item_adjustment_amount_accuracy": 0.5,
 }
 
 
@@ -99,6 +107,40 @@ def _align_items(expected_items: list, result_items: list) -> list[tuple[dict, O
     return pairs
 
 
+def _align_charges(expected_charges: list, result_charges: list) -> list[tuple[dict, Optional[dict]]]:
+    """Greedy one-to-one alignment of expected charges to result charges:
+    same-kind matches are preferred, ties broken by fuzzy name similarity."""
+    remaining = list(range(len(result_charges)))
+    pairs = []
+    for exp in expected_charges:
+        best_j, best_score = None, (-1.0, -1.0)
+        for j in remaining:
+            res = result_charges[j]
+            score = (
+                1.0 if res.get("kind") == exp.get("kind") else 0.0,
+                _fuzzy(exp.get("name") or "", res.get("name") or ""),
+            )
+            if score > best_score:
+                best_score, best_j = score, j
+        if best_j is not None:
+            remaining.remove(best_j)
+            pairs.append((exp, result_charges[best_j]))
+        else:
+            pairs.append((exp, None))
+    return pairs
+
+
+def _aligned_flag(pairs: list, key: str) -> Optional[float]:
+    """Exact-match score for a boolean/enum field over aligned pairs (0 when
+    the expected entry went unmatched)."""
+    scores = []
+    for exp, res in pairs:
+        if exp.get(key) is None:
+            continue
+        scores.append(1.0 if res is not None and res.get(key) == exp.get(key) else 0.0)
+    return _avg(scores)
+
+
 def _avg(values: list) -> Optional[float]:
     vals = [v for v in values if v is not None]
     return sum(vals) / len(vals) if vals else None
@@ -171,6 +213,32 @@ def score_result(result: dict, expected: dict) -> dict:
     item_quantity_accuracy = _aligned_numeric(pairs, "quantity")
     item_price_per_quantity_accuracy = _aligned_numeric(pairs, "price_per_quantity")
 
+    # v2 ledger metrics: subtotal anchor + receipt-level charges.
+    subtotal_accuracy = _total_accuracy(result_ann.get("subtotal"), expected_ann.get("subtotal"))
+    items_sum_vs_subtotal = _total_accuracy(result_items_sum, expected_ann.get("subtotal"))
+
+    expected_charges = expected_ann.get("charges") or []
+    result_charges = result_ann.get("charges") or []
+    charge_pairs = _align_charges(expected_charges, result_charges)
+    charge_amount_accuracy = _aligned_numeric(charge_pairs, "amount")
+    charge_included_flag_match = _aligned_flag(charge_pairs, "included_in_item_totals")
+    charge_kind_match = _aligned_flag(charge_pairs, "kind")
+    charge_count_match = (
+        _item_count_score(
+            [{"total": c.get("amount")} for c in result_charges],
+            [{"total": c.get("amount")} for c in expected_charges],
+        )
+        if (expected_charges or result_charges)
+        else None
+    )
+
+    # Net item totals over the expected items that carry adjustments — checks
+    # the extraction+fold of item-level discounts/replacement prices.
+    adjustment_pairs = [(e, r) for e, r in pairs if e.get("adjustments")]
+    item_adjustment_amount_accuracy = (
+        _aligned_numeric(adjustment_pairs, "total") if adjustment_pairs else None
+    )
+
     # Currency code match (exact, case-insensitive)
     expected_currency = (expected_ann.get("currency_code") or "").upper()
     result_currency = (result_ann.get("currency_code") or "").upper()
@@ -208,6 +276,13 @@ def score_result(result: dict, expected: dict) -> dict:
         "item_translated_name_fuzzy_match": item_translated_name_fuzzy_match,
         "item_quantity_accuracy": item_quantity_accuracy,
         "item_price_per_quantity_accuracy": item_price_per_quantity_accuracy,
+        "subtotal_accuracy": subtotal_accuracy,
+        "items_sum_vs_subtotal": items_sum_vs_subtotal,
+        "charge_amount_accuracy": charge_amount_accuracy,
+        "charge_included_flag_match": charge_included_flag_match,
+        "charge_kind_match": charge_kind_match,
+        "charge_count_match": charge_count_match,
+        "item_adjustment_amount_accuracy": item_adjustment_amount_accuracy,
         "currency_match": currency_match,
         "language_match": language_match,
         "date_match": date_match,

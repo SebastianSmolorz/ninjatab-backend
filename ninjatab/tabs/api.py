@@ -689,8 +689,13 @@ def claim_invite(request, invite_code: str, payload: ClaimInviteSchema):
 
 
 @tab_router.post("/{tab_id}/upload-receipt")
-def upload_receipt(request, tab_id: str, file: UploadedFile = File(...)):
-    """Upload a receipt image, run OCR, and return parsed annotation."""
+def upload_receipt(request, tab_id: str, annotation_version: int = 1, file: UploadedFile = File(...)):
+    """Upload a receipt image, run OCR, and return parsed annotation.
+
+    `annotation_version=2` returns the structured shape (charges/subtotal/
+    adjustments); the default (1) flattens charges into items for old app
+    builds that only read `items`."""
+    from ninjatab.tabs.receipt_scanning.postprocess import flatten_for_legacy
     from ninjatab.tabs.receipt_service import (
         validate_upload, upload_to_spaces, scan_receipt,
         check_scan_limit, increment_scan_count, ScanLimitExceeded,
@@ -726,7 +731,11 @@ def upload_receipt(request, tab_id: str, file: UploadedFile = File(...)):
 
     increment_scan_count(tab)
 
+    if annotation_version < 2 and result.get("document_annotation"):
+        result["document_annotation"] = flatten_for_legacy(result["document_annotation"])
+
     scan_metrics = result.pop("_scan_metrics", {}) or {}
+    scan_metrics["annotation_version"] = annotation_version
 
     if result.get("document_annotation") is None:
         safe_capture(request.auth.uuid, "receipt_scan_failed", properties={

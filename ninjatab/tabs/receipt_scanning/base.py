@@ -109,7 +109,8 @@ class ReceiptScanStrategy:
     name: str = "base"
     prompt: str = DOCUMENT_ANNOTATION_PROMPT
     model: str = "mistral-ocr-latest"
-    version: str = "1"
+    # v2: charges/subtotal/adjustments schema + priced-row prompt.
+    version: str = "2"
 
     def __init__(self, *, name=None, model=None, prompt=None, version=None):
         """Optionally override the class-level name/model/prompt/version on a

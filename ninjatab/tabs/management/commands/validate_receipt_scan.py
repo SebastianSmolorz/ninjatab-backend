@@ -52,6 +52,14 @@ class Command(BaseCommand):
             default=None,
             help="Path to save full JSON output",
         )
+        parser.add_argument(
+            "--write-expected",
+            action="store_true",
+            help=(
+                "Write each case's best-scoring run annotation to its "
+                "expected.json (review against the receipt image before committing)"
+            ),
+        )
 
     def handle(self, *args, **options):
         case_uuids = None if options["cases"] == "all" else options["cases"].split(",")
@@ -92,6 +100,33 @@ class Command(BaseCommand):
             output_path.write_text(json.dumps(results, indent=2))
             self.stdout.write(self.style.SUCCESS(f"Full results saved to {output_path}"))
 
+        if options["write_expected"]:
+            self._write_expected(results)
+
+    def _write_expected(self, results: dict):
+        """Write each case's best-scoring run annotation to its expected.json.
+        The scores are against the OLD expected.json, so they only rank runs
+        relative to each other — the written file must still be reviewed by eye
+        against the receipt image before committing."""
+        for case_uuid, case_data in results["cases"].items():
+            best = None
+            for strategy_data in case_data["strategies"].values():
+                for run in strategy_data["runs"]:
+                    annotation = ((run.get("result") or {}).get("document_annotation"))
+                    if annotation is None or run.get("scores") is None:
+                        continue
+                    score = run["scores"].get("total_score") or 0
+                    if best is None or score > best[0]:
+                        best = (score, annotation)
+            if best is None:
+                self.stdout.write(self.style.WARNING(f"{case_uuid}: no run produced an annotation; skipped"))
+                continue
+            expected_path = CASES_DIR / case_uuid / "expected.json"
+            expected_path.write_text(
+                json.dumps({"document_annotation": best[1]}, indent=2, ensure_ascii=False) + "\n"
+            )
+            self.stdout.write(self.style.SUCCESS(f"{case_uuid}: expected.json written (review before commit)"))
+
     def _print_summary(self, results: dict):
         self.stdout.write("")
         self.stdout.write("=" * 80)
@@ -110,6 +145,13 @@ class Command(BaseCommand):
             ("mean_item_translated_name_fuzzy_match", "Translated"),
             ("mean_item_quantity_accuracy", "Qty"),
             ("mean_item_price_per_quantity_accuracy", "Price/Qty"),
+            ("mean_subtotal_accuracy", "Subtotal"),
+            ("mean_items_sum_vs_subtotal", "Sum/Subttl"),
+            ("mean_charge_amount_accuracy", "Chg Amt"),
+            ("mean_charge_included_flag_match", "Chg Incl"),
+            ("mean_charge_kind_match", "Chg Kind"),
+            ("mean_charge_count_match", "Chg Count"),
+            ("mean_item_adjustment_amount_accuracy", "Adjust"),
             ("mean_currency_match", "Currency"),
             ("mean_language_match", "Language"),
             ("mean_date_match", "Date"),

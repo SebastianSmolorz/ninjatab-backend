@@ -10,9 +10,10 @@ from django.db.models import F
 # the schema and prompt here so existing imports keep working.
 from ninjatab.tabs.receipt_scanning.prompt import DOCUMENT_ANNOTATION_PROMPT  # noqa: F401
 from ninjatab.tabs.receipt_scanning.schema import (  # noqa: F401
+    _Charge,
     _Document,
     _Item,
-    _OtherCharge,
+    _ItemAdjustment,
 )
 
 logger = logging.getLogger("app")
