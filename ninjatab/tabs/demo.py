@@ -147,7 +147,7 @@ _DEMO_RECEIPT_DATA = {
 
 def create_demo_tab(user) -> Tab:
     """Factory that builds a pre-populated demo tab for the given user."""
-    user_name = user.first_name.strip() or "You"
+    user_name = "You"
 
     tab = Tab.objects.create(
         name="Europe Trip",

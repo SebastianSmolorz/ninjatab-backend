@@ -276,9 +276,6 @@ def update_me(request, payload: UpdateProfileSchema):
         opt_in_changed = True
     user.save(update_fields=update_fields)
 
-    new_name = user.first_name.strip() or "You"
-    TabPerson.objects.filter(user=user, tab__is_demo=True).update(name=new_name)
-
     if opt_in_changed:
         _identify_user(user, "profile_update")
 
