@@ -690,7 +690,37 @@ def claim_invite(request, invite_code: str, payload: ClaimInviteSchema):
 
 @tab_router.post("/{tab_id}/upload-receipt")
 def upload_receipt(request, tab_id: str, file: UploadedFile = File(...)):
-    """Upload a receipt image, run OCR, and return parsed annotation."""
+    """Upload a receipt image, run OCR, and return the parsed annotation as one
+    flat `items` list — the contract the shipped mobile client reads.
+
+    Charges reach it as extra rows carrying a `category`, item discounts as
+    negative rows beneath a grossed-up item, and at most one row is a tax. See
+    `/upload-receipt-v2` for the same scan without that flattening.
+    """
+    from ninjatab.tabs.receipt_scanning.ledger import flatten_for_v1
+
+    result = _scan_upload(request, tab_id, file)
+    result["document_annotation"] = flatten_for_v1(result["document_annotation"])
+    return result
+
+
+@tab_router.post("/{tab_id}/upload-receipt-v2")
+def upload_receipt_v2(request, tab_id: str, file: UploadedFile = File(...)):
+    """The same scan as `/upload-receipt`, returning the reconciled ledger:
+    `items` holds only what someone ordered, and `adjustments` holds every
+    receipt-level charge, each with a `type` (tax | tip | service | fee |
+    discount) and the `split` mode it defaults to (proportional | even).
+
+    `items_total + adjustments_total == grand_total`, which is what
+    `receipt_total` is checked against.
+    """
+    return _scan_upload(request, tab_id, file)
+
+
+def _scan_upload(request, tab_id: str, file) -> dict:
+    """Upload a receipt image, run OCR, fire the analytics, and return the
+    scan result. Shared by both endpoint versions — they differ only in how the
+    annotation is presented."""
     from ninjatab.tabs.receipt_service import (
         validate_upload, upload_to_spaces, scan_receipt,
         check_scan_limit, increment_scan_count, ScanLimitExceeded,

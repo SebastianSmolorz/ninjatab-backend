@@ -1,5 +1,7 @@
 """Concrete receipt scanning strategies and their registry."""
 
+import copy
+import logging
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 
@@ -14,8 +16,10 @@ from .base import (
     run_single_ocr,
 )
 from .postprocess import (
+    _annotation_decimals,
     _annotation_tolerance,
     _is_reconciled,
+    bill_total,
     _items_receipt_gap,
     _to_float,
     field_consensus,
@@ -25,6 +29,8 @@ from .postprocess import (
     standard_post_process,
 )
 from .sources import default_ref
+
+logger = logging.getLogger("app")
 
 
 def _postprocess_candidates(ocr_results: list[dict], ctx: ScanContext) -> tuple[list, list]:
@@ -62,7 +68,7 @@ def _build_result_from_candidates(
             len((c or {}).get("items") or []) if c else None for c in candidates
         ],
         "consensus_candidate_items_totals": [
-            _to_float((c or {}).get("items_total")) for c in candidates
+            bill_total(c) if c else None for c in candidates
         ],
         "consensus_candidate_receipt_totals": [
             _to_float((c or {}).get("receipt_total")) for c in candidates
@@ -137,6 +143,7 @@ class ConcurrentConsensusStrategy(ReceiptScanStrategy):
         self.n_requests = n_requests
 
     def pre_process(self, ctx: ScanContext) -> list[str]:
+        self._maybe_deskew(ctx)
         return [default_ref(ctx)] * self.n_requests
 
     def call_mistral(self, prepared: list[str], ctx: ScanContext) -> list[dict]:
@@ -152,6 +159,158 @@ class ConcurrentConsensusStrategy(ReceiptScanStrategy):
         return _build_result_from_candidates(
             candidates, candidate_metrics, ocr_results, self.base_metrics(ctx), self.n_requests,
         )
+
+
+def _charge_amounts(annotation: dict) -> list[float]:
+    amounts = [_to_float(annotation.get(k)) for k in ("tax", "tip", "service_charge")]
+    amounts += [_to_float(c.get("amount")) for c in annotation.get("other_charges") or []]
+    return [a for a in amounts if a is not None]
+
+
+def _drop_uncorroborated_charges(annotations: list) -> int:
+    """Discard charges only one OCR call saw, in place. Returns the count.
+
+    A charge is added on top of the bill, so inventing one costs the payer real
+    money — and a *missing item* and a *phantom charge of the same size* are
+    arithmetically identical, so reconciliation cannot tell them apart on its
+    own. Corroboration can: a genuine printed charge is read by every call,
+    while a hallucination shows up once. Only applied when there are at least
+    two readings to compare, so it never weakens a single-call strategy.
+    """
+    valid = [a for a in annotations if a]
+    if len(valid) < 2:
+        return 0
+
+    seen = Counter()
+    for annotation in valid:
+        # Count each distinct amount once per candidate, so one candidate
+        # listing the same figure twice cannot corroborate itself.
+        seen.update({round(a, 6) for a in _charge_amounts(annotation)})
+
+    dropped = 0
+    for annotation in valid:
+        for key in ("tax", "tip", "service_charge"):
+            amount = _to_float(annotation.get(key))
+            if amount is not None and seen[round(amount, 6)] < 2:
+                annotation[key] = None
+                dropped += 1
+        others = annotation.get("other_charges")
+        if others:
+            kept = [
+                c for c in others
+                if (_to_float(c.get("amount")) is None
+                    or seen[round(_to_float(c["amount"]), 6)] >= 2)
+            ]
+            dropped += len(others) - len(kept)
+            annotation["other_charges"] = kept
+    return dropped
+
+
+def _try_markdown_dedupe(annotation: dict, markdown: str, default_currency: str):
+    """Drop rows the receipt text does not print often enough, but only if the
+    bill then reconciles exactly. Returns (repaired annotation, metrics) or
+    (None, None) to leave the candidate alone.
+
+    Attempted on a copy: the text is a useful way to *nominate* duplicated rows
+    and a poor way to decide anything on its own, so the arithmetic has the final
+    say. If the deduplicated bill does not land exactly on receipt_total — once
+    the charges that belong on it are added back — the whole attempt is
+    discarded and the untouched candidate is post-processed as usual.
+    """
+    from .ledger import reconcile_ledger
+    from .verify import drop_unattested_duplicates
+
+    items = annotation.get("items") or []
+    if not items or _to_float(annotation.get("receipt_total")) is None:
+        return None, None
+
+    decimals = _annotation_decimals(annotation)
+    kept = drop_unattested_duplicates(items, markdown, decimals)
+    if kept is None:
+        return None, None
+
+    trial = copy.deepcopy(annotation)
+    trial["items"] = [copy.deepcopy(i) for i in kept]
+    metrics = reconcile_ledger(trial, default_currency)
+    if not metrics.get("items_match_receipt_total"):
+        return None, None
+
+    metrics["markdown_rows_dropped"] = len(items) - len(kept)
+    logger.info(
+        "Markdown dedupe: dropped %d row(s) unattested in the receipt text",
+        len(items) - len(kept),
+    )
+    return trial, metrics
+
+
+class VerifiedConsensusStrategy(ConcurrentConsensusStrategy):
+    """Concurrent consensus plus a deterministic surplus-row repair.
+
+    Mistral's most common structural error is emitting too many item rows — a
+    wrapped description or a multi-buy qualifier transcribed as its own row,
+    carrying a copy of a price that is already counted. `verify.verify_and_repair`
+    detects that arithmetically (the rows overshoot receipt_total by exactly the
+    value of a small set of rows) and removes them.
+
+    Repair runs on every candidate *before* selection, so `select_best_line_items`
+    chooses among parses that reconcile rather than picking one and repairing
+    afterwards, and once more on the winner, whose line items may have come from
+    a different candidate than its scalar fields.
+
+    Costs no extra Mistral calls.
+    """
+
+    name = "verified_consensus"
+    # 3: reconciles into a ledger (items + typed adjustments) rather than one
+    # flat list. Same prompt and schema as 2, so captures are comparable.
+    version = "3"
+
+    def post_process(self, ocr_results: list[dict], ctx: ScanContext) -> ScanResult:
+        from .ledger import reconcile_ledger
+        from .verify import verify_and_repair
+
+        annotations = [o["annotation"] for o in ocr_results]
+        dropped = _drop_uncorroborated_charges(annotations)
+
+        # Ledger reconciliation replaces standard_post_process: it reconciles
+        # items + charges - discounts against receipt_total instead of forcing
+        # charges into the item list to make sum(items) come out right.
+        candidates: list = []
+        candidate_metrics: list = []
+        deduped = 0
+        for annotation, ocr in zip(annotations, ocr_results):
+            if annotation is None:
+                candidates.append(None)
+                candidate_metrics.append(None)
+                continue
+            repaired, metrics = _try_markdown_dedupe(
+                annotation, ocr.get("ocr_markdown") or "", ctx.default_currency
+            )
+            if repaired is not None:
+                deduped += 1
+                candidates.append(repaired)
+                candidate_metrics.append(metrics)
+                continue
+            candidate_metrics.append(reconcile_ledger(annotation, ctx.default_currency))
+            candidates.append(annotation)
+
+        repaired = 0
+        for candidate in candidates:
+            if candidate is not None:
+                repaired += verify_and_repair(candidate).get("verify_rows_dropped", 0)
+
+        result = _build_result_from_candidates(
+            candidates, candidate_metrics, ocr_results, self.base_metrics(ctx),
+            self.n_requests,
+        )
+        if result.document_annotation is not None:
+            final = verify_and_repair(result.document_annotation)
+            repaired += final.get("verify_rows_dropped", 0)
+            result.metrics["verify_reconciled_after"] = final.get("verify_reconciled_after")
+        result.metrics["verify_rows_dropped"] = repaired
+        result.metrics["uncorroborated_charges_dropped"] = dropped
+        result.metrics["markdown_deduped_candidates"] = deduped
+        return result
 
 
 def _candidates_agree(candidates: list) -> tuple[bool, str]:
@@ -176,7 +335,7 @@ def _candidates_agree(candidates: list) -> tuple[bool, str]:
         return False, "item_count_disagreement"
 
     agreeing = [c for c in pool if len(c.get("items") or []) == modal_count]
-    totals = [t for t in (_to_float(c.get("items_total")) for c in agreeing) if t is not None]
+    totals = [t for t in (bill_total(c) for c in agreeing) if t is not None]
     if totals and (max(totals) - min(totals)) > _annotation_tolerance(agreeing[0]):
         return False, "items_total_disagreement"
 
@@ -202,6 +361,9 @@ class TieredConsensusStrategy(ReceiptScanStrategy):
 
     def run(self, ctx: ScanContext) -> ScanResult:
         t0 = timezone.now()
+        # This strategy drives its own run(), so it must deskew explicitly
+        # rather than inheriting the base pre_process step.
+        self._maybe_deskew(ctx)
         ref = default_ref(ctx)
 
         b1_t = timezone.now()
@@ -296,6 +458,7 @@ class EscalatingStrategy(ReceiptScanStrategy):
 STRATEGIES = [
     BaselineStrategy(),
     ConcurrentConsensusStrategy(),
+    VerifiedConsensusStrategy(),
     TieredConsensusStrategy(),
     # EscalatingStrategy(),
 ]

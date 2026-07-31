@@ -25,7 +25,11 @@ price_per_quantity: the price of this item per quantity
 total: the final price paid for that line item so quantity * price_per_quantity.
 receipt_line_text: the raw, verbatim text of the printed receipt row(s) this item was extracted from, exactly as it appears (including any item code, quantity, and price as printed). If the item spans multiple printed rows, join them with " / ". This is used to verify the extraction against the receipt - copy the source text faithfully, do not clean it up.
 
-Do not include subtotal, tax, VAT, tip, gratuity, service charge, payment method, change, balance, loyalty adjustments, discounts, or any other fees as items - even if they affect the grand total. These are captured separately below.
+kind: what the row is. Use "item" for anything ordered or purchased. If a row does reach items despite the rule below, label it honestly as "tax", "tip", "service" or "discount" rather than calling it an item - you can see where the row sits on the receipt and we cannot, so your classification is the one we trust.
+
+adjustments: discounts, offers or repricings printed against THIS item - a multibuy saving, a loyalty reduction, a "was/now" price. Attach them to the item they modify instead of emitting them as separate rows, so the saving is never counted twice or lost. Each entry has name (as printed), amount (negative for a reduction), and is_new_price. Set is_new_price true only when the line replaces the item's price outright ("was 5.00, now 3.00" -> amount "3.00", is_new_price true); for an ordinary saving leave it false and give the delta (e.g. "-0.45"). Leave adjustments null when the item has none.
+
+Do not include subtotal, tax, VAT, tip, gratuity, service charge, payment method, change, balance, or any other receipt-level fee as items - even if they affect the grand total. These are captured separately below. Item-level discounts are the exception: they belong in that item's adjustments, not in other_charges.
 
 Extract receipt-level charges that affect the grand total into their dedicated fields:
 - tax: total tax/VAT amount on the receipt, if shown
@@ -51,7 +55,7 @@ Extract datetime_of_receipt from the receipt date/time.
 - If the receipt provides only a partial date or ambiguous date/time that cannot be confidently converted to ISO 8601, return null
 - If no receipt date/time is present, return null
 
-All monetary amounts (total, price_per_quantity, receipt_total, items_total, tax, tip, service_charge, other_charges.amount) must be returned as decimal strings normalized to US locale formatting:
+All monetary amounts (total, price_per_quantity, adjustments.amount, receipt_total, items_total, tax, tip, service_charge, other_charges.amount) must be returned as decimal strings normalized to US locale formatting:
 - Use a dot (".") as the decimal separator
 - Do not include any thousands separators (no commas, no spaces, no dots between groups of digits)
 - Use the number of decimal places appropriate for the receipt's currency: 0 for currencies with no minor unit (e.g. JPY), 2 for most currencies (e.g. USD, EUR, GBP), 3 for currencies that use three decimals (e.g. JOD, KWD, BHD, OMR, TND). Match the precision shown on the receipt itself - never truncate "1.234" (a JOD amount) to "1.23"

@@ -35,6 +35,8 @@ class ScanContext:
     default_currency: str
     tab_id: str
     s3_base_key: Optional[str] = None  # already-uploaded key; copy source for extra requests
+    deskew_applied: bool = False  # guards against double-deskewing a reused ctx
+    deskew_angle: Optional[float] = None  # detected skew angle, once deskew has run
 
 
 @dataclass
@@ -43,22 +45,33 @@ class ScanResult:
     date: str
     metrics: dict = field(default_factory=dict)
     timings: dict = field(default_factory=dict)
+    raw_responses: list[dict] = field(default_factory=list)
 
 
 def mistral_client() -> Mistral:
     return Mistral(api_key=settings.MISTRAL_API_KEY)
 
 
-def run_single_ocr(client: Mistral, image_url: str, prompt: str, model: str) -> dict:
+def run_single_ocr(
+    client: Mistral, image_url: str, prompt: str, model: str, *, include_blocks: bool = False
+) -> dict:
     """Fire one OCR call and return {"annotation": dict|None,
     "parse_error": bool, "ocr_pages": int, "ocr_markdown_chars": int,
-    "call_ms": int}. Malformed JSON is captured to Sentry, not raised."""
+    "call_ms": int}. Malformed JSON is captured to Sentry, not raised.
+
+    `include_blocks` asks Mistral for paragraph-level bounding boxes (requires
+    mistral-ocr-4-0 or newer; older models silently return none) and doubles as
+    "keep the whole response", adding a "raw_response" key.
+    # ponytail: one flag, because the only caller wanting boxes is the labeller
+    # and it wants the raw JSON too. Prod pays no model_dump cost.
+    """
     started = timezone.now()
     response = client.ocr.process(
         model=model,
         document=ImageURLChunk(image_url=image_url),
         document_annotation_format=response_format_from_pydantic_model(_Document),
         document_annotation_prompt=prompt,
+        include_blocks=include_blocks,
         timeout_ms=55_000,
     )
     call_ms = int((timezone.now() - started).total_seconds() * 1000)
@@ -76,13 +89,21 @@ def run_single_ocr(client: Mistral, image_url: str, prompt: str, model: str) -> 
             logger.warning("Mistral OCR returned malformed JSON: %s", e)
             parse_error = True
 
-    return {
+    pages = response.pages or []
+    ocr_markdown = "\n".join(p.markdown or "" for p in pages)
+    result = {
         "annotation": annotation,
         "parse_error": parse_error,
-        "ocr_pages": len(response.pages or []),
-        "ocr_markdown_chars": sum(len(p.markdown or "") for p in (response.pages or [])),
+        # The transcribed text, kept because it fails independently of the
+        # structured annotation and so can be used to check it.
+        "ocr_markdown": ocr_markdown,
+        "ocr_pages": len(pages),
+        "ocr_markdown_chars": len(ocr_markdown),
         "call_ms": call_ms,
     }
+    if include_blocks:
+        result["raw_response"] = response.model_dump(mode="json")
+    return result
 
 
 def parse_receipt_date(annotation: Optional[dict]) -> tuple[str, bool]:
@@ -110,8 +131,13 @@ class ReceiptScanStrategy:
     prompt: str = DOCUMENT_ANNOTATION_PROMPT
     model: str = "mistral-ocr-latest"
     version: str = "1"
+    include_blocks: bool = False
+    deskew: bool = True  # straighten the receipt text before OCR; skip via deskew=False
 
-    def __init__(self, *, name=None, model=None, prompt=None, version=None):
+    def __init__(
+        self, *, name=None, model=None, prompt=None, version=None,
+        include_blocks=None, deskew=None,
+    ):
         """Optionally override the class-level name/model/prompt/version on a
         per-instance basis. Unset arguments keep the class default, so existing
         zero-arg construction is unchanged. Used by the validation harness to
@@ -124,6 +150,29 @@ class ReceiptScanStrategy:
             self.prompt = prompt
         if version is not None:
             self.version = version
+        if include_blocks is not None:
+            self.include_blocks = include_blocks
+        if deskew is not None:
+            self.deskew = deskew
+
+    def _maybe_deskew(self, ctx: ScanContext) -> None:
+        """Straighten the receipt text in place, once per ScanContext. Rewrites
+        ctx.image_bytes (and content_type) to the deskewed JPEG and drops
+        s3_base_key so downstream references send the corrected bytes inline
+        rather than the stale S3 original. No-op when disabled or already run."""
+        if not self.deskew or ctx.deskew_applied:
+            return
+        # Imported lazily so the (heavy) cv2/numpy import is paid only when used.
+        from .deskew import deskew_bytes
+
+        deskewed, angle = deskew_bytes(ctx.image_bytes)
+        ctx.deskew_applied = True
+        ctx.deskew_angle = angle
+        if deskewed is not ctx.image_bytes:
+            ctx.image_bytes = deskewed
+            ctx.content_type = "image/jpeg"
+            ctx.s3_base_key = None  # S3 copy is now stale; force inline data URL
+        logger.info("Deskew applied (%s): angle=%.3f deg", self.name, angle)
 
     def base_metrics(self, ctx: ScanContext) -> dict:
         return {
@@ -138,6 +187,8 @@ class ReceiptScanStrategy:
             "ocr_markdown_chars": 0,
             "mistral_call_ms": None,
             "date_parsed": False,
+            "deskew_applied": ctx.deskew_applied,
+            "deskew_angle": ctx.deskew_angle,
         }
 
     def run(self, ctx: ScanContext) -> ScanResult:
@@ -159,6 +210,10 @@ class ReceiptScanStrategy:
 
         timings["total_ms"] = int((timezone.now() - t0).total_seconds() * 1000)
         result.timings = timings
+        # ponytail: only strategies driving this run() collect raw responses.
+        # TieredConsensusStrategy overrides run() and won't; the labeller (the
+        # only consumer) uses baseline, so leave it.
+        result.raw_responses = [r["raw_response"] for r in ocr_results if r.get("raw_response")]
         result.metrics["scan_total_ms"] = timings["total_ms"]
         result.metrics["mistral_call_ms"] = timings["mistral_ms"]
         return result
@@ -166,14 +221,21 @@ class ReceiptScanStrategy:
     # -- stages -----------------------------------------------------------
 
     def pre_process(self, ctx: ScanContext) -> list[str]:
-        """Return the list of image references (URLs) to OCR. Default: one."""
+        """Return the list of image references (URLs) to OCR. Default: one,
+        after straightening the receipt text (unless deskew is disabled)."""
         from .sources import default_ref
+        self._maybe_deskew(ctx)
         return [default_ref(ctx)]
 
     def call_mistral(self, prepared: list[str], ctx: ScanContext) -> list[dict]:
         """Run one OCR call per prepared reference, sequentially."""
         client = mistral_client()
-        return [run_single_ocr(client, url, self.prompt, self.model) for url in prepared]
+        return [
+            run_single_ocr(
+                client, url, self.prompt, self.model, include_blocks=self.include_blocks
+            )
+            for url in prepared
+        ]
 
     def post_process(self, ocr_results: list[dict], ctx: ScanContext) -> ScanResult:
         """Default: standard post-processing on the single candidate."""

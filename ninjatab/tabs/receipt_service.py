@@ -116,6 +116,10 @@ def scan_receipt(image_key: str, tab, *, strategy=None) -> dict:
     per-scan analytics properties to be emitted upstream (including `strategy`
     and `scan_total_ms`); api callers should pop it before returning to the
     mobile client.
+
+    The annotation is the reconciled ledger (`items` plus typed `adjustments`).
+    The v1 endpoint runs `ledger.flatten_for_v1` over it before responding; v2
+    returns it as-is.
     """
     from ninjatab.tabs.receipt_scanning.base import ScanContext
     from ninjatab.tabs.receipt_scanning.strategies import (

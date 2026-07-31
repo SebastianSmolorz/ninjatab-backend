@@ -362,29 +362,59 @@ def standard_post_process(annotation: dict, default_currency: str) -> dict:
     return metrics
 
 
+def bill_total(annotation: dict) -> Optional[float]:
+    """Everything the bill charges, which is what receipt_total must match.
+
+    On a reconciled ledger that is `grand_total` (items plus the adjustments on
+    top of them); on the flat form every charge is already a row in `items`, so
+    `items_total` is the same quantity. One accessor so the consensus layer does
+    not have to know which shape it is looking at.
+    """
+    if annotation.get("grand_total") is not None:
+        return _to_float(annotation["grand_total"])
+    return _to_float(annotation.get("items_total"))
+
+
 def _items_receipt_gap(annotation: dict) -> Optional[float]:
-    """Absolute gap between the server-calculated items_total and receipt_total
-    for an already post-processed annotation. None when either is missing."""
-    items_total = _to_float(annotation.get("items_total"))
+    """Absolute gap between what the bill sums to and receipt_total for an
+    already post-processed annotation. None when either is missing."""
+    total = bill_total(annotation)
     receipt_total = _to_float(annotation.get("receipt_total"))
-    if items_total is None or receipt_total is None:
+    if total is None or receipt_total is None:
         return None
-    return abs(items_total - receipt_total)
+    return abs(total - receipt_total)
 
 
 def _is_reconciled(annotation: dict) -> bool:
-    """True when the calculated items_total matches receipt_total within the
+    """True when what the bill sums to matches receipt_total within the
     currency's tolerance. False when they diverge or receipt_total is absent."""
     gap = _items_receipt_gap(annotation)
     return gap is not None and gap < _annotation_tolerance(annotation)
 
 
+def recompute_bill_totals(annotation: dict, decimals: int) -> Optional[float]:
+    """Re-sum the bill in place after its rows changed, and return the total.
+    Keeps the ledger's three totals consistent; a no-op beyond items_total on
+    the flat form."""
+    annotation["items_total"] = _items_sum(annotation.get("items") or [], decimals)
+    if "adjustments" not in annotation:
+        return _to_float(annotation["items_total"])
+    annotation["adjustments_total"] = round(
+        sum(_to_float(a.get("amount")) or 0.0 for a in annotation["adjustments"]),
+        decimals,
+    )
+    annotation["grand_total"] = round(
+        (_to_float(annotation["items_total"]) or 0.0) + annotation["adjustments_total"],
+        decimals,
+    )
+    return annotation["grand_total"]
+
+
 def recompute_total_match(annotation: dict) -> dict:
-    """Recompute items_total and the reconciliation flag in place (used after
+    """Recompute the bill totals and the reconciliation flag in place (used after
     swapping in consensus field values). Returns the totals metrics."""
     dp = _annotation_decimals(annotation)
-    annotation["items_total"] = _items_sum(annotation.get("items") or [], dp)
-    items_total = _to_float(annotation.get("items_total"))
+    items_total = recompute_bill_totals(annotation, dp)
     receipt_total = _to_float(annotation.get("receipt_total"))
     tolerance = _annotation_tolerance(annotation)
     gap = round(items_total - receipt_total, 6) if (items_total is not None and receipt_total is not None) else None
