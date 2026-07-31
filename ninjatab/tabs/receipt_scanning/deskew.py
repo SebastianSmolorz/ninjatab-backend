@@ -16,8 +16,18 @@ logger = logging.getLogger("app")
 
 
 def _binarize(gray: np.ndarray) -> np.ndarray:
-    """Return a binary image where text pixels are white (255) on black."""
-    # Otsu threshold, inverted so dark text becomes the foreground.
+    """Return a binary image where text pixels are white (255) on black.
+
+    Otsu threshold, inverted so dark text becomes the foreground.
+
+    A local (adaptive) threshold was measured here and rejected. It is better on
+    shadowed receipts - one where Otsu called 24.4% of the image ink and
+    reported +14.9 deg of skew on a straight receipt reads 4.0% and 0.0 deg -
+    but it also invents small rotations on clean images. Over the 30 cases whose
+    angle it changed: item-total F1 0.9468 -> 0.9093, names 0.9654 -> 0.9023,
+    4 cases better and 9 worse. The saturation guard below fixes the same
+    catastrophes without that cost.
+    """
     _, thresh = cv2.threshold(
         gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU
     )
@@ -38,7 +48,8 @@ def _score_angle(binary: np.ndarray, angle: float) -> float:
 
 def _angle_projection(binary: np.ndarray, limit: float, step: float) -> float:
     """Coarse-to-fine projection-profile search for the skew angle in
-    [-limit, +limit] degrees. Returns the angle that best aligns text rows."""
+    [-limit, +limit] degrees. Returns the angle that best aligns text rows, or
+    0.0 when no angle is convincingly better than leaving the image alone."""
     # Downscale for speed; angle estimation does not need full resolution.
     scale = 1000.0 / max(binary.shape)
     if scale < 1.0:
@@ -54,7 +65,15 @@ def _angle_projection(binary: np.ndarray, limit: float, step: float) -> float:
     coarse = np.arange(-limit, limit + step, step)
     coarse_best = best_in(coarse)
     fine = np.arange(coarse_best - step, coarse_best + step + step / 10, step / 10)
-    return float(best_in(fine))
+    best = float(best_in(fine))
+
+    if abs(best) > limit - SATURATION_MARGIN:
+        logger.info(
+            "Deskew declined: angle search saturated at %.2f deg (limit %.1f), "
+            "which means no peak was found rather than a large skew", best, limit,
+        )
+        return 0.0
+    return best
 
 
 def _angle_minarea(binary: np.ndarray) -> float:
@@ -96,6 +115,20 @@ def _rotate(image: np.ndarray, angle: float) -> np.ndarray:
 
 # Below this angle (degrees) the rotation is not worth the resampling cost.
 MIN_ANGLE = 0.05
+
+# How close to the edge of the search range an answer may land before it is
+# treated as a failure rather than a detection.
+#
+# When the projection profile has no real peak - a heavy shadow binarised as
+# text, say - the score climbs monotonically and the search simply runs to the
+# wall, returning whatever the largest angle happens to be. Four receipts in the
+# corpus did exactly that, three of them pinned at the arithmetic maximum of
+# +16.10 deg, one at +14.90; all four were close to straight already. A genuine
+# skew peaks somewhere inside the range instead.
+#
+# Refusing to rotate is the safe failure: the image is still readable, which is
+# more than can be said for one rotated 16 degrees for no reason.
+SATURATION_MARGIN = 2.0
 
 
 def detect_angle(

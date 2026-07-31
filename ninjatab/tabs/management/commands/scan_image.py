@@ -36,6 +36,14 @@ class Command(BaseCommand):
             help="Override the strategy's OCR model (e.g. mistral-ocr-4-0)",
         )
         parser.add_argument(
+            "--no-deskew",
+            action="store_true",
+            help=(
+                "Scan the image exactly as it is. Turns off the strategy's own "
+                "deskew as well as the pre-pass, so nothing rotates the image."
+            ),
+        )
+        parser.add_argument(
             "--deskew",
             action="store_true",
             help="Straighten the receipt text before scanning",
@@ -67,10 +75,14 @@ class Command(BaseCommand):
             strategy.model = options["model"]
         if options["include_blocks"]:
             strategy.include_blocks = True
+        if options["no_deskew"]:
+            # Every strategy deskews inside pre_process, so skipping the pre-pass
+            # alone would not be enough.
+            strategy.deskew = False
 
         angle = None
         with tempfile.TemporaryDirectory() as tmp:
-            if options["deskew"]:
+            if options["deskew"] and not options["no_deskew"]:
                 # run_strategy reads the image off disk, so hand it a straightened
                 # copy rather than threading deskew through the scan pipeline.
                 original = image_path.read_bytes()

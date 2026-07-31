@@ -66,10 +66,10 @@ class RowCategoryTests(SimpleTestCase):
 
     def test_unfoldable_discount_is_spread_not_offered_as_an_item(self):
         """A credit nobody ordered must never be an evenly-split line."""
-        self.assertEqual(row_category(_item("Offer", "-1.00", kind="discount")), "service")
+        self.assertEqual(row_category(_item("Offer", "-1.00", kind="discount")), "discount")
 
     def test_any_negative_row_is_treated_as_a_credit(self):
-        self.assertEqual(row_category(_item("PRYMAT 3 FOR 1.20", "-0.27")), "service")
+        self.assertEqual(row_category(_item("PRYMAT 3 FOR 1.20", "-0.27")), "discount")
 
     def test_falls_back_to_the_name_when_unclassified(self):
         self.assertEqual(row_category(_item("Service Charge", "4.00")), "item")
@@ -357,18 +357,19 @@ class LedgerFormTests(SimpleTestCase):
         self.assertEqual([a["type"] for a in annotation["adjustments"]], ["tip"])
 
     def test_a_credit_never_becomes_a_claimable_line(self):
-        """Nobody ordered a coupon, so it must not be offered up to be tabbed."""
+        """Nobody ordered a coupon, so it must not be offered up to be tabbed.
+        It is a row on the bill, but marked so it is redistributed instead."""
         annotation = _annotation(
             [_item("Pasta", "20.00")], "19.55",
             other_charges=[{"name": "Multi-save", "translated_name": "Multi-save",
                             "amount": "-0.45"}],
         )
         reconcile_ledger(annotation, "USD")
-        self.assertEqual([i["name"] for i in annotation["items"]], ["Pasta"])
         self.assertEqual(
-            [(a["amount"], a["type"]) for a in annotation["adjustments"]],
-            [("-0.45", "discount")],
+            [(i["name"], i["category"]) for i in annotation["items"]],
+            [("Pasta", "item"), ("Multi-save", "discount")],
         )
+        self.assertEqual(annotation["adjustments"], [])
 
     def test_the_bill_adds_up_across_both_lists(self):
         annotation = _annotation(
@@ -381,17 +382,34 @@ class LedgerFormTests(SimpleTestCase):
         self.assertEqual(annotation["adjustments_total"], 4.5)  # tax + service charge
         self.assertEqual(annotation["grand_total"], 34.5)
 
-    def test_an_item_discount_stays_on_its_item(self):
-        """No gross-up and no negative row: the client that needed those is v1."""
+    def test_an_item_discount_is_a_negative_row_under_its_item(self):
+        """The item is grossed back up and its discount follows it, which is
+        where the receipt printed it. The pair still sums to what was paid."""
         annotation = _annotation(
-            [_item("Crisps", "2.00", adjustments=[{"name": "3 for 2", "amount": "-1.00"}])],
-            "2.00",
+            [_item("Crisps", "2.00", adjustments=[{"name": "3 for 2", "amount": "-1.00"}]),
+             _item("Beer", "4.00")],
+            "6.00",
+        )
+        metrics = reconcile_ledger(annotation, "USD")
+        self.assertEqual(
+            [(i["name"], i["total"], i["category"]) for i in annotation["items"]],
+            [("Crisps", "3.00", "item"), ("3 for 2", "-1.00", "discount"),
+             ("Beer", "4.00", "item")],
+        )
+        self.assertEqual(annotation["adjustments"], [])
+        self.assertEqual(annotation["grand_total"], 6.0)
+        self.assertTrue(metrics["items_match_receipt_total"])
+
+    def test_a_global_discount_is_a_negative_row_at_the_bottom(self):
+        annotation = _annotation(
+            [_item("Pasta", "20.00")], "15.00",
+            other_charges=[{"name": "Voucher", "translated_name": "Voucher",
+                            "amount": "-5.00"}],
         )
         reconcile_ledger(annotation, "USD")
-        self.assertEqual(len(annotation["items"]), 1)
-        self.assertEqual(annotation["items"][0]["total"], "2.00")
         self.assertEqual(
-            annotation["items"][0]["adjustments"], [{"name": "3 for 2", "amount": "-1.00"}]
+            [(i["name"], i["total"], i["category"]) for i in annotation["items"]],
+            [("Pasta", "20.00", "item"), ("Voucher", "-5.00", "discount")],
         )
         self.assertEqual(annotation["adjustments"], [])
 

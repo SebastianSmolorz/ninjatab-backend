@@ -34,16 +34,17 @@ POST /api/tabs/{id}/upload-receipt-v2   -> the ledger
 
 ```jsonc
 {
-  "items": [                                  // only what someone ordered; all claimable
-    {"name": "Crisps", "total": "2.00",       // net of its own discount
-     "adjustments": [{"name": "3 for 2", "amount": "-1.00"}]},
-    {"name": "Delivery", "total": "3.00"}     // fees are ordinary lines
+  "items": [
+    {"name": "Crisps",  "total":  "3.00", "category": "item"},     // grossed up
+    {"name": "3 for 2", "total": "-1.00", "category": "discount"}, // sits under it
+    {"name": "Delivery","total":  "3.00", "category": "item"},     // fees are lines
+    {"name": "Voucher", "total": "-5.00", "category": "discount"}  // whole-bill, at the end
   ],
-  "adjustments": [                            // never claimable
+  "adjustments": [                            // tax and tip only; never claimable
     {"name": "Tax", "amount": "1.20", "type": "tax", "split": "proportional"}
   ],
-  "items_total": 5.00, "adjustments_total": 1.20, "grand_total": 6.20,
-  "receipt_total": "6.20", "totals_reconciled": true
+  "items_total": 0.00, "adjustments_total": 1.20, "grand_total": 1.20,
+  "receipt_total": "1.20", "totals_reconciled": true
 }
 ```
 
@@ -171,6 +172,36 @@ After this change the pipeline emits exactly three adjustment types across 330
 scans: **tax 48, tip 39, discount 26** (the 18 service charges joined the 21
 tips; the 20 fees became line items). Zero charge rows left inside `items`.
 
+### 2.7 Discounts as negative rows — kept, and it is what v1 already did
+
+v1 has grossed items up and emitted a negative row beneath them all along
+(`f71c4328`: item 29.95, `Discount -3.00`, item 27.95, `Discount -2.79`), so
+moving `expand_discount_rows` into the shared path makes **v2 match v1 rather
+than diverge from it**. The two now score identically.
+
+| | before | after |
+|---|---|---|
+| p1_item_totals_f1 (v1) | 0.9494 | 0.9532 |
+| p4_adjustments_f1 | 0.2941 | 0.3125 |
+| rollup (v2) | 0.9045 | 0.9054 |
+| p3_self_reconciled | 0.8899 | 0.8899 |
+| identical across 5 runs (v2) | 48/66 | 46/66 |
+
+Stability cost is real: v2 now inherits the run-to-run discount-row variation
+v1 always had.
+
+Two bugs the tests caught while making the change:
+
+- **Money loss.** Discount rows were still promoted out of `items`, then dropped
+  by the adjustments filter. Only tax and tip may leave the list now.
+- **Double-stating.** A grossed-up row kept the `adjustments` entry it had just
+  emitted as its own row. It now keeps only what was *not* expanded (zeros and
+  `is_new_price` lines).
+
+And one in the scorer: its ledger branch returned item rows verbatim, so the
+grossed-up totals were compared against net labels. Both forms now use the same
+"a credit reduces the line above it" collapse.
+
 ---
 
 ## 3. Decisions
@@ -184,12 +215,14 @@ tips; the 20 fees became line items). Zero charge rows left inside `items`.
    already come from the model's own field placement, and the question that
    matters (added on top vs already inside the prices) is arithmetic, not
    classification. Sections 2.2 and 2.3 are why.
-3. **Item-level discounts stay netted into the item total** in v2, with the
-   discount detail attached for display. A 3-for-2 on crisps belongs to whoever
-   ate the crisps — it follows the item, so there is no split mode to get wrong.
-   v1 still grosses up and emits a negative row, because that client needs it.
-4. **Receipt-level discounts** (a bill-wide voucher) are adjustments: default
-   proportional, user can switch to even.
+3. **Discounts reach the app as negative line items**, not adjustments. An item
+   discount grosses its item back up and sits directly beneath it; a whole-bill
+   discount sits at the bottom. Both carry `category: "discount"`, which marks
+   them non-claimable and proportional by default.
+   *(This reverses an earlier "net them into the item" decision.)*
+4. **The item-level vs whole-bill distinction is kept in the labels**, not in
+   the app response: item discounts live in `items[].adjustments[]`, whole-bill
+   ones in `charges[]` with `charge_type: "discount"` (added to the labeller).
 5. **A discount is never claimable.** "Who's having the −£5 coupon?" is not a
    question the UI may ask.
 6. **Scorer:** a labelled charge that is not tax or tip counts as an expected
@@ -207,10 +240,11 @@ tips; the 20 fees became line items). Zero charge rows left inside `items`.
 
 ## 4. Plan of action
 
-### 4.1 Backend — one item left
+### 4.1 Backend — DONE
 
-**Scorer change** (`labeler/evaluation/scorer.py`): move labelled charges that
-are not tax or tip out of `expected_charges` and into `expected_items`.
+**Scorer change** (`labeler/evaluation/scorer.py`) — landed. `label_charge_role`
+maps the labels' two axes onto the pipeline's one, and labelled charges that are
+not tax or tip are expected as ordinary rows.
 
 Identifying them, from an inspection of all 27 labelled charges:
 
@@ -238,6 +272,22 @@ scorer artefact, not a pipeline failure. Map label to expected pipeline type:
 
 It carries weight 0, so it is not affecting the rollup.
 
+A whole-bill discount is also no longer collapsed into the row above it:
+`_is_whole_bill_row` tells the two apart by `charge_source`, which a discount
+built by expanding an item does not have. Before this, a correct voucher scored
+p1 = 0.0.
+
+Effect of the whole change:
+
+| | before | after |
+|---|---|---|
+| p1_item_totals_f1 | 0.9532 | 0.9598 |
+| p2_charges_f1 | 0.7030 | 0.7640 |
+| charge_type_accuracy | n/a | 0.5000 |
+| rollup (v2) | 0.9054 | 0.9107 |
+
+The 27 labelled charges now read as **tax 11, tip 10, item 6**.
+
 ### 4.2 App — all of the actual work, none of it started
 
 - Render an `adjustments` list.
@@ -259,22 +309,46 @@ The backend is inert until these land.
 
 ---
 
+### 4.4 A failure mode worth fixing next
+
+`8732627e`: the model read the service charge as **758.50**; the receipt says
+**756.50**. `select_additive_charges` tried `7565.00 + 758.50 = 8323.50` against
+a receipt total of `8321.50`, missed by 2.00, concluded the charge was not
+additive and **dropped it entirely**. The bill is now short 756.50 and fails
+closure.
+
+So one misread digit on a charge does not degrade that charge, it deletes it.
+Including it with a 2.00 discrepancy would leave a more useful bill. Worth
+weighing against the reason charges are dropped today (a charge that cannot be
+shown additive may be inclusive VAT, and adding it double-counts).
+
 ## 5. Current numbers
 
 66 cases x 5 runs = 330 scans, same OCR for both columns (post-processing only).
 
 | metric | v1 (flat) | v2 (ledger) |
 |---|---|---|
-| p1_item_totals_f1 | 0.9494 | 0.9529 |
-| p1_item_count_exact | 0.9091 | 0.8970 |
-| p2_charges_f1 | 0.7030 | 0.7030 |
+| p1_item_totals_f1 | 0.9598 | 0.9598 |
+| p1_item_count_exact | 0.8970 | 0.8970 |
+| p2_charges_f1 | 0.7640 | 0.7640 |
+| charge_type_accuracy | 0.5000 | 0.5000 |
 | p3_self_reconciled | 0.8899 | 0.8899 |
 | p3_grand_total_correct | 0.8970 | 0.8970 |
 | p3_receipt_total_correct | 0.9694 | 0.9694 |
-| p4_adjustments_f1 | 0.2941 | 0.2941 |
-| rollup | 0.9032 | 0.9045 |
-| identical across 5 runs | 46/66 | 48/66 |
+| p4_adjustments_f1 | 0.2188 | 0.2188 |
+| rollup | 0.9101 | 0.9107 |
+| identical across 5 runs | 46/66 | 46/66 |
 | failures | 0 | 0 |
+
+`charge_type_accuracy` is 0.5 over the 4 typed charges: both DELIVERY CHARGEs
+are placed correctly, and the one miss is 4.4 above — not a misclassification
+but a dropped amount. `p4_adjustments_f1` remains unreliable for the reason in
+2.5, not because of this change.
+
+The two forms now differ only in where tax and tip sit and in one category name
+(`discount` vs the old client's `service`), so they score the same on
+everything the metrics look at. Across 330 scans the pipeline emits exactly two
+adjustment types — **tax 48, tip 39** — and 40 discount rows inside `items`.
 
 **Read `p3_self_reconciled` as the honest one.** It is unchanged from the start
 of the session, because the arithmetic was never touched. `p2` and `p4` are

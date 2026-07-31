@@ -76,16 +76,20 @@ _KIND_TO_CATEGORY = {
     # put in `service_charge`. Delivery, booking, card and handling charges have
     # no kind of their own and stay ordinary line items.
     "service": "tip",
-    # A discount is the exception that stays out of the item list. Nobody
-    # ordered a credit, so it must never be offered up for someone to claim;
-    # the client redistributes it across the bill instead.
-    "discount": "service",
+    # A discount is a line on the bill like any other, just a negative one - it
+    # sits under the item it reduces, or at the bottom if it applies to the
+    # whole receipt. The category marks it as not claimable: nobody ordered a
+    # credit, so it is redistributed rather than offered up for someone to tab.
+    "discount": "discount",
 }
 
-# Only two receipt-level charges earn a place of their own, because only two
-# have their own control in the app: tax added on top of the prices, and tip.
+# Only two things leave the item list, because only two have a control of their
+# own in the app: tax added on top of the prices, and tip. Discounts stay in the
+# list as negative rows, positioned where the receipt printed them.
 # ponytail: two special cases beat a five-way taxonomy nothing measures. Widen
 # it when `charge_type_accuracy` shows a wider one would pay for itself.
+_ADJUSTMENT_TYPES = ("tax", "tip")
+
 _SPLIT_BY_TYPE = {
     "tax": "proportional",
     "tip": "proportional",
@@ -121,10 +125,10 @@ def categorise_charge(
     claim the model never made.
 
     A negative amount is the exception: a credit must never become a claimable
-    even-split row, so it stays a charge the client redistributes.
+    even-split row, so it is marked as a discount and redistributed.
     """
     if amount < 0:
-        return "service"
+        return "discount"
     for text in (translated, name):
         folded = _fold(text)
         if folded and _TIP_RE.search(folded):
@@ -204,6 +208,14 @@ def expand_discount_rows(items: list[dict], decimals: int = 2) -> int:
         if gross != 0.0:
             row = dict(item)
             row["total"] = f"{gross:.{decimals}f}"
+            # The reduction is the row that follows; keeping it here as well
+            # would state it twice. Anything not expanded (a zero, or a
+            # "was/now" line) stays attached.
+            kept = [a for a in (item.get("adjustments") or []) if a not in deltas]
+            if kept:
+                row["adjustments"] = kept
+            else:
+                row.pop("adjustments", None)
             out.append(row)
         for adjustment in deltas:
             name = adjustment.get("name") or "Discount"
@@ -231,7 +243,7 @@ def row_category(item: dict) -> str:
     # it as a charge lets the client spread it across the bill instead.
     total = _to_float(item.get("total"))
     if total is not None and total < 0:
-        return "service"
+        return "discount"
 
     kind = (item.get("kind") or "").strip().lower()
     if kind in _KIND_TO_CATEGORY:
@@ -444,9 +456,10 @@ def reconcile_ledger(annotation: dict, default_currency: str) -> dict:
     metrics["other_charges_count"] = len(annotation.get("other_charges") or [])
 
     items = list(annotation.get("items") or [])
-    metrics["discount_rows_expanded"] = sum(
-        1 for i in items for a in _expandable_adjustments(i)
-    )
+    # An item discount becomes its own negative row directly beneath its item,
+    # which is where the receipt printed it. Sum-preserving, so it cannot change
+    # which charges the arithmetic below finds to be additive.
+    metrics["discount_rows_expanded"] = expand_discount_rows(items, decimals)
     charges = collect_charges(annotation)
     receipt_total = _to_float(annotation.get("receipt_total"))
     metrics["charges_count"] = len(charges)
@@ -490,23 +503,26 @@ def reconcile_ledger(annotation: dict, default_currency: str) -> dict:
         row = dict(item)
         row["total"] = f"{net:.{decimals}f}"
         row["category"] = category
-        if category == "item":
-            item_rows.append(row)
-        else:
+        # Only the two categories with a control of their own leave the list. A
+        # discount row stays put, where the receipt printed it.
+        if category in _ADJUSTMENT_TYPES:
             name = row.get("name") or "Charge"
             promoted.append(_charge(
                 name, row.get("translated_name") or name, net, category, "item_row",
             ))
+        else:
+            item_rows.append(row)
 
-    # A charge the client has no control for is just another line on the bill,
-    # so it joins the items rather than the adjustments.
+    # A charge with no control of its own is just another line on the bill, so
+    # it joins the items. Discounts that apply to the whole receipt land here
+    # too, as negative rows at the bottom.
     for charge in additive:
-        if charge["type"] not in _SPLIT_BY_TYPE:
+        if charge["type"] not in _ADJUSTMENT_TYPES:
             item_rows.append({
                 "name": charge["name"],
                 "translated_name": charge["translated_name"],
                 "total": f"{charge['amount']:.{decimals}f}",
-                "category": "item",
+                "category": charge["category"],
                 "charge_source": charge["source"],
             })
 
@@ -525,7 +541,7 @@ def reconcile_ledger(annotation: dict, default_currency: str) -> dict:
             "legacy_category": c["category"],
         }
         for c in promoted + additive
-        if c["type"] in _SPLIT_BY_TYPE
+        if c["type"] in _ADJUSTMENT_TYPES
     ]
 
     annotation["items"] = item_rows
@@ -550,6 +566,9 @@ def reconcile_ledger(annotation: dict, default_currency: str) -> dict:
     metrics["duplicate_charges_demoted"] = sum(
         max(0, sum(1 for a in adjustments if a["type"] == c) - 1)
         for c in _SINGLETON_CATEGORIES
+    )
+    metrics["discount_rows"] = sum(
+        1 for i in item_rows if i.get("category") == "discount"
     )
     metrics["items_count"] = len(item_rows) + len(adjustments)
     metrics["items_total"] = total
@@ -578,13 +597,12 @@ def flatten_for_v1(annotation: Optional[dict]) -> Optional[dict]:
     if not annotation or "adjustments" not in annotation:
         return annotation
 
-    decimals = _annotation_decimals(annotation)
     rows = [dict(i) for i in annotation.get("items") or []]
-    expand_discount_rows(rows, decimals)
     for row in rows:
-        # Rows created by the expansion have no category yet; a credit is spread
-        # across the bill rather than offered to someone to claim.
-        row.setdefault("category", row_category(row))
+        # The old client knows "service" as its non-claimable, redistributed
+        # category; it has never heard of "discount".
+        if row.get("category") == "discount":
+            row["category"] = "service"
 
     for adjustment in annotation.pop("adjustments"):
         rows.append({
