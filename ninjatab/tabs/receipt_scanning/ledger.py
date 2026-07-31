@@ -51,7 +51,11 @@ logger = logging.getLogger("app")
 CHARGE_SOURCES = (
     ("tax", "tax"),
     ("tip", "tip"),
-    ("service_charge", "service"),
+    # Gratuity, tip and service charge are the same thing to a diner: money for
+    # the staff, on top of what was ordered. Treating them as one keeps the
+    # client's tip control meaningful on a receipt that prints "12.5% Service
+    # Charge" instead of "Tip".
+    ("service_charge", "tip"),
 )
 
 # Charges are searched over subsets to find which combination is additive; this
@@ -68,19 +72,23 @@ _KIND_TO_CATEGORY = {
     "item": "item",
     "tax": "tax",
     "tip": "tip",
-    "service": "service",
+    # A row the model itself called a service charge is a tip, same as one it
+    # put in `service_charge`. Delivery, booking, card and handling charges have
+    # no kind of their own and stay ordinary line items.
+    "service": "tip",
+    # A discount is the exception that stays out of the item list. Nobody
+    # ordered a credit, so it must never be offered up for someone to claim;
+    # the client redistributes it across the bill instead.
     "discount": "service",
 }
 
-# How each adjustment type is split when nobody has said otherwise. A fee is a
-# flat cost everyone shares equally; tax, tip, service and discounts scale with
-# what each person actually claimed.
-# ponytail: a literal map, not config. Change it here if a type moves.
+# Only two receipt-level charges earn a place of their own, because only two
+# have their own control in the app: tax added on top of the prices, and tip.
+# ponytail: two special cases beat a five-way taxonomy nothing measures. Widen
+# it when `charge_type_accuracy` shows a wider one would pay for itself.
 _SPLIT_BY_TYPE = {
-    "fee": "even",
     "tax": "proportional",
     "tip": "proportional",
-    "service": "proportional",
     "discount": "proportional",
 }
 
@@ -89,6 +97,10 @@ _SPLIT_BY_TYPE = {
 # exclusion from the tip base, so it is worth recognising by name as well as by
 # provenance. Tax deliberately is not: it is populated only where the *model*
 # categorised the amount as tax, never from a word we matched ourselves.
+# ponytail: no "service charge" here on purpose. Across 66 labelled receipts
+# every service charge arrived in the `service_charge` field, never in
+# `other_charges`, so matching the phrase by name would be speculative - and
+# broad lexical matching is what regressed the last two times it was tried.
 _TIP_WORDS = (
     "tip", "tips", "gratuity", "propina", "trinkgeld", "pourboire", "mancia",
 )
@@ -120,24 +132,31 @@ def categorise_charge(
     return "item"
 
 
-def demote_duplicate_taxes(rows: list[dict]) -> int:
-    """Leave at most one row categorised as tax, keeping the largest.
+# Categories the pre-v2 client shows exactly one control for. Its tax selector
+# (tax_selector.dart:52) and tip selector (tip_selector.dart:58) both read the
+# *first* matching row and, on edit, delete every matching row and write back a
+# single one - so a second row of the same category is invisible and destructive
+# to the total. v2 has no such limit; this is a property of the old client only.
+_SINGLETON_CATEGORIES = ("tax", "tip")
 
-    The client's tax selector reads the *first* tax row and, on edit, deletes
-    every tax row and writes back a single one - so a second tax row is both
-    invisible and destructive to the total. Keeping the largest means the tax
-    the user sees is a figure actually printed on the receipt; the remainder
-    stays in the bill as an ordinary line rather than being silently dropped.
+
+def demote_duplicate_charges(rows: list[dict]) -> int:
+    """Leave at most one row per singleton category, keeping the largest.
+
+    Keeping the largest means the figure the user sees is one actually printed
+    on the receipt; the remainder stays in the bill as an ordinary line rather
+    than being silently dropped. Returns how many rows were demoted.
     """
-    taxes = [i for i, r in enumerate(rows) if r.get("category") == "tax"]
-    if len(taxes) < 2:
-        return 0
-    keep = max(taxes, key=lambda i: _to_float(rows[i].get("total")) or 0.0)
     demoted = 0
-    for i in taxes:
-        if i != keep:
-            rows[i]["category"] = "item"
-            demoted += 1
+    for category in _SINGLETON_CATEGORIES:
+        matches = [i for i, r in enumerate(rows) if r.get("category") == category]
+        if len(matches) < 2:
+            continue
+        keep = max(matches, key=lambda i: _to_float(rows[i].get("total")) or 0.0)
+        for i in matches:
+            if i != keep:
+                rows[i]["category"] = "item"
+                demoted += 1
     return demoted
 
 
@@ -217,7 +236,10 @@ def row_category(item: dict) -> str:
     kind = (item.get("kind") or "").strip().lower()
     if kind in _KIND_TO_CATEGORY:
         return _KIND_TO_CATEGORY[kind]
-    return _categorize_item_name(item.get("name") or item.get("translated_name"))
+    category = _categorize_item_name(item.get("name") or item.get("translated_name"))
+    # A service-sounding name is an ordinary line now, same as the model's own
+    # "service" kind. Only tax and tip leave the item list.
+    return "item" if category == "service" else category
 
 
 def item_net_total(item: dict) -> float:
@@ -255,7 +277,7 @@ def adjustment_type(
         return model_type
     if amount < 0:
         return "discount"
-    if category in ("tax", "tip", "service"):
+    if category in ("tax", "tip"):
         return category
     return "fee"
 
@@ -302,7 +324,7 @@ def _charge(
         "amount": amount,
         "category": category,          # v1: how the flat client splits the row
         "type": kind,                  # v2: what the charge actually is
-        "split": _SPLIT_BY_TYPE[kind],
+        "split": _SPLIT_BY_TYPE.get(kind, "even"),
         "source": source,
     }
 
@@ -476,6 +498,18 @@ def reconcile_ledger(annotation: dict, default_currency: str) -> dict:
                 name, row.get("translated_name") or name, net, category, "item_row",
             ))
 
+    # A charge the client has no control for is just another line on the bill,
+    # so it joins the items rather than the adjustments.
+    for charge in additive:
+        if charge["type"] not in _SPLIT_BY_TYPE:
+            item_rows.append({
+                "name": charge["name"],
+                "translated_name": charge["translated_name"],
+                "total": f"{charge['amount']:.{decimals}f}",
+                "category": "item",
+                "charge_source": charge["source"],
+            })
+
     adjustments = [
         {
             "name": c["name"],
@@ -491,6 +525,7 @@ def reconcile_ledger(annotation: dict, default_currency: str) -> dict:
             "legacy_category": c["category"],
         }
         for c in promoted + additive
+        if c["type"] in _SPLIT_BY_TYPE
     ]
 
     annotation["items"] = item_rows
@@ -510,8 +545,11 @@ def reconcile_ledger(annotation: dict, default_currency: str) -> dict:
     annotation["adjustments_total"] = adjustments_total
     annotation["grand_total"] = total
 
-    metrics["duplicate_taxes_demoted"] = max(
-        0, sum(1 for a in adjustments if a["type"] == "tax") - 1
+    # How many rows v1 will have to demote. Reported here so the metric exists
+    # regardless of which endpoint served the scan.
+    metrics["duplicate_charges_demoted"] = sum(
+        max(0, sum(1 for a in adjustments if a["type"] == c) - 1)
+        for c in _SINGLETON_CATEGORIES
     )
     metrics["items_count"] = len(item_rows) + len(adjustments)
     metrics["items_total"] = total
@@ -557,7 +595,7 @@ def flatten_for_v1(annotation: Optional[dict]) -> Optional[dict]:
             "charge_source": adjustment["source"],
         })
 
-    demote_duplicate_taxes(rows)
+    demote_duplicate_charges(rows)
     annotation["items"] = rows
     annotation["items_total"] = annotation.pop("grand_total", None)
     annotation.pop("adjustments_total", None)

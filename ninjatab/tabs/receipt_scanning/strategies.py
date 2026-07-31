@@ -114,12 +114,16 @@ def _build_result_from_candidates(
     return ScanResult(document_annotation=chosen, date=date_str, metrics=metrics)
 
 
-def _fire_concurrent(ref: str, n: int, prompt: str, model: str) -> list[dict]:
+def _fire_concurrent(
+    ref: str, n: int, prompt: str, model: str, *, include_blocks: bool = False
+) -> list[dict]:
     """Fire n OCR calls on the same image reference concurrently."""
     client = mistral_client()
     with ThreadPoolExecutor(max_workers=n) as pool:
         return list(pool.map(
-            lambda _i: run_single_ocr(client, ref, prompt, model),
+            lambda _i: run_single_ocr(
+                client, ref, prompt, model, include_blocks=include_blocks
+            ),
             range(n),
         ))
 
@@ -150,7 +154,10 @@ class ConcurrentConsensusStrategy(ReceiptScanStrategy):
         client = mistral_client()
         with ThreadPoolExecutor(max_workers=len(prepared)) as pool:
             return list(pool.map(
-                lambda url: run_single_ocr(client, url, self.prompt, self.model),
+                lambda url: run_single_ocr(
+                    client, url, self.prompt, self.model,
+                    include_blocks=self.include_blocks,
+                ),
                 prepared,
             ))
 

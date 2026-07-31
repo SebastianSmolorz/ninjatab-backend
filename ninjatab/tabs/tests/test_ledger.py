@@ -53,7 +53,16 @@ class ItemNetTotalTests(SimpleTestCase):
 class RowCategoryTests(SimpleTestCase):
     def test_prefers_the_models_kind(self):
         # The name says nothing; the model's kind carries the classification.
-        self.assertEqual(row_category(_item("Bediening", "4.00", kind="service")), "service")
+        self.assertEqual(row_category(_item("BTW", "4.00", kind="tax")), "tax")
+
+    def test_a_service_charge_is_a_tip(self):
+        """Gratuity, tip and service charge are the same thing to a diner."""
+        self.assertEqual(row_category(_item("Bediening", "4.00", kind="service")), "tip")
+
+    def test_a_fee_is_an_ordinary_line(self):
+        """Only tax and tip have their own control in the app; a delivery or
+        handling charge is a line on the bill the user can re-split."""
+        self.assertEqual(row_category(_item("Delivery", "4.00")), "item")
 
     def test_unfoldable_discount_is_spread_not_offered_as_an_item(self):
         """A credit nobody ordered must never be an evenly-split line."""
@@ -63,7 +72,7 @@ class RowCategoryTests(SimpleTestCase):
         self.assertEqual(row_category(_item("PRYMAT 3 FOR 1.20", "-0.27")), "service")
 
     def test_falls_back_to_the_name_when_unclassified(self):
-        self.assertEqual(row_category(_item("Service Charge", "4.00")), "service")
+        self.assertEqual(row_category(_item("Service Charge", "4.00")), "item")
         self.assertEqual(row_category(_item("Sticky Toffee", "4.00")), "item")
 
 
@@ -77,10 +86,10 @@ class ReconcileLedgerV1Tests(SimpleTestCase):
         metrics = _reconcile_v1(annotation, "USD")
         self.assertTrue(metrics["items_match_receipt_total"])
         self.assertEqual(metrics["charges_additive_count"], 1)
-        # The client's flat list carries the charge with its category.
+        # A service charge reaches the client as the tip it is.
         self.assertEqual(
             [(i["total"], i["category"]) for i in annotation["items"]],
-            [("20.00", "item"), ("3.00", "service")],
+            [("20.00", "item"), ("3.00", "tip")],
         )
 
     def test_inclusive_vat_is_not_added(self):
@@ -98,7 +107,7 @@ class ReconcileLedgerV1Tests(SimpleTestCase):
         metrics = _reconcile_v1(annotation, "USD")
         self.assertTrue(metrics["items_match_receipt_total"])
         self.assertEqual(
-            [i["category"] for i in annotation["items"]], ["item", "service"]
+            [i["category"] for i in annotation["items"]], ["item", "tip"]
         )
 
     def test_standalone_discount_row_stays_beneath_its_item(self):
@@ -150,7 +159,7 @@ class ReconcileLedgerV1Tests(SimpleTestCase):
 
     def test_kinds_are_ignored_when_they_would_empty_the_receipt(self):
         """Every row classified as a charge is never a real receipt."""
-        annotation = _annotation([_item("Kviitung", "19.50", kind="service")], "19.50")
+        annotation = _annotation([_item("Kviitung", "19.50", kind="tax")], "19.50")
         metrics = _reconcile_v1(annotation, "USD")
         self.assertTrue(metrics.get("kinds_overridden"))
         self.assertEqual([i["category"] for i in annotation["items"]], ["item"])
@@ -207,12 +216,12 @@ class ReconcileLedgerV1Tests(SimpleTestCase):
         _reconcile_v1(annotation, "USD")
         self.assertEqual([i["category"] for i in annotation["items"]], ["item", "item"])
 
-    def test_explicit_service_charge_still_splits_by_spend(self):
+    def test_explicit_service_charge_reaches_the_client_as_a_tip(self):
         annotation = _annotation(
             [_item("Pasta", "20.00")], "23.00", service_charge="3.00"
         )
         _reconcile_v1(annotation, "USD")
-        self.assertEqual([i["category"] for i in annotation["items"]], ["item", "service"])
+        self.assertEqual([i["category"] for i in annotation["items"]], ["item", "tip"])
 
     def test_only_the_largest_tax_keeps_the_tax_category(self):
         """The client shows one tax and rewrites all of them on edit, so a second
@@ -224,7 +233,7 @@ class ReconcileLedgerV1Tests(SimpleTestCase):
             "25.00",
         )
         metrics = _reconcile_v1(annotation, "USD")
-        self.assertEqual(metrics["duplicate_taxes_demoted"], 1)
+        self.assertEqual(metrics["duplicate_charges_demoted"], 1)
         self.assertEqual(
             [(i["total"], i["category"]) for i in annotation["items"]],
             [("20.00", "item"), ("4.00", "tax"), ("1.00", "item")],
@@ -253,6 +262,21 @@ class ReconcileLedgerV1Tests(SimpleTestCase):
         annotation = _annotation([_item("Pasta", "20.00")], "23.00", tip="3.00")
         _reconcile_v1(annotation, "USD")
         self.assertEqual([i["category"] for i in annotation["items"]], ["item", "tip"])
+
+    def test_only_one_tip_survives_too(self):
+        """The tip selector rewrites every isTip row it finds, so two would be
+        destructive in exactly the way two taxes are. Both amounts stay in the
+        bill; the smaller one becomes an ordinary line."""
+        annotation = _annotation(
+            [_item("Pasta", "20.00")], "27.00", tip="3.00", service_charge="4.00"
+        )
+        metrics = _reconcile_v1(annotation, "USD")
+        self.assertEqual(metrics["duplicate_charges_demoted"], 1)
+        self.assertEqual(
+            sorted((i["total"], i["category"]) for i in annotation["items"]),
+            [("20.00", "item"), ("3.00", "item"), ("4.00", "tip")],
+        )
+        self.assertTrue(metrics["items_match_receipt_total"])
 
     def test_v1_still_shows_one_tax_where_v2_shows_two(self):
         """The presenter is where the client's one-tax limit lives, not the
@@ -285,45 +309,77 @@ class ReconcileLedgerV1Tests(SimpleTestCase):
 
 
 class LedgerFormTests(SimpleTestCase):
-    """The v2 shape: what was ordered stays in `items`, everything charged on
-    top of it goes to `adjustments` with the split mode it defaults to."""
+    """The v2 shape. Only tax and tip leave the item list, because only those
+    two have a control of their own in the app; every other receipt-level charge
+    is an ordinary line the user can re-split by hand."""
 
-    def test_charges_leave_the_item_list(self):
+    def test_tax_and_tip_leave_the_item_list(self):
         annotation = _annotation(
-            [_item("Pasta", "20.00")], "23.00", service_charge="3.00"
+            [_item("Pasta", "20.00")], "25.00", tax="2.00", tip="3.00"
         )
         reconcile_ledger(annotation, "USD")
         self.assertEqual([i["total"] for i in annotation["items"]], ["20.00"])
         self.assertEqual(
             [(a["amount"], a["type"], a["split"]) for a in annotation["adjustments"]],
-            [("3.00", "service", "proportional")],
+            [("2.00", "tax", "proportional"), ("3.00", "tip", "proportional")],
+        )
+        self.assertEqual(annotation["grand_total"], 25.0)
+
+    def test_a_service_charge_is_a_tip(self):
+        annotation = _annotation(
+            [_item("Pasta", "20.00")], "23.00", service_charge="3.00"
+        )
+        reconcile_ledger(annotation, "USD")
+        self.assertEqual([i["name"] for i in annotation["items"]], ["Pasta"])
+        self.assertEqual(
+            [(a["amount"], a["type"], a["split"]) for a in annotation["adjustments"]],
+            [("3.00", "tip", "proportional")],
         )
         self.assertEqual(annotation["grand_total"], 23.0)
 
-    def test_a_fee_is_shared_equally_and_a_tip_is_not(self):
-        annotation = _annotation(
-            [_item("Pasta", "20.00")], "26.00", tip="3.00",
-            other_charges=[{"name": "Delivery", "translated_name": "Delivery",
-                            "amount": "3.00", "type": "fee"}],
-        )
-        reconcile_ledger(annotation, "USD")
-        self.assertEqual(
-            {(a["type"], a["split"]) for a in annotation["adjustments"]},
-            {("tip", "proportional"), ("fee", "even")},
-        )
-
-    def test_the_models_type_classifies_a_charge_it_filed_generically(self):
-        """A tax the model put in other_charges is a tax in v2 — it said so —
-        while v1 keeps treating it as an ordinary line, unchanged."""
+    def test_a_delivery_fee_becomes_a_line_item(self):
         annotation = _annotation(
             [_item("Pasta", "20.00")], "23.00",
-            other_charges=[{"name": "MwSt 19%", "translated_name": "MwSt 19%",
-                            "amount": "3.00", "type": "tax"}],
+            other_charges=[{"name": "Delivery", "translated_name": "Delivery",
+                            "amount": "3.00"}],
         )
         reconcile_ledger(annotation, "USD")
-        self.assertEqual([a["type"] for a in annotation["adjustments"]], ["tax"])
-        flatten_for_v1(annotation)
-        self.assertEqual([i["category"] for i in annotation["items"]], ["item", "item"])
+        self.assertEqual([i["name"] for i in annotation["items"]], ["Pasta", "Delivery"])
+        self.assertEqual(annotation["adjustments"], [])
+
+    def test_a_gratuity_is_a_tip(self):
+        annotation = _annotation(
+            [_item("Pasta", "20.00")], "23.00",
+            other_charges=[{"name": "Gratuity", "translated_name": "Gratuity",
+                            "amount": "3.00"}],
+        )
+        reconcile_ledger(annotation, "USD")
+        self.assertEqual([a["type"] for a in annotation["adjustments"]], ["tip"])
+
+    def test_a_credit_never_becomes_a_claimable_line(self):
+        """Nobody ordered a coupon, so it must not be offered up to be tabbed."""
+        annotation = _annotation(
+            [_item("Pasta", "20.00")], "19.55",
+            other_charges=[{"name": "Multi-save", "translated_name": "Multi-save",
+                            "amount": "-0.45"}],
+        )
+        reconcile_ledger(annotation, "USD")
+        self.assertEqual([i["name"] for i in annotation["items"]], ["Pasta"])
+        self.assertEqual(
+            [(a["amount"], a["type"]) for a in annotation["adjustments"]],
+            [("-0.45", "discount")],
+        )
+
+    def test_the_bill_adds_up_across_both_lists(self):
+        annotation = _annotation(
+            [_item("Pasta", "20.00"), _item("Wine", "10.00")], "34.50",
+            tax="2.50", service_charge="2.00",
+        )
+        metrics = reconcile_ledger(annotation, "USD")
+        self.assertTrue(metrics["items_match_receipt_total"])
+        self.assertEqual(annotation["items_total"], 30.0)
+        self.assertEqual(annotation["adjustments_total"], 4.5)  # tax + service charge
+        self.assertEqual(annotation["grand_total"], 34.5)
 
     def test_an_item_discount_stays_on_its_item(self):
         """No gross-up and no negative row: the client that needed those is v1."""
@@ -339,18 +395,37 @@ class LedgerFormTests(SimpleTestCase):
         )
         self.assertEqual(annotation["adjustments"], [])
 
-    def test_the_bill_adds_up_across_both_lists(self):
-        annotation = _annotation(
-            [_item("Pasta", "20.00"), _item("Wine", "10.00")], "34.50",
-            tax="2.50", service_charge="2.00",
-        )
-        metrics = reconcile_ledger(annotation, "USD")
-        self.assertTrue(metrics["items_match_receipt_total"])
-        self.assertEqual(annotation["items_total"], 30.0)
-        self.assertEqual(annotation["adjustments_total"], 4.5)
-        self.assertEqual(annotation["grand_total"], 34.5)
-
     def test_flattening_a_flat_annotation_is_a_no_op(self):
         annotation = {"items": [_item("Pasta", "20.00")], "items_total": 20.0}
         self.assertEqual(flatten_for_v1(annotation), annotation)
         self.assertIsNone(flatten_for_v1(None))
+
+
+class TipAndServiceChargeTests(SimpleTestCase):
+    """A receipt that prints both a tip and a service charge."""
+
+    def _both(self):
+        return _annotation(
+            [_item("Pasta", "20.00")], "27.00", tip="3.00", service_charge="4.00"
+        )
+
+    def test_v2_keeps_both_as_tips(self):
+        annotation = self._both()
+        metrics = reconcile_ledger(annotation, "USD")
+        self.assertEqual(
+            [(a["amount"], a["type"]) for a in annotation["adjustments"]],
+            [("3.00", "tip"), ("4.00", "tip")],
+        )
+        self.assertEqual(annotation["grand_total"], 27.0)
+        self.assertTrue(metrics["items_match_receipt_total"])
+
+    def test_the_money_survives_the_v1_demotion(self):
+        annotation = self._both()
+        reconcile_ledger(annotation, "USD")
+        flatten_for_v1(annotation)
+        self.assertEqual(
+            sum(float(i["total"]) for i in annotation["items"]), 27.0
+        )
+        self.assertEqual(
+            sum(1 for i in annotation["items"] if i["category"] == "tip"), 1
+        )
