@@ -6,6 +6,8 @@ from ninjatab.tabs.receipt_scanning.ledger import (
     flatten_for_v1,
     item_net_total,
     reconcile_ledger,
+    drop_restated_discount_summary,
+    unmultiply_line_totals,
     row_category,
 )
 
@@ -48,6 +50,97 @@ class ItemNetTotalTests(SimpleTestCase):
             adjustments=[{"name": "Was/now", "amount": "3.00", "is_new_price": True}],
         )
         self.assertEqual(item_net_total(item), 3.0)
+
+
+class UnmultiplyLineTotalsTests(SimpleTestCase):
+    """The model sometimes reads a printed line total as a unit price and
+    multiplies it out. Only the receipt's own total may say so."""
+
+    def _row(self, total, unit, quantity, line):
+        return _item("Beer", total, price_per_quantity=unit,
+                     quantity=quantity, receipt_line_text=line)
+
+    def test_undoes_a_multiplication_the_receipt_total_contradicts(self):
+        # 4 BIRRA IPA: 32.000,00 is the line total, not the unit price.
+        items = [self._row("128000.00", "32000.00", 4, "4 BIRRA IPA $ 32.000,00"),
+                 _item("Rubia", "105000.00")]
+        self.assertEqual(unmultiply_line_totals(items, 137000.0, 0.01), 1)
+        self.assertEqual(items[0]["total"], "32000.00")
+
+    def test_leaves_a_real_multiplication_alone(self):
+        """`2 x £4.99 -> 9.98` is textually identical to the case above; only
+        the receipt total tells them apart, and here it agrees."""
+        items = [self._row("9.98", "4.99", 2, "2 x £4.99")]
+        self.assertEqual(unmultiply_line_totals(items, 9.98, 0.01), 0)
+        self.assertEqual(items[0]["total"], "9.98")
+
+    def test_declines_when_the_correction_would_not_close_the_gap(self):
+        """A wrong row is left wrong rather than guessed at: the receipt does
+        not confirm that this multiplication is the reason for the gap."""
+        items = [self._row("9.98", "4.99", 2, "2 x £4.99")]
+        self.assertEqual(unmultiply_line_totals(items, 7.50, 0.01), 0)
+        self.assertEqual(items[0]["total"], "9.98")
+
+    def test_declines_when_the_total_is_printed_on_the_line(self):
+        items = [self._row("9.98", "4.99", 2, "2 x £4.99 = £9.98")]
+        self.assertEqual(unmultiply_line_totals(items, 4.99, 0.01), 0)
+
+    def test_no_receipt_total_means_no_arbiter(self):
+        items = [self._row("128000.00", "32000.00", 4, "4 BIRRA IPA $ 32.000,00")]
+        self.assertEqual(unmultiply_line_totals(items, None, 0.01), 0)
+
+
+class RestatedDiscountSummaryTests(SimpleTestCase):
+    """A loyalty receipt prints each saving under its item and totals them at
+    the bottom. The footer is a restatement, but the model both reports it as a
+    real discount and grosses each item up by the saving — so the errors cancel
+    and the bill closes on wrong rows."""
+
+    def _tesco(self):
+        # printed 6.50 and 2.80; the model returned 8.00 and 3.60
+        items = [
+            _item("Pigs In Blankets", "8.00", receipt_line_text="2 Pigs In Blankets £6.50"),
+            _item("Cc Any 2 For £5", "-1.50", kind="discount"),
+            _item("Gravy", "3.60", receipt_line_text="1 Bisto Gravy £2.80"),
+            _item("Cc", "-0.80", kind="discount"),
+        ]
+        charges = [{"name": "Savings", "amount": -2.30, "category": "discount"}]
+        return items, charges
+
+    def test_ungrosses_the_items_and_drops_the_footer(self):
+        items, charges = self._tesco()
+        # 6.50 + 2.80 - 1.50 - 0.80 == 7.00
+        self.assertEqual(drop_restated_discount_summary(items, charges, 7.00, 0.01), 1)
+        self.assertEqual([i["total"] for i in items],
+                         ["6.50", "-1.50", "2.80", "-0.80"])
+        self.assertEqual(charges, [])
+
+    def test_declines_when_the_pair_does_not_explain_the_bill(self):
+        """Neither half is undone unless both together close the receipt."""
+        items, charges = self._tesco()
+        self.assertEqual(drop_restated_discount_summary(items, charges, 4.70, 0.01), 0)
+        self.assertEqual(items[0]["total"], "8.00")
+        self.assertEqual(len(charges), 1)
+
+    def test_a_single_discount_is_not_a_summary_of_itself(self):
+        """One row and one charge of the same size is an ordinary discount
+        reported twice, not a footer summarising several."""
+        items = [_item("Crisps", "3.00", receipt_line_text="Crisps £3.00"),
+                 _item("Offer", "-1.00", kind="discount")]
+        charges = [{"name": "Savings", "amount": -1.00, "category": "discount"}]
+        self.assertEqual(drop_restated_discount_summary(items, charges, 2.00, 0.01), 0)
+        self.assertEqual(len(charges), 1)
+
+    def test_a_real_whole_bill_voucher_is_left_alone(self):
+        """The voucher does not equal the item-level savings, so it is a genuine
+        further deduction rather than a restatement."""
+        items = [_item("Pasta", "20.00", receipt_line_text="Pasta £20.00"),
+                 _item("Offer", "-1.00", kind="discount"),
+                 _item("Wine", "10.00", receipt_line_text="Wine £10.00"),
+                 _item("Offer", "-2.00", kind="discount")]
+        charges = [{"name": "Voucher", "amount": -5.00, "category": "discount"}]
+        self.assertEqual(drop_restated_discount_summary(items, charges, 22.00, 0.01), 0)
+        self.assertEqual(len(charges), 1)
 
 
 class RowCategoryTests(SimpleTestCase):

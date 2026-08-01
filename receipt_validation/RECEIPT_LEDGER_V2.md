@@ -3,24 +3,49 @@
 Working notes for the session that built the v2 scan endpoint. Everything here
 is uncommitted work on disk; nothing is switched on in production.
 
-**Evaluation corpus:** 72 labelled cases, all captured
-(`labeler/ocr_captures/`, 5 runs x 3 calls each = 360 scans). Replays cost no
-API calls. Session API spend: **4,091 of a 5,000 budget**.
+**Evaluation corpus:** 111 labelled cases, all captured
+(`labeler/ocr_captures/`, 5 runs x 3 calls each = 555 scans). Replays cost no
+API calls. Session API spend: **6,261 of a 7,000 budget**.
 
-**Where it stands: 9 scans in 10 produce a bill that adds up.**
+> The corpus grew 66 -> 72 -> 86 -> 111 during this session. **Figures are not
+> comparable across those sizes**, and section 2 tables state the size they were
+> measured at. The 14 cases added third were deliberately chosen failure
+> examples (supermarket loyalty discounts, a Colombian bar bill) and every
+> headline number fell when they landed. The 25 added last are ordinary
+> receipts, and they land almost exactly on the established item-total rate:
+>
+> | | new 25 | established 86 |
+> |---|---|---|
+> | p1_item_totals_f1 | 0.9442 | 0.9432 |
+> | p3_self_reconciled | 0.9360 | 0.8829 |
+> | p2_charges_f1 | 0.8800 | 0.7091 |
+> | identical across runs | 17/25 | 66/86 |
+>
+> Item accuracy matching to three decimals across two independently gathered
+> batches is the best evidence yet that ~0.944 is the pipeline's real rate.
+> Closure and charges are much better on the new batch, which confirms the
+> older 86 are skewed by deliberately-collected failures. The new cases are
+> *less* stable, though — more receipts in unfamiliar scripts (Slovak, Arabic,
+> Turkish, Czech) vary run to run even where the answer is usually right.
+
+**Where it stands (111 cases):**
 
 | | |
 |---|---|
-| perfect on all 5 runs (adds up *and* every item exact) | **51 / 72  (71%)** |
-| adds up on all 5 runs | 61 / 72  (85%) |
-| fails at least once | 11 / 72 |
-| identical answer across 5 runs | 50 / 72 |
-| per-scan closure | 89.2% |
+| perfect on all 5 runs (adds up *and* every item exact) | **83 / 111  (75%)** |
+| adds up on all 5 runs | 94 / 111  (85%) |
+| identical answer across 5 runs | 84 / 111 |
+| per-scan closure | 89.0% |
 | per-scan perfect (adds up *and* every item exact) | 80.0% |
-| per-scan item-total accuracy | 95.0% |
+| per-scan item-total accuracy | 94.7% |
+
+Includes the three changes landed in 2.22 and 2.23 (un-multiply, transcription-ranked
+candidate selection, savings-footer repair), worth +0.0174 item totals and
++0.0164 closure over the same corpus.
 
 Read those three apart: **9 scans in 10 add up, 4 in 5 are fully correct.**
-Closure is not correctness — a bill can balance on wrong rows.
+Closure is not correctness — and 2.14 is the proof: a receipt can balance to the
+penny on twelve wrong rows.
 
 ---
 
@@ -436,6 +461,443 @@ one. The pipeline already ships receipts it knows do not reconcile; this tells i
 *which row* to point at, which it currently cannot do. Flagged-wrong rows
 concentrate heavily — `b7bbbce1` alone accounts for 361 of them, then `d1471a36`
 113 and `e7c009b5` 86 — so most receipts would flag nothing.
+
+### 2.14 The gross-up bug — found by inspection, invisible to every metric
+
+Three receipts, all supermarket loyalty formats, show the same failure. The
+model returns an item total it **computed** rather than transcribed:
+
+```
+receipt (Sainsbury's)             pipeline
+CUSHEL G/TOILET   13.25           13.25    <- the -4.00 saving was DROPPED
+  Nectar Saving   -4.00            (gone)
+J5 BLUEBERRY MUF   2.00            3.00    <- invented (2.00 + 1.00)
+  Nectar Saving   -1.00           -1.00
+FTD BRID BURG BUN  1.50            2.00    <- invented (1.50 + 0.50)
+  Nectar Saving   -0.50           -0.50
+YOUR SAVINGS TODAY:
+  PROMOTIONS       5.50           -5.50    <- a summary line, taken as a real discount
+BALANCE DUE       13.35           13.35
+```
+
+**Three errors that cancel exactly.** `+4.00` (dropped saving) `+1.00 +0.50`
+(gross-ups) `-5.50` (phantom summary) sums to zero, so `totals_reconciled` is
+true and the bill lands on the correct £13.35 through wrong rows. `£3.00`
+appears nowhere on the receipt.
+
+`IMG-20260328-WA0027` (Tesco Clubcard) is the same thing at scale — **six**
+items grossed up, each by exactly its own discount, and a `Savings -£5.87`
+summary that cancels the lot to the penny.
+
+**The metrics never saw this.** WA0027 scores `p1 = 1.0000`, because the scorer
+collapses a discount row back into the item above it and nets out to the same
+figure the label records. The damage is real but it lands in the app's
+per-person split, not in anything p1 measures: whoever claims the pigs in
+blankets is billed £8.00 for a £5.00 item, and £5.87 of discounts is spread
+proportionally across the whole table.
+
+`IMG-20260328-WA0026` is a *different* bug worth keeping apart — `4 BIRRA IPA
+$ 32.000,00` became 128,000 because the model multiplied a printed line total by
+the quantity. It fails loudly (`reconciled: False`), so the arithmetic already
+catches it.
+
+### 2.15 Transcribed vs computed — the sharpest signal in the corpus
+
+Classifying every item total by *how* it relates to its own `receipt_line_text`
+(86 cases):
+
+```
+                                       n    wrong   rate
+verbatim (appears in the text)      2793      57    2.0%
+qty x price                          136      12    8.8%   (line prints no total)
+qty x price, line HAS a total         48       8   16.7%
+not verbatim, not qty x price        120     109   90.8%
+ALL                                 3097     186    6.0%   <- base rate
+```
+
+**A total the model worked out is wrong 9 times in 10; one it copied is wrong
+2% of the time.** Flagging the last bucket gives 90.8% precision at 58.6%
+recall — a 15x lift, and it got *better* as the corpus grew (85.2% at 72 cases).
+
+Distinguishing *computed* from merely *absent* is what makes this work. 2.13's
+untyped flag also condemned `qty x price`, which is legitimate multiplication,
+and scored only 57.8% precision.
+
+**Candidate selection on this signal is the one intervention that pays.** Rank
+the three consensus candidates by the share of their rows that are transcribed
+rather than computed, slotted directly below "reconciled" (72-case corpus):
+
+| | before | after |
+|---|---|---|
+| p1_item_totals_f1 | 0.9498 | 0.9572 |
+| s_item_name | 0.9189 | 0.9229 |
+| rollup | 0.9141 | 0.9172 |
+| identical across runs | 50/72 | 54/72 |
+| p4_adjustments_f1 | 0.2713 | 0.2439 |
+
+Per case 5 better, 1 worse. Placement is load-bearing: above "reconciled" it
+overrides the arithmetic and costs -0.0091 rollup; as a final tiebreak it does
+nothing. **Not yet re-measured on the 86-case corpus, and not landed.**
+
+### 2.16 Repairing a flagged row from its line text — REJECTED
+
+The obvious follow-on: if the total is not in the line text, replace it with a
+value that is. Four policies, all 3,097 rows:
+
+```
+policy                                             overrode  fixed  broke   net
+A  largest number in line                              203      9    107    -98
+B  largest money-shaped                                 99     11     31    -20
+C  largest money-shaped, skip x/@/each lines             69      9     21    -12
+D  largest money-shaped, skip when qty*ppq explains it   59      6      3     +3
+```
+
+Only D is positive, by 3 rows in 3,097, and D is the one that keeps the
+`qty x price` exemption. Product names carry bigger numbers than prices
+(`5.0m`, `210g`, pack sizes); money-shaping filters those but not unit prices,
+which is exactly what must not be taken when quantity > 1.
+
+**The finding that kills it:** `receipt_line_text` is model output too, and it
+degrades on the runs where the total is wrong. The same Tesco row across two
+runs:
+
+```
+run A:  '... 210g £6.50 / £3.25 each / Cc Any 2 For £5 -£1.50'
+run B:  '... 210g        £3.25 each / Cc Any 2 For £5 -£1.50'
+```
+
+When the model grosses up it often also drops the printed total from the text it
+reports — so on the runs that most need correcting there is nothing correct to
+reach for. That is why *selecting a better candidate* works and *repairing a bad
+one* does not: the replacement has to come from a call that transcribed, not
+from a heuristic.
+
+Second problem: overriding item totals **breaks closure**. Correcting the two
+Sainsbury's gross-ups takes items to 11.85 against a 13.35 total, because the
+dropped CUSHEL discount is still missing. `p3_self_reconciled` carries the
+highest weight in the rollup, so this reads as a large regression.
+
+### 2.17 Trusting `qty x price` only when no total was printed — REJECTED
+
+Meant to catch WA0026 without condemning legitimate multiplication:
+
+```
+CURRENT   flags 120 items, 109 wrong -> precision 90.8%  recall 58.6%
+REFINED   flags 168 items, 117 wrong -> precision 69.6%  recall 62.9%
+```
+
+21 points of precision for 4.3 of recall. The test cannot separate a printed
+**unit price** (multiply — correct) from a printed **line total** (do not
+multiply — WA0026's bug); both are money-shaped. `2 x £4.99 -> 9.98` is right
+and gets flagged. WA0026 already ships `reconciled: False` and needs no help.
+
+### 2.18 Redefining `total` as the printed figure — REJECTED (attempt 1)
+
+The fix 2.14 argues for: stop asking the model to net a discount, since that
+requires arithmetic and 2.15 shows arithmetic is where it fails. Prompt changed
+to *"the line total for this row exactly as printed - copy the printed figure,
+do not work it out"* plus a worked Buns/Saving example; `expand_discount_rows`
+stopped grossing rows up, since the total now arrives gross.
+
+Measured on 86 cases x 2 runs, against the same 2 runs of the old prompt:
+
+```
+p1_item_totals_f1        0.9272 -> 0.9269   -0.0002
+p1_item_count_exact      0.8895 -> 0.8837   -0.0058
+p3_self_reconciled       0.8480 -> 0.8571   +0.0092
+p2_charges_f1            0.7045 -> 0.7273   +0.0227
+p2_tax_f1                0.7500 -> 0.7857   +0.0357
+s_item_name              0.9127 -> 0.8710   -0.0417
+s_translated_name        0.8615 -> 0.8277   -0.0338
+s_date_match             0.9753 -> 0.9383   -0.0370
+rollup                   0.8772 -> 0.8770   -0.0002
+identical across runs      70/86 -> 73/86
+```
+
+**It failed on its own terms.** The point was to stop the model computing
+totals; computed totals *tripled*:
+
+```
+             verbatim   qty x price   COMPUTED
+OLD prompt     91.8%       6.4%        1.8%   (22 rows)
+NEW prompt     90.5%       4.3%        5.2%   (66 rows)
+```
+
+The targeted receipts did improve — Sainsbury's `PXL_20260604` 0.3968 -> 0.5714,
+`b8003ed3` 0.6143 -> 0.6581, and 10 cases better against 6 worse — so the idea
+is not wrong. The execution was: ~90 words of emphatic instruction that names
+both wrong answers (*"do not add the saving back on to make 2.00, and do not
+subtract it to make 1.00"*). Negative examples make the named behaviour salient.
+
+This is the **third** time added prompt text has cost secondary extraction
+(see 2.2). Names -0.042, dates -0.037, currency -0.023.
+
+Reverted. Captures kept at `labeler/ocr_captures_verbatim/` (522 calls).
+
+### 2.19 Same idea, positive-only phrasing — REJECTED, and worse
+
+2.18's failure looked like a phrasing problem, so attempt 2 was *shorter than
+the original line*, positive only, naming no wrong answer:
+
+```
+total: the line total as printed on that row of the receipt. Copy the printed
+       figure; it should appear in receipt_line_text.
+```
+
+plus eight words on the adjustments bullet (*"Leave total as the figure printed
+on the item's own line and we will apply the saving"*). Same
+`expand_discount_rows` change.
+
+It went further the wrong way:
+
+```
+             verbatim   qty x price   COMPUTED
+OLD prompt     91.8%       6.4%        1.8%   (22 rows)
+attempt 1      90.5%       4.3%        5.2%   (66 rows)
+attempt 2      86.3%       5.8%        7.8%   (102 rows)
+```
+
+```
+p1_item_totals_f1        0.9272 -> 0.9155   -0.0116
+p3_self_reconciled       0.8480 -> 0.8323   -0.0156
+p3_grand_total_correct   0.8488 -> 0.8140   -0.0349
+p2_charges_f1            0.7045 -> 0.6818   -0.0227
+s_item_name              0.9127 -> 0.8641   -0.0485
+p4_adjustments_f1        0.3449 -> 0.4444   +0.0995
+rollup                   0.8772 -> 0.8546   -0.0226
+identical across runs      70/86 -> 75/86
+```
+
+**The hypothesis is refuted, not the wording.** Two independent phrasings, one
+verbose and negative, one terse and positive, both drove computed totals *up* —
+1.8% -> 5.2% -> 7.8%, monotone with how hard the instruction pushed. Asking for
+"the printed figure" makes the model reach for *a* printed figure, and on a line
+carrying a price, a unit price and a saving it picks wrong more often than the
+old "final price paid" framing, which anchors on a concept it models well.
+
+One real gain worth keeping in mind: **`p4_adjustments_f1` rose 0.3449 ->
+0.4444**. Telling the model to leave `total` alone and hand us the saving did
+get discounts attached to their items properly. The discount *capture* improved
+while the totals got worse — so if the app ever needs item-level discounts as
+first-class data, that half of the instruction is worth revisiting on its own.
+
+Captures kept at `labeler/ocr_captures_verbatim2/` (528 calls).
+
+### 2.20 Minimal +19-word edit — REJECTED, best of the three
+
+Third attempt, designed against the previous two: keep the sentence shape, keep
+the `quantity * price_per_quantity` anchor (2.19 lost it and did worse), add
+only a qualifier, and re-use the adjustments clause that had *worked*.
+
+```
+total: the full price of that line as printed on the receipt, before any
+       discount - so quantity * price_per_quantity.
+...give the delta (e.g. "-0.45"); total stays at the pre-discount price and we
+   subtract it ourselves.
+```
+
+```
+             verbatim   qty x price   COMPUTED
+BASELINE       91.8%       6.4%        1.8%   (22 rows)
+attempt 1      90.5%       4.3%        5.2%   (66)
+attempt 2      86.3%       5.8%        7.8%   (102)
+attempt 3      87.4%       7.6%        4.9%   (63)   <- best of the three, still 2.7x baseline
+```
+
+```
+p1_item_totals_f1        0.9272 -> 0.9261   -0.0011
+p1_item_count_exact      0.8895 -> 0.9070   +0.0174
+p3_self_reconciled       0.8480 -> 0.8274   -0.0206
+p3_grand_total_correct   0.8488 -> 0.8140   -0.0349
+p3_receipt_total_correct 0.9766 -> 0.9940   +0.0174
+p2_charges_f1            0.7045 -> 0.7273   +0.0227
+p4_adjustments_f1        0.3449 -> 0.4667   +0.1217
+s_item_name              0.9127 -> 0.8635   -0.0492
+rollup                   0.8772 -> 0.8594   -0.0178
+identical across runs      70/86 -> 78/86   (stdev 0.0170 -> 0.0035)
+```
+
+Item totals essentially held (-0.0011) and row *counts* improved, but closure
+fell again and names took the same ~0.05 hit all three attempts took.
+
+**Three attempts, one conclusion.** Verbose+negative, terse+positive, and
+minimal+anchored all raised computed totals above baseline and all lowered
+closure. The field definition is not the lever, and the cost is remarkably
+consistent: **every version of this change cost ~0.04-0.05 on `s_item_name`**,
+which is the 2.2 tax on adding prompt text, now observed five times.
+
+**Two effects worth separating out, both reproducible across attempts:**
+
+- **`p4_adjustments_f1` rose every time** — 0.3449 -> 0.4444 -> 0.4667. The
+  "hand us the saving" clause reliably gets discounts attached to their items
+  instead of emitted as sibling rows. If item-level discounts ever become
+  first-class app data, that clause is worth revisiting *on its own*, without
+  touching `total`.
+- **Run-to-run stability improved sharply** — 70/86 -> 78/86, rollup stdev
+  0.0170 -> 0.0035. A tighter definition makes the model more self-consistent
+  even while making it less correct.
+
+Reverted; prompt byte-identical to the 5-run baseline. Captures at
+`labeler/ocr_captures_v3/` (528 calls).
+
+**Where this leaves 2.14.** The gross-up bug is real, systematic across UK
+supermarket formats, and **not fixable by redefining the field** — that is now
+settled across three independent phrasings and 1,578 API calls. The remaining
+routes are the 2.15 candidate selector (free, +0.0074 on 72 cases, not yet
+re-measured on 86) and surfacing the flag in the UI rather than correcting it.
+
+**If it is retried**, do it on a corpus with more than six labelled
+discount receipts — the signal is currently being judged on too few cases to
+separate a real effect from prompt-length noise.
+
+### 2.22 Un-multiply, and select on transcription — BOTH LANDED
+
+The two things that finally worked. Neither touches the prompt or the schema;
+both cost zero API calls.
+
+**`unmultiply_line_totals`** (`ledger.py`). The model sometimes reads a printed
+*line total* as a unit price and multiplies it out — `4 BIRRA IPA $ 32.000,00`
+came back as 128,000 against a 137,000 bill. The tell is that the emitted total
+is absent from `receipt_line_text` while `price_per_quantity` is present.
+
+That tell alone is not actionable: `2 x £4.99 -> 9.98` is textually identical
+and correct. **The receipt's own total is the arbiter** — the row is rewritten
+only when doing so closes the items-vs-`receipt_total` gap. On WA0026 the items
+overshoot by 96,000, exactly `(4-1) x 32,000`, which names the culprit.
+
+```
+NAIVE      (ppq printed, total not)      46 rows -> fixed 11, broke 28   net -17
+ARITHMETIC (...and it closes the gap)     7 rows -> fixed  7, broke  0   net  +7
+```
+
+Runs before charge selection, so a corrected items sum also feeds the additive
+search. Five tests cover the fix and the three ways it must decline.
+
+**`transcribed_fraction` in `select_best_line_items`** (`postprocess.py`). Rank
+the three consensus candidates by the share of rows whose total was read off the
+receipt rather than derived, slotted directly below "reconciled".
+
+```
+430 scans
+  candidates all equally transcribed (term is a no-op):  379/430 = 88%
+  scans where it changed the outcome:                     12      = 2.8%
+     improved 10, worsened 2
+     mean gain on the improved   +0.346
+     mean loss on the worsened   -0.162
+```
+
+Dormant on seven receipts in eight; decisive on the rest. Placement is
+load-bearing: above "reconciled" it overrides the arithmetic and costs -0.0091
+rollup; as a final tiebreak it does nothing. It cannot change *whether* a
+candidate reconciles, only which of the equally-reconciling ones ships —
+`p3_self_reconciled` is identical to four decimals with and without it.
+
+Replicated across corpus sizes: **+0.0074 on 72 cases, +0.0073 on 86**, with the
+corpus materially harder in between.
+
+**Combined effect (86 cases x 5 runs):**
+
+| | baseline | +unmultiply | +selector |
+|---|---|---|---|
+| p1_item_totals_f1 | 0.9295 | 0.9359 | **0.9432** |
+| p1_item_count_exact | 0.8698 | 0.8698 | 0.8721 |
+| p3_self_reconciled | 0.8665 | **0.8829** | 0.8829 |
+| p3_grand_total_correct | 0.8721 | 0.8884 | 0.8884 |
+| s_item_name | 0.9007 | 0.9034 | 0.9072 |
+| rollup | 0.8874 | 0.8984 | **0.9014** |
+| identical across runs | 63/86 | 62/86 | **66/86** |
+| p4_adjustments_f1 | 0.3697 | 0.3697 | 0.3579 |
+
+The only regression is `p4_adjustments_f1` -0.0118, the metric 2.5 established
+cannot measure discounts. `IMG-20260328-WA0026` goes 0.5000 -> 1.0000; the
+Sainsbury's receipt gains +0.0929 — the only movement on the 2.14 gross-up bug
+achieved without a prompt change.
+
+**Why these worked when nine other things did not.** Every rejected intervention
+either added words to the prompt (2.2, 2.18, 2.19, 2.20 — each cost ~0.05 on
+`s_item_name`) or guessed a replacement value from text (2.16, 2.17 — each broke
+more rows than it fixed). These two do neither: one lets the receipt's own
+arithmetic decide, the other picks between three answers already paid for.
+
+### 2.23 The savings footer — LANDED, and it fixes 2.14
+
+The gross-up bug, finally repaired — in post-processing, after three prompt
+attempts failed at it.
+
+**Why nothing had caught it.** A loyalty receipt prints each saving under its
+item and totals them at the bottom (Tesco `Savings -5.87`, Sainsbury's
+`PROMOTIONS 5.50`). The footer is a restatement, not a further deduction. The
+model reports it as a receipt-level discount *and* inflates each item by the
+saving it absorbed. `select_additive_charges` then finds that subtracting the
+footer closes the bill — arithmetically true, substantively wrong. The receipt
+reconciles to the penny on rows that are each incorrect, and every existing
+check passes it.
+
+**Detection is arithmetic, not lexical.** The footer is the negative charge
+equal to the sum of the discount rows already in `items`:
+`5.87 == 1.50+0.80+0.40+1.08+0.75+1.34`. No keyword list.
+
+**Neither half can be undone alone.** Dropping the footer by itself broke
+closure on **all 17** scans where it was detected, because the gross-ups add
+exactly what it removes. The two errors are one error. So the repair reverses
+both together and is accepted only if the bill still closes.
+
+**At least two item-level discounts are required.** With one, a real discount
+reported once as a row and once as a charge is indistinguishable from a footer;
+`4bf96933` is exactly that shape and must not be touched.
+
+| | before | after |
+|---|---|---|
+| p1_item_totals_f1 | 0.9434 | **0.9471** |
+| p1_item_count_exact | 0.8685 | 0.8775 |
+| s_item_name | 0.9068 | 0.9079 |
+| p4_adjustments_f1 | 0.3152 | 0.3164 |
+| rollup | 0.9084 | 0.9096 |
+| identical across runs | 83/111 | 84/111 |
+| p3_self_reconciled | 0.8949 | 0.8949 |
+
+**`IMG-20260328-WA0027` goes 0.5931 -> 1.0000 on all five runs.** Closure is
+unchanged by construction — the repair is gated on preserving it. Nothing
+regressed; `4bf96933` correctly untouched at 0.9455.
+
+**Scope is narrow: 4 scans of 555**, worth +0.0037. It needs the model to have
+captured *every* individual saving plus the footer. Sainsbury's usually drops
+one (the CUSHEL -4.00), so the sums disagree and the rule correctly declines
+rather than half-repairing — `PXL_20260604` stays at 0.3532. The case for it is
+not the corpus number but that the pattern is systematic across UK supermarket
+loyalty schemes, which the corpus under-represents at 7% of receipts and real
+users probably do not.
+
+**A false start worth recording.** The first implementation ran after
+`expand_discount_rows` and looked for the footer among the *item rows*. It never
+fired: the footer arrives via `other_charges` and is only merged into `items`
+after charge selection. It has to run before `select_additive_charges`, on the
+charge list, which is also the only point where removing it can stop the search
+accepting it.
+
+### 2.21 Does "quantity * price_per_quantity" make the model invent quantities?
+
+Tested for free, since attempt 2 removed the multiplication language entirely
+and attempt 1 demoted it to a fallback — three prompts over identical images:
+
+```
+                                    ppq not in line   qty not in line   total = qty x INVENTED ppq
+BASELINE  "so quantity * price"          12%               6%            142 rows,  2% wrong
+ATTEMPT 1 "fall back to qty*price"       11%               7%            117 rows,  2% wrong
+ATTEMPT 2 no multiplication language     13%               5%            146 rows,  3% wrong
+```
+
+**No.** Removing the phrase left an invented unit price slightly *more* common,
+not less. And rows whose total is `quantity x an invented ppq` are **2% wrong
+against a 6.0% base rate** — the safest rows in the corpus.
+
+The direction of derivation is why: the model reads the total off the receipt
+and back-fills a unit price to populate the field, rather than computing the
+total from a formula. `IMG-20260328-WA0026` shows both directions on one bill —
+`14 BIRRA RUBIA $ 105.000,00` gives ppq 7500 (invented, total correct) while
+`4 BIRRA IPA $ 32.000,00` gives 128,000 (total invented, wrong). Same prompt
+language produced both. The failure is mistaking a printed **line total** for a
+printed **unit price**, which no amount of removing arithmetic wording touches.
 
 ---
 

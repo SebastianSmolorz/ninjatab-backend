@@ -34,6 +34,7 @@ from typing import Optional
 
 from .postprocess import (
     _annotation_decimals,
+    _printed_values,
     _annotation_tolerance,
     _categorize_item_name,
     _collapse_redundant_translations,
@@ -175,6 +176,125 @@ def _fold(text: Optional[str]) -> str:
         return ""
     decomposed = unicodedata.normalize("NFKD", text)
     return "".join(c for c in decomposed if not unicodedata.combining(c)).casefold()
+
+
+def receipt_total_of(annotation: dict) -> Optional[float]:
+    return _to_float(annotation.get("receipt_total"))
+
+
+def unmultiply_line_totals(
+    items: list[dict], receipt_total: Optional[float], tolerance: float, decimals: int = 2
+) -> int:
+    """Undo a quantity multiplication the receipt's own total says was wrong.
+
+    The model sometimes reads a printed *line total* as a unit price and
+    multiplies it by the quantity: `4 BIRRA IPA  $ 32.000,00` came back as
+    128,000 against a bill whose total was 137,000.
+
+    The tell is that the emitted total is absent from `receipt_line_text` while
+    `price_per_quantity` is present. That alone is not enough to act on —
+    `2 x £4.99 -> 9.98` looks identical and is correct — so the row is rewritten
+    only when doing so closes the gap between the items and `receipt_total`. The
+    receipt's own arithmetic is the arbiter; nothing is picked out of the text.
+
+    Measured over 430 scans: 7 rows rewritten, 7 of them wrong beforehand and
+    none right. Ungated, the same test rewrites 46 rows and breaks 28 of them.
+    """
+    if receipt_total is None:
+        return 0
+    gap = sum(_to_float(i.get("total")) or 0.0 for i in items) - receipt_total
+    if abs(gap) < tolerance:
+        return 0
+
+    for item in items:
+        total = _to_float(item.get("total"))
+        unit = _to_float(item.get("price_per_quantity"))
+        quantity = item.get("quantity")
+        if total is None or unit is None or not quantity or int(quantity) < 2:
+            continue
+        if abs(total - int(quantity) * unit) >= tolerance:
+            continue  # the total is not a clean multiple, so this is not the case
+        printed = _printed_values(item.get("receipt_line_text"))
+        if any(abs(total - p) < tolerance for p in printed):
+            continue  # the total is printed on the line: the model read it, not made it
+        if not any(abs(unit - p) < tolerance for p in printed):
+            continue  # neither figure is printed; there is nothing to fall back to
+        if abs(gap - (total - unit)) < tolerance:
+            item["total"] = f"{unit:.{decimals}f}"
+            logger.info(
+                "Un-multiplied a line total: %s x %s -> %s (closes a %s gap)",
+                quantity, unit, unit, round(gap, decimals),
+            )
+            return 1
+    return 0
+
+
+def drop_restated_discount_summary(
+    items: list[dict], charges: list[dict], receipt_total: Optional[float],
+    tolerance: float, decimals: int = 2,
+) -> int:
+    """Remove a savings total that restates discounts already taken per item.
+
+    Supermarket loyalty receipts print each saving under its item and then total
+    them at the bottom — Tesco's "Savings -5.87", Sainsbury's "PROMOTIONS 5.50".
+    The footer is a restatement, not a further deduction. The model reports it as
+    a receipt-level discount *and* inflates each item by the saving it absorbed,
+    so the two errors cancel: `select_additive_charges` finds that subtracting
+    the footer closes the bill, which is arithmetically true and substantively
+    wrong. The receipt reconciles to the penny on rows that are individually
+    wrong, and no other check can see it.
+
+    Because they cancel, neither half can be undone alone — dropping the footer
+    by itself broke closure on all 17 scans where it was detected. The gross-ups
+    are reversed and the footer discarded together, and only if the bill still
+    closes afterwards.
+
+    The footer is identified arithmetically rather than by wording: it is the
+    negative charge equal to the sum of the discount rows already sitting in
+    `items`. At least two of those are required, so that a single real discount
+    reported once as a row and once as a charge is not mistaken for this.
+    """
+    if receipt_total is None:
+        return 0
+    categories = [row_category(i) for i in items]
+    discounts = [i for i, c in enumerate(categories) if c == "discount"]
+    if len(discounts) < 2:
+        return 0
+    taken = sum(_to_float(items[i].get("total")) or 0.0 for i in discounts)
+
+    summary = next(
+        (c for c in charges
+         if (_to_float(c.get("amount")) or 0.0) < 0
+         and abs((_to_float(c["amount"]) or 0.0) - taken) < tolerance),
+        None,
+    )
+    if summary is None:
+        return 0
+
+    rebuilt: list[dict] = []
+    for i, item in enumerate(items):
+        total = _to_float(item.get("total"))
+        following = categories[i + 1] if i + 1 < len(items) else None
+        if categories[i] == "item" and following == "discount" and total is not None:
+            reduction = _to_float(items[i + 1].get("total")) or 0.0
+            printed = _printed_values(item.get("receipt_line_text"))
+            # Grossed up exactly when the printed figure is the total *net* of
+            # the discount sitting beneath it.
+            if (not any(abs(total - p) < tolerance for p in printed)
+                    and any(abs(total + reduction - p) < tolerance for p in printed)):
+                item = dict(item)
+                item["total"] = f"{total + reduction:.{decimals}f}"
+        rebuilt.append(item)
+
+    if abs(sum(_to_float(i.get("total")) or 0.0 for i in rebuilt) - receipt_total) >= tolerance:
+        return 0  # the pair does not explain the bill; leave it alone
+    logger.info(
+        "Dropped a restated savings total of %s and ungrossed its items",
+        round(_to_float(summary["amount"]) or 0.0, decimals),
+    )
+    items[:] = rebuilt
+    charges.remove(summary)
+    return 1
 
 
 def expand_discount_rows(items: list[dict], decimals: int = 2) -> int:
@@ -461,11 +581,23 @@ def reconcile_ledger(annotation: dict, default_currency: str) -> dict:
     metrics["other_charges_count"] = len(annotation.get("other_charges") or [])
 
     items = list(annotation.get("items") or [])
+    # Runs before the charge search below, so a corrected items sum decides which
+    # charges are additive.
+    metrics["unmultiplied_rows"] = unmultiply_line_totals(items, receipt_total_of(annotation), tolerance, decimals)
     # An item discount becomes its own negative row directly beneath its item,
     # which is where the receipt printed it. Sum-preserving, so it cannot change
     # which charges the arithmetic below finds to be additive.
     metrics["discount_rows_expanded"] = expand_discount_rows(items, decimals)
+    # After expansion, so a saving the model attached to its item is a row here
+    # and can be counted against the footer that restates it.
+
     charges = collect_charges(annotation)
+    # Before the charge search: a savings footer restates discounts already in
+    # `items`, and the search would otherwise accept it because the grossed-up
+    # items make subtracting it close the bill.
+    metrics["restated_summary_dropped"] = drop_restated_discount_summary(
+        items, charges, _to_float(annotation.get("receipt_total")), tolerance, decimals
+    )
     receipt_total = _to_float(annotation.get("receipt_total"))
     metrics["charges_count"] = len(charges)
     metrics["receipt_total"] = receipt_total
