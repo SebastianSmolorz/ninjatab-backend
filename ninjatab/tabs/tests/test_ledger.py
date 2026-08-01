@@ -55,9 +55,12 @@ class RowCategoryTests(SimpleTestCase):
         # The name says nothing; the model's kind carries the classification.
         self.assertEqual(row_category(_item("BTW", "4.00", kind="tax")), "tax")
 
-    def test_a_service_charge_is_a_tip(self):
-        """Gratuity, tip and service charge are the same thing to a diner."""
-        self.assertEqual(row_category(_item("Bediening", "4.00", kind="service")), "tip")
+    def test_a_service_kind_row_is_an_ordinary_line(self):
+        """`kind: "service"` is the model's catch-all for a row nobody ordered,
+        not a claim that it is gratuity: an Italian coperto is a per-head cover
+        charge and arrives tagged exactly this way. A real service charge comes
+        in the `service_charge` field, and that one is still a tip."""
+        self.assertEqual(row_category(_item("N. 5 COPERTO", "15.00", kind="service")), "item")
 
     def test_a_fee_is_an_ordinary_line(self):
         """Only tax and tip have their own control in the app; a delivery or

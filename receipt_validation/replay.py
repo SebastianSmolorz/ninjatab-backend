@@ -28,6 +28,8 @@ METRIC_KEYS = [
     "p1_item_totals_f1",
     "p1_item_count_exact",
     "p2_charges_f1",
+    "p2_tax_f1",
+    "p2_tip_f1",
     "charge_type_accuracy",
     "p3_self_reconciled",
     "p3_grand_total_correct",

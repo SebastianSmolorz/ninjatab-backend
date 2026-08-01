@@ -72,10 +72,15 @@ _KIND_TO_CATEGORY = {
     "item": "item",
     "tax": "tax",
     "tip": "tip",
-    # A row the model itself called a service charge is a tip, same as one it
-    # put in `service_charge`. Delivery, booking, card and handling charges have
-    # no kind of their own and stay ordinary line items.
-    "service": "tip",
+    # Not a tip. `kind: "service"` is the model's catch-all for "this row is not
+    # something anyone ordered", and it lands on cover charges (an Italian
+    # coperto is a per-head charge, not gratuity), delivery, booking and card
+    # fees alike. A real service charge arrives in the `service_charge` field,
+    # which does map to tip - see CHARGE_SOURCES.
+    # Measured: tip F1 0.7627 -> 0.8182, charges 0.7879 -> 0.8211. p1 -0.0022,
+    # entirely one illegible receipt dropping 0.20 -> 0.00; the coperto case it
+    # targets gained 0.04.
+    "service": "item",
     # A discount is a line on the bill like any other, just a negative one - it
     # sits under the item it reduces, or at the bottom if it applies to the
     # whole receipt. The category marks it as not claimable: nobody ordered a
