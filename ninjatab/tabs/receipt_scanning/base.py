@@ -156,10 +156,10 @@ class ReceiptScanStrategy:
             self.deskew = deskew
 
     def _maybe_deskew(self, ctx: ScanContext) -> None:
-        """Straighten the receipt text in place, once per ScanContext. Rewrites
-        ctx.image_bytes (and content_type) to the deskewed JPEG and drops
-        s3_base_key so downstream references send the corrected bytes inline
-        rather than the stale S3 original. No-op when disabled or already run."""
+        """Straighten the receipt image in place, once per ScanContext. Rewrites
+        ctx.image_bytes (and content_type) and drops s3_base_key so downstream
+        references send the corrected bytes inline rather than the stale S3
+        original. No-op when disabled or already run."""
         if not self.deskew or ctx.deskew_applied:
             return
         # Imported lazily so the (heavy) cv2/numpy import is paid only when used.
@@ -172,7 +172,7 @@ class ReceiptScanStrategy:
             ctx.image_bytes = deskewed
             ctx.content_type = "image/jpeg"
             ctx.s3_base_key = None  # S3 copy is now stale; force inline data URL
-        logger.info("Deskew applied (%s): angle=%.3f deg", self.name, angle)
+        logger.info("Image deskewed (%s): angle=%.3f deg", self.name, angle)
 
     def base_metrics(self, ctx: ScanContext) -> dict:
         return {

@@ -63,21 +63,39 @@ class Command(BaseCommand):
 
         runs, calls = options["runs"], options["calls"]
         planned = len(names) * runs * calls
+        out_dir = Path(options["output"])
+
+        # Captures already on disk are never re-made, so a re-run after labelling
+        # a few more cases only calls Mistral for those. Counted before the dry
+        # run reports, so what it quotes is what a real run would actually spend.
+        jobs = [
+            (name, run, call)
+            for name in names
+            for run in range(runs)
+            for call in range(calls)
+            if not (out_dir / name / f"run{run}_call{call}.json").exists()
+        ]
+        skipped = planned - len(jobs)
         self.stdout.write(
-            f"{len(names)} cases x {runs} runs x {calls} calls = {planned} Mistral API calls "
+            f"{len(names)} cases x {runs} runs x {calls} calls = {planned} captures "
             f"(model {model})"
+        )
+        self.stdout.write(
+            f"{skipped} already on disk; {len(jobs)} Mistral API calls to make."
         )
         if options["dry_run"]:
             self.stdout.write("Dry run; no API calls made.")
             return
+        if not jobs:
+            self.stdout.write(self.style.SUCCESS("Nothing to capture."))
+            return
 
-        out_dir = Path(options["output"])
         out_dir.mkdir(parents=True, exist_ok=True)
 
         # Deskew once per case: it is deterministic, and the labels were created
         # from the deskewed image, so the OCR input must match.
         prepared = {}
-        for name in names:
+        for name in sorted({name for name, _, _ in jobs}):
             image_path = cases[name]["image_path"]
             content_type = mimetypes.guess_type(str(image_path))[0] or "image/jpeg"
             image_bytes, angle = deskew_bytes(image_path.read_bytes())
@@ -90,17 +108,6 @@ class Command(BaseCommand):
                 tab_id="labelled-eval",
             )
             prepared[name] = (data_url_ref(ctx), angle)
-
-        jobs = [
-            (name, run, call)
-            for name in names
-            for run in range(runs)
-            for call in range(calls)
-            if not (out_dir / name / f"run{run}_call{call}.json").exists()
-        ]
-        skipped = planned - len(jobs)
-        if skipped:
-            self.stdout.write(f"{skipped} captures already on disk; {len(jobs)} calls to make.")
 
         client = mistral_client()
         made = 0

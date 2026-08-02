@@ -875,6 +875,116 @@ after charge selection. It has to run before `select_additive_charges`, on the
 charge list, which is also the only point where removing it can stop the search
 accepting it.
 
+### 2.24 Perspective correction — text-block dewarp REJECTED, YOLO segmentation REJECTED, but the gate that would make it work was found
+
+The defect this chases is not rotation. A receipt cupped in a hand prints
+straight rows onto curved photographed ones: on `PXL_20260801_115103443` (Tesco)
+the text rows ran **-3.97 deg at the top and -0.61 deg at the bottom**. That is a
+*gradient*, and no single angle removes it — the deskew of 2.8 correctly reports
+0.00 deg on that photo. Across a 270px block, 3 deg is 14px of drift against a
+12px line pitch, i.e. exactly one line, which is why the OCR paired every price
+with the description above it and double-counted a £1.00 discount. 14 of 15 calls
+made the identical error, so consensus cannot help either.
+
+**Attempt 1: find the receipt from its own text. REJECTED.**
+
+Paper edges were tried first and abandoned — held in a hand, the left edge is
+white paper on a bright palm and the bottom edge is white paper on a white
+carrier bag, so two of four boundaries carry no contrast. Canny contours, an HSV
+paper mask and a Hough search all failed on the same photo.
+
+Locating the receipt by its *text rows* (ink = dark pixels on a locally bright
+background, joined with a 3x45 kernel, edges fitted to the row extremes) fixed
+the target case outright: rollup 0.575 -> 0.991, p1 1.000, reconciles. But it
+declined on 3 of the next 4 photos tried, for three unrelated reasons — a pub
+receipt too dim for the `bg > 180` test, blue biro on dark leather with no
+printed block to find, and a receipt photographed sideways whose vertical text a
+horizontal row kernel cannot see. Too narrow to ship.
+
+**Attempt 2: a YOLO segmentation model (Roboflow `receipt-segmentation-jzoro/1`).**
+Returns the polygon of receipt pixels; the quad around it is warped square.
+
+Fitting the quad: convex hull, `approxPolyDP` at rising tolerance until four
+corners remain (min-area rect as fallback), then **grown about its centre until
+every hull point is inside it**. Four corners cannot trace a curled receipt, and
+the leftovers between quad and mask are always receipt.
+
+*Cropping tighter was measured and rejected.* Over 20 supermarket/skewed cases,
+a quad fitted without the growth step clips ~8% of the mask:
+
+| | baseline | seg+deskew | seg | tight+deskew | tight |
+|---|---|---|---|---|---|
+| rollup | 0.841 | **0.853** | 0.779 | 0.729 | 0.813 |
+| p1_item_totals_f1 | 0.849 | **0.862** | 0.820 | 0.798 | 0.785 |
+
+Tight collapsed the Lidl case 0.938 -> 0.278. *Deskewing after the warp is
+required*, though — the quad follows the mask, and a mask slightly off square
+leaves the crop rotated (measured -1.30 deg on a receipt level in the
+photograph). It is worth +0.074 rollup (0.779 -> 0.853): ASDA 0.400 -> 1.000,
+Sainsbury's 0.190 -> 0.982, Sintra 0.938 -> 0.988, JIP 0.940 -> 0.997.
+
+**Whole corpus, 126 cases, 2 runs each, against the captured baseline:**
+
+| metric | baseline | seg+deskew | delta |
+|---|---|---|---|
+| rollup | 0.8938 | 0.8910 | **-0.0027** |
+| p1_item_totals_f1 | 0.9295 | 0.9203 | -0.0092 |
+| p1_item_count_exact | 0.8794 | 0.8651 | -0.0143 |
+| p3_self_reconciled | 0.8758 | 0.8911 | +0.0153 |
+| p4_adjustments_f1 | 0.3608 | 0.3294 | -0.0314 |
+| s_date_match | 0.9565 | 0.9826 | +0.0261 |
+
+**21 better, 22 worse, 83 unchanged.** 96 of 126 segmented; the 30 that fell back
+to plain deskew *improved* (+0.0234) while the segmented ones did not (-0.0109) —
+the only positive contribution came from cases segmentation declined to touch.
+
+The mean hides a heavy tail both ways. Wins: `IMG-20260521-WA0019`
+0.431 -> 0.999, `PXL_20260604_201408239` 0.441 -> 0.841, Tesco 0.575 -> 0.926.
+Losses: **`50f2206b` 0.999 -> 0.084**, `IMG-20260521-WA0005` 0.994 -> 0.359,
+`IMG-20260521-WA0003` 0.707 -> 0.293. Taking a perfectly-read receipt to 0.084 is
+a worse failure than anything it fixes.
+
+**REJECTED** at -0.0027 for ~600ms and a third-party dependency per scan.
+
+**The gate that works, and is worth revisiting.** Two attempts at a geometric
+gate failed outright. Aspect ratio: the +0.541 win sits at h/w 3.29, beside a
+-0.513 regression at 3.44, and one long till roll fitted *landscape* at 0.30.
+Quad fill: regressions at 63.8/77.4/80.2% overlap wins at 82.9/84.2%, and a
+62.4% case is fine. With three regressions in nineteen cases, any threshold is
+fitted to three points.
+
+What does separate them is **disagreement between the 3 OCR calls within one
+scan** — free, already computed, no geometry:
+
+| | n | mean delta |
+|---|---|---|
+| calls disagree on item count | 40 | **+0.0329** |
+| calls agree | 86 | -0.0193 |
+
+Stable at every threshold tried (>0.0, >0.05, >0.15 all give ~+0.010). Split-half
+validation — threshold fitted on a random half, scored on the other, 200
+shuffles — gives a **held-out corpus delta of +0.0096 (median +0.0092), positive
+in 177 of 200 splits**. It skips both catastrophic regressions (`50f2206b` and
+`IMG-20260521-WA0005` show zero disagreement).
+
+The reasoning is causal, not incidental: three independent reads disagreeing
+about how many rows exist *is* the signature of hard geometry. Agreement means
+the photo is already legible and rewarping can only add error.
+
+Not landed, for two reasons. Disagreement is only observable *after* scanning, so
+the flow is scan (3 calls) -> if they disagree, segment and scan again (3 more) —
+double cost on ~32% of receipts. And +0.0096 is small against the 0.0273
+run-to-run stdev: real in the paired comparison, imperceptible to a user. The
+`tiered_consensus` strategy already has the escalate-on-uncertainty shape if this
+is revisited.
+
+**Two process notes.** Both attempts were recommended for rejection on a
+7-image sample and both recommendations were wrong — post-warp deskew looked
+like dead weight until a 20-case set showed it worth +0.074. Single-run deltas
+on small sets are noise. And the visual signal misleads: the bakery receipt
+`IMG-20260328-WA0005` was warped into an alarming shear, and scored **1.000 on
+every path**.
+
 ### 2.21 Does "quantity * price_per_quantity" make the model invent quantities?
 
 Tested for free, since attempt 2 removed the multiplication language entirely

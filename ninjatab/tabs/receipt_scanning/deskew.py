@@ -1,7 +1,7 @@
 """Text-based image deskew.
 
-Estimates the dominant skew angle from an image's text and rotates the image so
-text lines are horizontal.
+`deskew_bytes` rotates a receipt photo so its text lines are horizontal, using a
+projection-profile search over candidate angles.
 
 Pure cv2/numpy with no Django coupling, so the labeller imports it directly off
 MAIN_BACKEND_DIR rather than shelling out.

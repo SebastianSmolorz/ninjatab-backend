@@ -41,6 +41,7 @@ from .postprocess import (
     _normalize_amounts_in_annotation,
     _synthesize_total_only_item,
     _to_float,
+    drops_rows,
     SUPPORTED_CURRENCY_CODES,
 )
 
@@ -712,6 +713,7 @@ def reconcile_ledger(annotation: dict, default_currency: str) -> dict:
     metrics["adjustments_count"] = len(adjustments)
     metrics["promoted_item_rows"] = len(promoted)
     metrics["ai_items_total"] = _to_float(annotation.get("ai_items_total"))
+    metrics["rows_below_ai_items_total"] = drops_rows(annotation)
     if receipt_total is not None:
         gap = round(total - receipt_total, 6)
         metrics["items_receipt_gap"] = gap

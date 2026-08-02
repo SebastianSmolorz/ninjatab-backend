@@ -444,6 +444,39 @@ def _items_receipt_gap(annotation: dict) -> Optional[float]:
     return abs(total - receipt_total)
 
 
+def drops_rows(annotation: dict) -> bool:
+    """True when the bill sums short of the total the model itself reported for
+    its items.
+
+    The prompt asks the model to *sum* its own item totals into `items_total`,
+    and 80.7% of captured calls do exactly that (the flag cannot fire on those).
+    It is the other fifth that is interesting: the model returning a figure its
+    own rows do not reach. Measured over the 630 labelled scans, the 100 that
+    trip this score 0.815 item-total F1 against 0.951 for the rest, so it is a
+    usable "worth a human glance" signal - but it is a symptom, not a
+    diagnosis. Of those 100: 41 are the model disagreeing with itself (on long
+    receipts it tends to report the receipt's printed subtotal while emitting a
+    truncated row list), 19 are a subtotal legitimately printed before a
+    discount, and 40 only go short after this module's own reconciliation moves
+    money out of the bill.
+
+    A surplus is not the same defect (duplicated rows overshoot, and the verify
+    stage already hunts those), so only the shortfall counts here.
+    """
+    ai = _to_float(annotation.get("ai_items_total"))
+    if ai is None:
+        return False
+    # Whichever of the two the printed subtotal is meant to match: rows alone on
+    # a receipt whose charges sit outside the subtotal, or the whole bill when
+    # they are inside it. Short of both is short.
+    totals = [
+        t for t in (_to_float(annotation.get("items_total")), bill_total(annotation))
+        if t is not None
+    ]
+    tolerance = _annotation_tolerance(annotation)
+    return bool(totals) and all(ai - t > tolerance for t in totals)
+
+
 def _is_reconciled(annotation: dict) -> bool:
     """True when what the bill sums to matches receipt_total within the
     currency's tolerance. False when they diverge or receipt_total is absent."""
@@ -521,7 +554,14 @@ def select_best_line_items(candidates: list[dict]) -> Optional[int]:
     reconciled_idx = [i for i in valid_idx if _is_reconciled(candidates[i])]
     pool = reconciled_idx or valid_idx
     counts = Counter(len(candidates[i].get("items") or []) for i in pool)
-    modal_count = counts.most_common(1)[0][0] if counts else None
+    modal_count, n_modal = counts.most_common(1)[0] if counts else (None, 0)
+    # A mode of one is not a mode: with every candidate at a different item
+    # count, most_common returns whichever was seen first, and that arbitrary
+    # winner would fire ahead of the gap tiebreak below. Correctness rather than
+    # a win: over 630 scans it changes one case (17392, a 51-item receipt no
+    # call reads well) and the aggregate moves +0.0001 rollup, -0.0001 F1.
+    if n_modal < 2:
+        modal_count = None
 
     def score(i: int):
         c = candidates[i]
@@ -532,6 +572,13 @@ def select_best_line_items(candidates: list[dict]) -> Optional[int]:
             # to the criteria below rather than being split on noise.
             round(transcribed_fraction(c), 2),
             1 if modal_count is not None and len(c.get("items") or []) == modal_count else 0,
+            # Rows short of the model's own reported items_total (`drops_rows`)
+            # was tried as a term here and rejected: it cost 0.0017 item-total F1
+            # over 555 scans and 0.0019 over 630, in every placement and at every
+            # shortfall threshold from 1c to 20%, plus a case of stability each
+            # time. It detects dropped rows honestly, it just does not pick the
+            # better parse - the gap tiebreak below already does. Metric, not a
+            # vote.
             1 if c.get("currency_code") else 0,
             1 if c.get("datetime_of_receipt") else 0,
             -(gap if gap is not None else float("inf")),

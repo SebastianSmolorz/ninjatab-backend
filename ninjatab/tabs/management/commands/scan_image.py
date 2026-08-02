@@ -83,17 +83,22 @@ class Command(BaseCommand):
         angle = None
         with tempfile.TemporaryDirectory() as tmp:
             if options["deskew"] and not options["no_deskew"]:
-                # run_strategy reads the image off disk, so hand it a straightened
-                # copy rather than threading deskew through the scan pipeline.
+                # run_strategy reads the image off disk, so hand it a deskewed
+                # copy rather than threading the correction through the pipeline.
+                # The file on disk is then exactly what got scanned - which is
+                # what lets the labeller draw bounding boxes over the image it
+                # shows.
                 original = image_path.read_bytes()
-                deskewed, angle = deskew_bytes(original)
+                corrected, angle = deskew_bytes(original)
                 self.stderr.write(f"Deskewed by {angle:.3f}°")
+                # Having done it here, do not let the strategy do it again.
+                strategy.deskew = False
                 # deskew_bytes re-encodes as JPEG, but returns the original bytes
                 # untouched when the skew is negligible — keep the suffix honest
                 # so run_strategy guesses the right content type.
-                suffix = image_path.suffix if deskewed is original else ".jpg"
-                image_path = Path(tmp) / f"deskewed{suffix}"
-                image_path.write_bytes(deskewed)
+                suffix = image_path.suffix if corrected is original else ".jpg"
+                image_path = Path(tmp) / f"corrected{suffix}"
+                image_path.write_bytes(corrected)
 
             self.stderr.write(
                 f"Scanning {image_path} with strategy '{strategy.name}' "
