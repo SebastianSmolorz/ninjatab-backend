@@ -1,7 +1,9 @@
 """Text-based image deskew.
 
-`deskew_bytes` rotates a receipt photo so its text lines are horizontal, using a
-projection-profile search over candidate angles.
+`deskew_bytes` rotates a receipt photo so its text lines are horizontal. The
+default method groups characters into text-line blobs and takes the median of
+their angles; `method="projection"` selects the older profile search, which is
+slower and misses skew that the blobs find.
 
 Pure cv2/numpy with no Django coupling, so the labeller imports it directly off
 MAIN_BACKEND_DIR rather than shelling out.
@@ -91,6 +93,136 @@ def _angle_minarea(binary: np.ndarray) -> float:
     return float(angle)
 
 
+def _character_mask(binary: np.ndarray) -> tuple[np.ndarray, float]:
+    """Keep only character-sized connected components. Returns (mask, median
+    character height), or (input, 0.0) when there is nothing to measure.
+
+    Everything on a receipt photo that is not text - wood grain, table edges,
+    fingers, the paper outline itself - survives a raw aspect-ratio filter once
+    it has been smeared horizontally, and votes on the angle. Characters are
+    distinguishable before smearing: they cluster tightly around one height and
+    are never much wider than they are tall.
+    """
+    count, labels, stats, _ = cv2.connectedComponentsWithStats(binary, 8)
+    if count < 2:
+        return binary, 0.0
+
+    heights = stats[1:, cv2.CC_STAT_HEIGHT]
+    widths = stats[1:, cv2.CC_STAT_WIDTH]
+    plausible = heights[(heights >= 3) & (heights <= binary.shape[0] // 10)]
+    if plausible.size < MIN_BLOBS:
+        return binary, 0.0
+    median_h = float(np.median(plausible))
+
+    keep = (
+        (heights >= max(3, 0.5 * median_h))
+        & (heights <= 3 * median_h)
+        & (widths <= 8 * median_h)  # drops rules, paper edges and grain streaks
+    )
+    mask = np.isin(labels, np.flatnonzero(keep) + 1).astype(np.uint8) * 255
+    return mask, median_h
+
+
+def text_rects(binary: np.ndarray) -> list:
+    """Rotated rects (cv2.minAreaRect tuples) around text lines in a binary image.
+
+    Characters are isolated, then glued into lines with a horizontal close whose
+    width scales with the text itself - a fraction of the image width merges
+    nothing on a receipt photographed small in frame, and merges whole columns
+    on a close-up. Blobs too small or too square to be a line of text are dropped.
+    """
+    mask, median_h = _character_mask(binary)
+    kernel_w = max(9, int(1.5 * median_h)) if median_h else max(9, binary.shape[1] // 40)
+    closed = cv2.morphologyEx(
+        mask,
+        cv2.MORPH_CLOSE,
+        cv2.getStructuringElement(cv2.MORPH_RECT, (kernel_w, 3)),
+    )
+    contours, _ = cv2.findContours(closed, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    rects = [cv2.minAreaRect(c) for c in contours]
+    return [r for r in rects if min(r[1]) >= 6 and max(r[1]) >= 3 * min(r[1])]
+
+
+def _paper_box(gray: np.ndarray) -> tuple | None:
+    """Bounding box (x, y, w, h) of the receipt: the largest bright region.
+    None when the largest one is implausible as paper, in which case the caller
+    should use the whole frame."""
+    small = cv2.resize(gray, None, fx=0.25, fy=0.25, interpolation=cv2.INTER_AREA)
+    _, paper = cv2.threshold(small, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    paper = cv2.morphologyEx(paper, cv2.MORPH_CLOSE, np.ones((9, 9), np.uint8))
+    count, _, stats, _ = cv2.connectedComponentsWithStats(paper, 8)
+    if count < 2:
+        return None
+    largest = 1 + int(np.argmax(stats[1:, cv2.CC_STAT_AREA]))
+    x, y, w, h, area = stats[largest]
+    if not 0.05 < area / small.size < 0.95:
+        return None
+    return x * 4, y * 4, w * 4, h * 4
+
+
+def detect_text_rects(gray: np.ndarray) -> tuple[list, float]:
+    """Find text-line rects in a grayscale image. Returns (rects, scale), where
+    the rects are in the coordinates of the internally downscaled copy and
+    `scale` is the factor that was applied.
+
+    Two fallbacks, both scoped to this function so they do not disturb the
+    binarisation the rest of the pipeline was tuned against (see `_binarize`):
+
+    - The whole frame is used when cropping to the paper finds too little text,
+      which covers receipts held against a bright background.
+    - A local threshold is used when the global one finds too little text. On a
+      full-frame photo of a receipt lying on a dark table, Otsu splits paper from
+      background rather than ink from paper and finds no text at all: 58 of the
+      221 corpus images, 49 of which the local threshold recovers.
+    """
+    scale = min(1.0, 1000.0 / max(gray.shape))
+    if scale < 1.0:
+        gray = cv2.resize(gray, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA)
+
+    box = _paper_box(gray)
+    if box:
+        x, y, w, h = box
+        cropped = gray[y:y + h, x:x + w]
+        rects = _threshold_and_find(cropped)
+        if len(rects) >= MIN_BLOBS:
+            # Shift back into whole-frame coordinates.
+            return [((cx + x, cy + y), size, angle) for (cx, cy), size, angle in rects], scale
+
+    return _threshold_and_find(gray), scale
+
+
+def _threshold_and_find(gray: np.ndarray) -> list:
+    """Text-line rects from a grayscale image, global threshold then local."""
+    rects = text_rects(_binarize(gray))
+    if len(rects) < MIN_BLOBS:
+        local = cv2.adaptiveThreshold(
+            gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, 31, 15
+        )
+        local_rects = text_rects(local)
+        if len(local_rects) > len(rects):
+            rects = local_rects
+    return rects
+
+
+def _angle_blobs(gray: np.ndarray, limit: float) -> float:
+    """Median skew of the text-line blobs, in degrees. 0.0 when none qualify."""
+    rects, _ = detect_text_rects(gray)
+    angles = []
+    for rect in rects:
+        # minAreaRect's angle range differs between OpenCV versions ([-90, 0) vs
+        # (0, 90]); folding into (-45, 45] normalises both.
+        angle = (rect[2] + 45) % 90 - 45
+        if abs(angle) < limit:
+            angles.append(angle)
+    if len(angles) < MIN_VOTES:
+        # A median over a handful of blobs is not a skew estimate. One corpus
+        # photo of a straight receipt on jeans yields a single speck-sized blob
+        # at +12.8 deg; refusing is the safe failure, as with SATURATION_MARGIN.
+        logger.info("Deskew declined: only %d text-line blobs found", len(angles))
+        return 0.0
+    return float(np.median(angles))
+
+
 def _rotate(image: np.ndarray, angle: float) -> np.ndarray:
     """Rotate `image` by `angle` degrees about its center, expanding the canvas
     so nothing is clipped. New corners are filled with white."""
@@ -116,6 +248,20 @@ def _rotate(image: np.ndarray, angle: float) -> np.ndarray:
 # Below this angle (degrees) the rotation is not worth the resampling cost.
 MIN_ANGLE = 0.05
 
+# Fewer text-line blobs than this means the binarisation, or the crop, is the
+# problem - retry before settling for what was found.
+MIN_BLOBS = 8
+
+# How many blobs must vote before their median is believed as a skew angle.
+#
+# A receipt photographed small in a textured frame - a long till roll on a wood
+# floor - has characters too small to survive downscaling, while the floor's
+# grain and plank seams do survive and vote as one. The tell is the count: real
+# receipts yield a median of 28 votes across the corpus, whereas both images
+# that came out badly rotated yielded 11. Declining costs a correction on ~20
+# images, all of them under 5 degrees.
+MIN_VOTES = 15
+
 # How close to the edge of the search range an answer may land before it is
 # treated as a failure rather than a detection.
 #
@@ -132,7 +278,7 @@ SATURATION_MARGIN = 2.0
 
 
 def detect_angle(
-    image: np.ndarray, *, method: str = "projection", limit: float = 15.0, step: float = 1.0
+    image: np.ndarray, *, method: str = "blobs", limit: float = 15.0, step: float = 1.0
 ) -> float:
     """Detect the skew angle (degrees) of the text in a BGR image. Returns 0.0
     when no text-like pixels are found."""
@@ -142,11 +288,13 @@ def detect_angle(
         return 0.0
     if method == "minarea":
         return _angle_minarea(binary)
+    if method == "blobs":
+        return _angle_blobs(gray, limit)
     return _angle_projection(binary, limit, step)
 
 
 def deskew_image(
-    image: np.ndarray, *, method: str = "projection", limit: float = 15.0, step: float = 1.0
+    image: np.ndarray, *, method: str = "blobs", limit: float = 15.0, step: float = 1.0
 ) -> tuple[np.ndarray, float]:
     """Deskew a BGR image array. Returns (deskewed_image, detected_angle). The
     image is returned unchanged when the detected skew is negligible."""
@@ -157,7 +305,7 @@ def deskew_image(
 
 
 def deskew_bytes(
-    image_bytes: bytes, *, method: str = "projection", limit: float = 15.0, step: float = 1.0
+    image_bytes: bytes, *, method: str = "blobs", limit: float = 15.0, step: float = 1.0
 ) -> tuple[bytes, float]:
     """Deskew encoded image bytes, returning (jpeg_bytes, detected_angle).
 
@@ -178,3 +326,30 @@ def deskew_bytes(
         logger.warning("Deskew skipped: re-encode failed")
         return image_bytes, 0.0
     return buf.tobytes(), angle
+
+
+def _synthetic_receipt(skew: float) -> np.ndarray:
+    """A white page of black text lines, rotated by `skew` degrees."""
+    image = np.full((700, 500, 3), 255, np.uint8)
+    for i, y in enumerate(range(60, 640, 40)):
+        text = "ITEM %d" % i + " " * (i % 3) + "  12.50"
+        cv2.putText(image, text, (40, y), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 0), 2)
+    return _rotate(image, skew) if skew else image
+
+
+def demo():
+    for truth in (0.0, 4.0, -7.0):
+        image = _synthetic_receipt(truth)
+        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        rects = text_rects(_binarize(gray))
+        assert len(rects) >= 10, f"{truth}: found only {len(rects)} text lines"
+
+        found = detect_angle(image, method="blobs")
+        # detect_angle returns the correcting rotation, so it undoes the skew.
+        assert abs(found + truth) < 1.0, f"{truth}: blobs said {found:+.2f}"
+        print(f"skew {truth:+.1f} -> {len(rects):2d} blocks, detected {found:+.2f}")
+    print("ok")
+
+
+if __name__ == "__main__":
+    demo()

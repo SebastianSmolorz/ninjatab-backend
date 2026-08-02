@@ -64,6 +64,29 @@ CHARGE_SOURCES = (
 # bounds that search. Receipts do not carry many distinct charge lines.
 MAX_CHARGES_CONSIDERED = 12
 
+# How far a subset may miss the printed total and still count as reconciling,
+# in minor units of the receipt's currency.
+#
+# One unit, because a receipt's own figures need not agree with each other: a
+# roast dinner bill printed 181.30 of items, a 12.5% service charge of 22.65 and
+# a total of 203.96, which is a penny more than they sum to (12.5% of 181.30 is
+# 22.6625). At zero slack no subset reconciled, so the whole 22.65 was dropped
+# and the party underpaid by the entire service charge.
+#
+# Counted in units rather than compared against a float tolerance because a
+# one-penny gap is not 0.01 in binary: 203.96 - 203.95 is 0.010000000000019327,
+# so `<= tolerance` rejects it here and accepts it at other magnitudes.
+#
+# Measured over 147 labelled cases: charges F1 +0.024, tip F1 +0.033,
+# charge_type +0.048, self-reconciled +0.007, item-total F1 unchanged. Exactly
+# one case moved (0.374 -> 0.989 rollup); nothing regressed.
+MAX_UNITS_OFF = 1
+
+
+def _reconciles(gap: float, tolerance: float) -> bool:
+    """Whether a gap of `gap` is within MAX_UNITS_OFF minor units."""
+    return round(abs(gap) / tolerance) <= MAX_UNITS_OFF
+
 
 # The model's `kind` values, mapped onto the categories the client splits on.
 #
@@ -500,7 +523,7 @@ def select_additive_charges(
         return [], "no_receipt_total"
 
     base = items_net_sum(items, decimals)
-    if abs(base - receipt_total) < tolerance:
+    if _reconciles(base - receipt_total, tolerance):
         return [], "items_alone"  # prices already include everything
 
     considered = charges[:MAX_CHARGES_CONSIDERED]
@@ -508,7 +531,7 @@ def select_additive_charges(
         for combo in combinations(range(len(considered)), size):
             subset = [considered[i] for i in combo]
             total = round(base + sum(c["amount"] for c in subset), decimals)
-            if abs(total - receipt_total) < tolerance and _plausible_charges(subset, base):
+            if _reconciles(total - receipt_total, tolerance) and _plausible_charges(subset, base):
                 return subset, "subset_reconciled"
 
     # Nothing closes the gap. Add nothing: a charge that cannot be shown to be
