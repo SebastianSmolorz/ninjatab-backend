@@ -1,4 +1,5 @@
 import base64
+import json
 import uuid
 import logging
 import sentry_sdk
@@ -701,7 +702,7 @@ def upload_receipt(request, tab_id: str, file: UploadedFile = File(...)):
 
     result = _scan_upload(request, tab_id, file)
     result["document_annotation"] = flatten_for_v1(result["document_annotation"])
-    return result
+    return _debug_dump("upload-receipt", result)
 
 
 @tab_router.post("/{tab_id}/upload-receipt-v2")
@@ -714,7 +715,19 @@ def upload_receipt_v2(request, tab_id: str, file: UploadedFile = File(...)):
     `items_total + adjustments_total == grand_total`, which is what
     `receipt_total` is checked against.
     """
-    return _scan_upload(request, tab_id, file)
+    return _debug_dump("upload-receipt-v2", _scan_upload(request, tab_id, file))
+
+
+def _debug_dump(label: str, result: dict) -> dict:
+    """In dev, print a scan response to the console. Returns it unchanged.
+
+    print, not the "app" logger: that one only writes to app.log, and the point
+    is to read the scan next to the request line in the runserver output.
+    """
+    if settings.DEBUG:
+        print(f"--- {label} ---")
+        print(json.dumps(result, indent=2, default=str, ensure_ascii=False))
+    return result
 
 
 def _scan_upload(request, tab_id: str, file) -> dict:

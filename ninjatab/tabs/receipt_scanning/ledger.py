@@ -114,11 +114,18 @@ _KIND_TO_CATEGORY = {
 }
 
 # Only two things leave the item list, because only two have a control of their
-# own in the app: tax added on top of the prices, and tip. Discounts stay in the
-# list as negative rows, positioned where the receipt printed them.
+# own in the app: tax added on top of the prices, and tip. An *item* discount
+# stays in the list as a negative row, positioned where the receipt printed it
+# and linked to the row it reduces.
 # ponytail: two special cases beat a five-way taxonomy nothing measures. Widen
 # it when `charge_type_accuracy` shows a wider one would pay for itself.
 _ADJUSTMENT_TYPES = ("tax", "tip")
+
+# ponytail: giving a whole-bill discount its own adjustment (rather than a
+# negative row at the bottom of the items) was measured and REJECTED: p1 0.9334
+# -> 0.9287, p4 0.4115 -> 0.3722, rollup -0.0016, stability 115 -> 114/147. The
+# only gain was item_count_exact +0.019. Retry when a metric scores a
+# receipt-level discount amount - today none does, so this is flying blind.
 
 _SPLIT_BY_TYPE = {
     "tax": "proportional",
@@ -340,6 +347,7 @@ def expand_discount_rows(items: list[dict], decimals: int = 2) -> int:
     there is no reduction to show without inventing one.
     """
     expanded = 0
+    next_uid = 0
     out: list[dict] = []
     for item in items:
         deltas = _expandable_adjustments(item)
@@ -357,6 +365,8 @@ def expand_discount_rows(items: list[dict], decimals: int = 2) -> int:
         if gross != 0.0:
             row = dict(item)
             row["total"] = f"{gross:.{decimals}f}"
+            next_uid += 1
+            row["uid"] = next_uid
             # The reduction is the row that follows; keeping it here as well
             # would state it twice. Anything not expanded (a zero, or a
             # "was/now" line) stays attached.
@@ -373,6 +383,17 @@ def expand_discount_rows(items: list[dict], decimals: int = 2) -> int:
                 "translated_name": name,
                 "total": f"{_to_float(adjustment['amount']) or 0.0:.{decimals}f}",
                 "kind": "discount",
+                # Which row this reduces. Adjacency already says it, but only
+                # while the order holds: a client that sorts by price, or lets
+                # someone claim rows individually, has nothing else to go on.
+                # Absent when the item row grossed up to nothing and was dropped.
+                #
+                # `parent_uid` and not `parent_name` because a name is not an
+                # identity: 4bf96933 prints two identical "PRYMAT 3 FOR £1.20"
+                # savings under different items, and linkage scored 0/10 there.
+                # The name is kept alongside for the v1 client, which reads it.
+                **({"parent_name": item.get("name"), "parent_uid": next_uid}
+                   if gross != 0.0 else {}),
             })
             expanded += 1
     items[:] = out
@@ -527,21 +548,34 @@ def select_additive_charges(
         return [], "items_alone"  # prices already include everything
 
     considered = charges[:MAX_CHARGES_CONSIDERED]
+    best: list[dict] = []
+    best_gap = abs(base - receipt_total)
     for size in range(1, len(considered) + 1):
         for combo in combinations(range(len(considered)), size):
             subset = [considered[i] for i in combo]
             total = round(base + sum(c["amount"] for c in subset), decimals)
-            if _reconciles(total - receipt_total, tolerance) and _plausible_charges(subset, base):
+            if not _plausible_charges(subset, base):
+                continue
+            if _reconciles(total - receipt_total, tolerance):
                 return subset, "subset_reconciled"
+            gap = abs(total - receipt_total)
+            if gap < best_gap:
+                best, best_gap = subset, gap
 
-    # Nothing closes the gap. Add nothing: a charge that cannot be shown to be
-    # additive may well be inclusive (VAT already inside the prices), and adding
-    # it would double-count the bill. Leaving the receipt visibly unreconciled is
-    # the honest outcome, and the client already flags that for review.
+    # Nothing closes the gap exactly. Failing to place *one* charge used to
+    # delete them all, which is how cebb2ce9 lost a 19.70 service charge and a
+    # 17.34 GST to an unplaceable -197.00 discount, and how IMG-20260521-WA0027
+    # lost both its charges to a receipt_total the OCR read 20p low. Across the
+    # four receipt-level-discount cases that produced zero adjustments on all 20
+    # runs (rollup 0.4993, self-reconciled 0.2500).
     #
-    # Measured: surfacing these charges anyway lifts charge F1 by 0.034 but costs
-    # 0.010 of item-total F1 and two cases of run-to-run stability. Item totals
-    # outrank charges, so it is not a trade worth taking.
+    # So keep the subset that gets closest instead, and only when it beats adding
+    # nothing. A charge that cannot be shown to be additive may still be
+    # inclusive (VAT already inside the prices), so moving *away* from the
+    # printed total is never allowed - that is what stops this from becoming the
+    # rejected "surface them anyway", which cost 0.010 of item-total F1.
+    if best:
+        return best, "best_effort_closest"
     return [], "unreconciled_none_added"
 
 
@@ -760,6 +794,7 @@ def flatten_for_v1(annotation: Optional[dict]) -> Optional[dict]:
         return annotation
 
     rows = [dict(i) for i in annotation.get("items") or []]
+
     for row in rows:
         # The old client knows "service" as its non-claimable, redistributed
         # category; it has never heard of "discount".

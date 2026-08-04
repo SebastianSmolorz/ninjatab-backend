@@ -1011,6 +1011,239 @@ printed **unit price**, which no amount of removing arithmetic wording touches.
 
 ---
 
+### 2.25 Blob deskew replaces the projection search — LANDED
+
+The projection profile (2.8) rotates the binarised image through candidate
+angles and keeps the one whose row-sum variance is highest. It is slow, and on
+a visibly skewed receipt it frequently reports 0.00.
+
+**Landed:** `method="blobs"`, now the default in `detect_angle` / `deskew_image`
+/ `deskew_bytes`. Characters are isolated by connected-component size, smeared
+into text lines with a horizontal close whose width scales with the median
+character height, and the median of the lines' `minAreaRect` angles is the skew.
+`method="projection"` is kept and still selectable.
+
+23ms against 81ms. Over the 221-image corpus: blocks per image median 29, and
+**no image fails to find text at all** (39 did before the local-threshold
+fallback and the paper crop).
+
+Three guards, each forced by a real image:
+
+| guard | the image that forced it |
+|---|---|
+| `MIN_VOTES = 15` | a long till roll on a wood floor: 11 grain blobs voted −10.6 deg on a straight receipt |
+| character-size CC filter | wood grain, table edges and fingers all survive an aspect-ratio filter once smeared |
+| paper crop + local threshold | Otsu splits paper from background, not ink from paper, when the receipt is small in a dark frame |
+
+Scored by re-capturing the 59 labelled cases whose angle changed by >1 deg
+(5 runs x 3 calls, 900 calls):
+
+| metric (those 59 cases) | projection | blobs |
+|---|---|---|
+| p2_charges_f1 | 0.6182 | **0.6909** |
+| p2_tip_f1 | 0.5200 | **0.6800** |
+| p2_tax_f1 | 0.2857 | **0.4000** |
+| charge_type_accuracy | 0.4000 | **0.6000** |
+| p3_self_reconciled | 0.9103 | **0.9207** |
+| p3_receipt_total_correct | 1.0000 | 0.9690 |
+| rollup | 0.9200 | 0.9230 |
+
+**The comparison is not paired** - the image sent to Mistral changed, so fresh
+OCR noise is inside the delta. Per-case rollup stdev is 0.029, which makes the
++0.0030 rollup indistinguishable from noise. The p2 block carries the decision;
+speed and visibly-straighter images carry the rest.
+
+Inspected by eye, blobs was right on 5 of 5 disagreements. The one regression is
+a crumpled Woolworths roll whose per-line angles fan from −6 to +14 deg: blobs
+over-rotates to +5.19 where ~+2 is right. No cheap guard separates it - two
+*correct* large corrections have wider angle spread (IQR 6.41, 6.11) than that
+failure (4.78). Left alone.
+
+### 2.26 Item discounts rewritten from OCR line order — LANDED
+
+A receipt prints a promotion under the item it reduces. The model usually
+attaches it (`item.adjustments`), but not on every call, and consensus selection
+ranks on row counts and totals - so a candidate carrying per-item discounts
+loses to one that lumped them into a single summary row. `PXL_20260801_194341311`
+returned one `Nectar Price Saving -5.50` split proportionally across four items,
+when the receipt prints −4.00 on the toilet roll, −1.00 on the muffins and −0.50
+on the buns.
+
+**Landed:** `receipt_scanning/discounts.py`. Parses promotions out of the OCR
+markdown by position, votes across the run's calls, and `apply_to_ledger`
+rewrites the winner's discount rows - one per item, adjacent to it, carrying
+`parent_name`. Wired in as `_reattach_discounts` in `VerifiedConsensusStrategy`.
+
+Two design points, both learned the hard way:
+
+- It runs on the **finished ledger**, not on candidates. Attaching before
+  post-processing changes which candidate selection prefers, and it started
+  picking worse ones (a 3-row parse with grand 4.10 against a printed 13.35).
+- It is kept only if the receipt still reconciles as well as before. That guard
+  is what makes `PXL_20260604_201408239` correctly refuse: its voted set contains
+  a misread −1.80 that would move the bill away from the printed total.
+
+Nothing here reads the "YOUR SAVINGS TODAY" footer. Plenty of receipts do not
+print one, so a trailing promotion is **discarded**, never used as a checksum.
+
+| metric (147 cases) | before | after |
+|---|---|---|
+| p1_item_totals_f1 | 0.9280 | **0.9333** |
+| p1_item_count_exact | 0.8857 | **0.8925** |
+| p4_adjustments_f1 | 0.3529 | **0.4212** |
+| rollup | 0.8920 | 0.8939 |
+
+Two cases changed; everything already correct was left untouched, which is why
+nothing regressed.
+
+### 2.27 One minor unit of slack in the charge subset search — LANDED
+
+`IMG-20260328-WA0000` prints items of 181.30, a 12.5% service charge of 22.65
+and a total of 203.96 - a penny more than they sum to, because 12.5% of 181.30
+is 22.6625. `select_additive_charges` found no reconciling subset and took its
+"add nothing" branch, so **the entire 22.65 was dropped** and the party
+underpaid by the whole service charge.
+
+**Landed:** `MAX_UNITS_OFF = 1` and `_reconciles()`, replacing both
+`abs(...) < tolerance` comparisons.
+
+Counted in integer minor units, not compared against a float tolerance, because
+a one-penny gap is not 0.01 in binary — `203.96 - 203.95` is
+`0.010000000000019327`, so `<= tolerance` rejects it here and accepts it at
+other magnitudes (`0.08 - 0.07` passes, `100.00 - 99.99` does not).
+
+| metric (147 cases) | before | after |
+|---|---|---|
+| p2_charges_f1 | 0.7295 | **0.7536** |
+| p2_tip_f1 | 0.7800 | **0.8133** |
+| charge_type_accuracy | 0.6952 | **0.7429** |
+| p3_self_reconciled | 0.8815 | **0.8884** |
+| p3_grand_total_correct | 0.8735 | **0.8803** |
+| p1_item_totals_f1 | 0.9280 | 0.9280 |
+
+Exactly one case moved (0.374 -> 0.989 rollup). The concern recorded in that
+branch's comment - that surfacing charges costs item-total F1 - does not apply:
+that experiment surfaced charges which *never* reconciled, this one admits only
+charges that reconcile to within the receipt's own rounding.
+
+2.26 and 2.27 compose exactly: together rollup 0.8920 -> **0.8981**, the sum of
+the two individual gains, no interaction.
+
+### 2.28 Discount-to-item linkage — measured for the first time, partly fixed
+
+`p4_adjustments_f1` compares a **multiset of amounts**. A discount attached to
+the wrong item scores identically to one attached correctly, so linkage has
+never been measured. A new script pairs (parent item, amount) against the labels,
+which do carry the right parent.
+
+| linkage over the 11 cases with item-level discounts (220 discount-runs) | F1 | precision | recall |
+|---|---|---|---|
+| before | 0.4785 | 0.5855 | 0.4045 |
+| after | **0.5161** | 0.6316 | 0.4364 |
+
+Three changes: `expand_discount_rows` emits `parent_name`;
+`link_orphan_discounts` names a parent for discounts that arrived via the
+receipt-level charge path; and a real bug - Mistral renders some receipts as
+markdown tables, and the header `| Qty | Item | Price | Total |` tripped the
+totals-block detector on the *first row*, silencing discount parsing for every
+table-rendered receipt. That fix alone took `f4059c83` from 0/5 to 5/5.
+
+**The ceiling is not linkage.** Of 124 remaining misses, **70 are one case** -
+`17392`, where the model produces zero negative rows for 14 labelled discounts.
+Add `17400` (reads −0.15 as −0.75 in all 15 calls) and
+`PXL_20260801_193448336` (emits one `TOTAL DISCOUNT -0.60` for two −0.30s), and
+almost the whole recall gap is discounts never extracted or pre-aggregated.
+
+`parent_name` is a name, not an identity: `4bf96933` has two identical
+`PRYMAT 3 FOR £1.20` discounts under different items and is still 0/10. A
+`parent_index` would be unambiguous and no harder to emit.
+
+### 2.29 Receipt-level discounts — the worst group in the corpus, unsolved
+
+Cases grouped by what kind of discount the label carries:
+
+| group | n | rollup | item F1 | self-reconciled |
+|---|---|---|---|---|
+| receipt-level discount only | 4 | **0.4993** | 0.9292 | **0.2500** |
+| item-level + summary | 10 | 0.7698 | 0.7988 | 0.7400 |
+| item-level only | 1 | 0.9972 | 1.0000 | 1.0000 |
+| no discounts | 132 | 0.9227 | 0.9432 | 0.9262 |
+
+**Across all 4 cases and all 20 runs, zero discount rows and zero adjustments
+are produced.** Item extraction is fine; everything lost is in the charges.
+
+The cause is that `select_additive_charges` is all-or-nothing: when no subset
+closes the gap, *every* charge is discarded. `cebb2ce9` loses a Service Charge
+of 19.70 and GST of 17.34 because a −197.00 discount line cannot be reconciled
+alongside them. `IMG-20260521-WA0027` loses both its charges because the OCR read
+the printed total 20p low.
+
+Read the 0.4993 carefully - of the four, `a5e2d31b` is **already correct** (the
+15% desconto is baked into the item prices; items = receipt total = 131.00), and
+`cebb2ce9`'s label does not close arithmetically (185.00 + 37.04 != 234.04). Two
+real failures out of four is a thin and partly unreliable basis.
+
+Also unmeasured: `expected_adjustments` is built only from item-level label
+adjustments and `expected_charges` covers tax and tip roles, so **no metric
+scores a whole-bill discount amount at all**.
+
+The fix direction is not more tolerance - it is that failing to place one charge
+should not delete the others. With 3 usable cases the corpus cannot settle it;
+more labelled receipt-level discounts are the prerequisite.
+
+### 2.30 The 2.29 fix — LANDED. Whole-bill discounts as adjustments — REJECTED
+
+2.29's diagnosis was right and the fix is four lines. `select_additive_charges`
+now keeps the plausible subset that gets **closest** to `receipt_total` when no
+subset closes it exactly, instead of discarding every charge. Moving *away* from
+the printed total is never allowed, which is what separates this from the
+rejected "surface them anyway" (that one cost 0.010 of item-total F1).
+
+| 147 cases x 5 runs | baseline | **best-effort subset** |
+|---|---|---|
+| p1_item_totals_f1 | 0.9334 | **0.9343** |
+| p2_charges_f1 | 0.7536 | **0.8286** |
+| p2_tax_f1 | 0.6585 | **0.6824** |
+| p2_tip_f1 | 0.8133 | **0.9267** |
+| charge_type_accuracy | 0.7429 | **0.8571** |
+| p3_self_reconciled | 0.8952 | **0.8966** |
+| p3_grand_total_correct | 0.8884 | **0.8966** |
+| p4_adjustments_f1 | 0.4115 | 0.4023 |
+| s_item_name | 0.8876 | 0.8859 |
+| rollup | 0.9013 | **0.9069** |
+| identical across runs | 115/147 | **116/147** |
+
+Fires 224 times across the run. `cebb2ce9` is the case 2.29 named: it recovers a
+19.70 service charge and a 17.34 GST that an unplaceable -197.00 discount used
+to delete, bill 145.00 -> 182.04. p1 goes **up** and stability goes **up**, so
+the standing "reject anything that lowers p1" rule is not in play. The two small
+losses are p4 (the metric 2.5 established cannot measure discounts) and
+s_item_name at -0.0017.
+
+**Rejected in the same pass: giving a whole-bill discount its own adjustment**
+rather than a negative row at the bottom of `items` — `_ADJUSTMENT_TYPES` gaining
+`"discount"` on the charge side only.
+
+| | baseline | + discount adjustments |
+|---|---|---|
+| p1_item_totals_f1 | **0.9334** | 0.9287 |
+| p1_item_count_exact | 0.8952 | **0.9143** |
+| p4_adjustments_f1 | **0.4115** | 0.3722 |
+| rollup | **0.9013** | 0.8997 |
+| identical across runs | **115/147** | 114/147 |
+
+Lowers p1, p4, the rollup and stability together to buy item-count exactness.
+Retry only once a metric scores a receipt-level discount **amount** — as 2.29
+records, none does, so this change was flying blind in the direction the numbers
+say is wrong.
+
+**Also landed, unmeasurable by design: `parent_uid`.** Discount rows now carry a
+stable id for the row they reduce, alongside the `parent_name` the v1 client
+reads. 2.28 left this open — `4bf96933` prints two identical
+`PRYMAT 3 FOR £1.20` savings under different items and scored 0/10 on linkage
+because a name is not an identity. No metric moved (no metric scores linkage),
+and none was expected to; the check is the assertion in `discounts.demo()`.
+
 ## 3. Decisions
 
 1. **`adjustments` holds tax, tip and receipt-level discounts. Nothing else.**
@@ -1161,7 +1394,46 @@ shown additive may be inclusive VAT, and adding it double-counts).
 
 ## 5. Current numbers
 
-72 cases x 5 runs = 360 scans, same OCR for both columns (post-processing only).
+**Latest: 147 cases x 5 runs = 735 scans**, `strategy:verified_consensus`,
+captures in `labeler/ocr_captures/` (blob deskew).
+
+| metric | value |
+|---|---|
+| p1_item_totals_f1 | 0.9334 |
+| p1_item_count_exact | 0.8952 |
+| p2_charges_f1 | 0.7536 |
+| p2_tax_f1 | 0.6585 |
+| p2_tip_f1 | 0.8133 |
+| charge_type_accuracy | 0.7429 |
+| p3_self_reconciled | 0.8952 |
+| p3_grand_total_correct | 0.8884 |
+| p3_receipt_total_correct | 0.9628 |
+| p4_adjustments_f1 | 0.4115 |
+| rollup | **0.9013** |
+| identical across 5 runs | 115/147 |
+
+Session progression on the same 147 cases: 0.8920 -> 0.8981 (2.26 + 2.27) ->
+**0.9013** after re-capturing three cases whose stored images were rotated
++16.10 deg by the pre-`SATURATION_MARGIN` search. That last step is *unpaired* -
+fresh OCR on three receipts - so read the +0.0032 as directional.
+
+**Corpus staleness is now a checkable property.** Every capture stores the
+`deskew_angle` it was made with; comparing that against what the current code
+produces found 26 of 147 stale, 3 of them by 16 deg. The >1 deg heuristic used
+to pick re-capture candidates missed those, because they were stale for an
+*older* reason. Re-run that check after any deskew change - it costs nothing:
+
+```python
+rec = json.loads(next((OCR_CAPTURES/name).glob("*.json")).read_text())
+abs(rec["deskew_angle"] - detect_angle(cv2.imread(str(image_path)))) > 0.05
+```
+
+23 sub-degree cases remain stale and were deliberately not re-captured: 345
+calls to rotate receipts by under a degree buys noise, not accuracy.
+
+---
+
+### Earlier: 72 cases x 5 runs = 360 scans, same OCR for both columns (post-processing only).
 
 | metric | v1 (flat) | v2 (ledger) |
 |---|---|---|
@@ -1243,3 +1515,21 @@ for p in ['v1:verified_consensus', 'strategy:verified_consensus']:
 - `test_ledger.py::test_a_service_charge_is_a_tip` renamed and inverted to
   `test_a_service_kind_row_is_an_ordinary_line` for 2.10. The four tests
   covering the `service_charge` *field* are untouched.
+
+### Alongside 2.25-2.29
+
+- **Capture directories renamed** so the defaults point at current data:
+  `labeler/ocr_captures/` is now the blob-deskew set (147 cases), and the old
+  projection-deskew captures are archived at
+  `labeler/ocr_captures_projection_deskew/` (126 cases). The two are **not
+  comparable** - the image sent to Mistral differs. Before the rename,
+  `capture_labelled_ocr` would have quoted 315 calls against the stale
+  directory and re-captured cases that already existed.
+- `receipt_scanning/discounts.py` is new, with an assert-based `demo()`
+  covering both receipt dialects and the idempotence of a second pass. Run it
+  directly: `python ninjatab/tabs/receipt_scanning/discounts.py`.
+- `deskew.py` gained `text_rects`, `detect_text_rects`, `_character_mask`,
+  `_paper_box` and its own `demo()` over synthetic skewed receipts.
+- The `discounts:` replay pipelines were removed once the behaviour shipped, so
+  `strategy:verified_consensus` measures the shipped code rather than a variant.
+- 117 tests pass.

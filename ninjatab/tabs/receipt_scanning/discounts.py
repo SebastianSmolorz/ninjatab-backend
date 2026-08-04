@@ -99,7 +99,11 @@ def parse_line_discounts(markdown: str) -> list[dict]:
         line = raw.strip()
         if not line or line.startswith("#"):
             continue
-        if TOTALS.search(line):
+        # A totals line carries a figure. Requiring one stops a markdown table's
+        # "| Qty | Item | Price | Total |" header from ending the item list
+        # before it has begun - which silenced this parser entirely on every
+        # receipt Mistral chose to render as a table.
+        if TOTALS.search(line) and _amounts(line):
             break
         if PROMO.search(line):
             amount = _discount_amount(line)
@@ -165,19 +169,27 @@ def apply_to_ledger(annotation: dict, markdowns: list[str]) -> bool:
     items = [r for r in rows if r not in existing]
     rebuilt: list[dict] = []
     unplaced = list(voted)
+    next_uid = max((r.get("uid") or 0 for r in rows), default=0)
     for item in items:
         rebuilt.append(item)
         name = f"{item.get('name') or ''} {item.get('receipt_line_text') or ''}"
-        for discount in [d for d in unplaced if _similar(d["item_text"], name) > MATCH_RATIO]:
+        matches = [d for d in unplaced if _similar(d["item_text"], name) > MATCH_RATIO]
+        if matches and not item.get("uid"):
+            next_uid += 1
+            item["uid"] = next_uid
+        for discount in matches:
             unplaced.remove(discount)
             rebuilt.append({
                 "name": discount["name"],
                 "translated_name": discount["name"],
                 "total": f"{discount['amount']:.2f}",
                 "category": "discount",
-                # The row the UI should show it under. Adjacency already implies
-                # it; naming it means a reordering client cannot lose the link.
+                # The row the UI should show it under, and whose split applies to
+                # it. Adjacency already implies it; the id means a reordering
+                # client cannot lose the link, and unlike the name it stays
+                # unambiguous when a receipt prints the same saving twice.
                 "parent_name": item.get("name"),
+                "parent_uid": item["uid"],
             })
     if unplaced:
         return False  # a discount with no home; leave the original alone
@@ -187,6 +199,57 @@ def apply_to_ledger(annotation: dict, markdowns: list[str]) -> bool:
     annotation["items_total"] = total
     annotation["grand_total"] = round(total + (annotation.get("adjustments_total") or 0), 2)
     return True
+
+
+def link_orphan_discounts(annotation: dict, markdowns: list[str]) -> int:
+    """Give a parent to discount rows that arrived without one. Returns how many.
+
+    A discount the model filed under `other_charges` reaches the client as a bare
+    negative row: the right money, attached to nothing. Its amount still appears
+    in the OCR under the item it reduces, so the row can be re-attached without
+    moving it or changing any total - only naming what it belongs to.
+
+    Rows are matched on amount alone, so an amount appearing twice under
+    different items (two identical multibuys) is linked in receipt order.
+    """
+    rows = annotation.get("items") or []
+    orphans = [
+        r for r in rows
+        if str(r.get("total") or "").startswith("-")
+        and not r.get("parent_name")
+        and (r.get("category") == "discount" or r.get("kind") == "discount")
+    ]
+    if not orphans:
+        return 0
+
+    available = vote_discounts(markdowns)
+    next_uid = max((r.get("uid") or 0 for r in rows), default=0)
+    linked = 0
+    for row in orphans:
+        amount = round(_to_float(row.get("total")) or 0.0, 2)
+        match = next((d for d in available if round(d["amount"], 2) == amount), None)
+        if match is None:
+            continue
+        parent = max(
+            (r for r in rows if not str(r.get("total") or "").startswith("-")),
+            key=lambda r: _similar(
+                match["item_text"], f"{r.get('name') or ''} {r.get('receipt_line_text') or ''}"
+            ),
+            default=None,
+        )
+        if parent is None:
+            continue
+        name = f"{parent.get('name') or ''} {parent.get('receipt_line_text') or ''}"
+        if _similar(match["item_text"], name) <= MATCH_RATIO:
+            continue
+        available.remove(match)
+        if not parent.get("uid"):
+            next_uid += 1
+            parent["uid"] = next_uid
+        row["parent_name"] = parent.get("name")
+        row["parent_uid"] = parent["uid"]
+        linked += 1
+    return linked
 
 
 def _to_float(value) -> float | None:
@@ -246,6 +309,14 @@ def demo():
     assert rows[1] == ("Nectar Price Saving", "-4.00", "CUSHEL Q/TOILT RX12"), rows
     assert rows[4] == ("Nectar Price Saving", "-1.00", "JS BLUEBERRY MUFINX4"), rows
     assert annotation["items_total"] == 12.35, annotation["items_total"]
+
+    # Each discount binds to its item by id, not by position or name. Two
+    # identically-named savings under different items must not collide.
+    out = annotation["items"]
+    assert out[1]["parent_uid"] == out[0]["uid"], out
+    assert out[4]["parent_uid"] == out[3]["uid"], out
+    assert out[0]["uid"] != out[3]["uid"], out
+    assert out[1]["name"] == out[4]["name"], "the ambiguous case is the point"
 
     # Rows that already match the voted set are left exactly as they were.
     assert apply_to_ledger(annotation, [SAINSBURYS] * 3) is False

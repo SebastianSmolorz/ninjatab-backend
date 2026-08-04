@@ -272,8 +272,26 @@ class ReconcileLedgerV1Tests(SimpleTestCase):
         self.assertEqual(metrics["charges_additive_count"], 0)
         self.assertFalse(metrics["items_match_receipt_total"])
 
-    def test_unreconcilable_charges_are_not_added(self):
+    def test_unreconcilable_charges_keep_the_closest_subset(self):
+        """Failing to place one charge must not delete the others.
+
+        20.00 of items against a 99.00 total: no subset closes the gap, but
+        keeping the 3.00 tax lands nearer the printed total than dropping it,
+        so it is kept and the receipt stays honestly unreconciled.
+        """
         annotation = _annotation([_item("Pasta", "20.00")], "99.00", tax="3.00")
+        metrics = _reconcile_v1(annotation, "USD")
+        self.assertEqual(metrics["charge_selection"], "best_effort_closest")
+        self.assertEqual(metrics["charges_additive_count"], 1)
+        self.assertFalse(annotation["totals_reconciled"])
+
+    def test_charges_that_overshoot_the_total_are_still_dropped(self):
+        """Best-effort may only move *toward* the printed total.
+
+        The items already overshoot 19.00, so adding the tax on top makes the
+        bill worse - that charge is inclusive, not additive, and is dropped.
+        """
+        annotation = _annotation([_item("Pasta", "20.00")], "19.00", tax="3.00")
         metrics = _reconcile_v1(annotation, "USD")
         self.assertEqual(metrics["charge_selection"], "unreconciled_none_added")
         self.assertEqual(metrics["charges_additive_count"], 0)

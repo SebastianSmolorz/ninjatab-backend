@@ -346,7 +346,10 @@ def _reattach_discounts(annotation: dict, ocr_results: list[dict]) -> bool:
     candidate = copy.deepcopy(annotation)
     markdowns = [o.get("ocr_markdown") or "" for o in ocr_results]
     if not discount_lines.apply_to_ledger(candidate, markdowns):
-        return False
+        # Rows already carry the right money. A discount the model filed as a
+        # receipt-level charge still arrives parentless, though, and naming its
+        # item changes no total - so it needs no reconciliation check.
+        return bool(discount_lines.link_orphan_discounts(annotation, markdowns))
 
     printed = _to_float(annotation.get("receipt_total"))
     if printed is not None:
