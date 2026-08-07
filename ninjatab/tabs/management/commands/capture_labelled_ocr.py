@@ -15,7 +15,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
-from django.core.management.base import BaseCommand
+from django.core.management.base import BaseCommand, CommandError
 
 from ninjatab.tabs.receipt_scanning.base import mistral_client, run_single_ocr
 from ninjatab.tabs.receipt_scanning.deskew import deskew_bytes
@@ -45,6 +45,11 @@ class Command(BaseCommand):
         parser.add_argument("--model", default=None, help="Defaults to the strategy model")
         parser.add_argument("--limit", type=int, default=None, help="Only the first N cases")
         parser.add_argument(
+            "--case", action="append", default=None,
+            help="Only this case (repeatable). Pair with --output to re-capture "
+                 "one receipt without disturbing the corpus on disk.",
+        )
+        parser.add_argument(
             "--output", default=str(OUTPUT_DIR), help="Directory to write captures into"
         )
         parser.add_argument(
@@ -58,6 +63,11 @@ class Command(BaseCommand):
         model = options["model"] or STRATEGIES_BY_NAME["baseline_mistral_ocr"].model
         cases = load_labelled_cases()
         names = sorted(cases)
+        if options["case"]:
+            unknown = [c for c in options["case"] if c not in cases]
+            if unknown:
+                raise CommandError(f"Not a labelled case: {', '.join(unknown)}")
+            names = [n for n in names if n in set(options["case"])]
         if options["limit"]:
             names = names[: options["limit"]]
 

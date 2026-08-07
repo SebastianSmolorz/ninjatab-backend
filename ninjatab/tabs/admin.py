@@ -1,8 +1,13 @@
 from django.contrib import admin
 from django.db.models import Count, Sum
-from django.utils.html import format_html
+from django.http import HttpResponse
+from django.shortcuts import get_object_or_404
+from django.urls import path, reverse
+from django.utils.html import format_html, format_html_join
 from .models import Tab, TabPerson, Bill, LineItem, PersonLineItemClaim, Settlement, Contact, SplitType, TabGroup, TabGroupMember
 from ninjatab.currencies.currency_utils import minor_to_decimal
+from ninjatab.currencies.exchange import clear_rate_cache, ExchangeRateNotFoundError
+from ninjatab.tabs.simp import simp_tab
 
 
 class MoneyAdminMixin:
@@ -63,8 +68,8 @@ class SettlementInline(MoneyAdminMixin, admin.TabularInline):
     extra = 0
     can_delete = False
     show_change_link = True
-    fields = ['from_person', 'to_person', 'display_amount']
-    readonly_fields = ['from_person', 'to_person', 'display_amount']
+    fields = ['from_person', 'to_person', 'display_amount', 'paid']
+    readonly_fields = ['from_person', 'to_person', 'display_amount', 'paid']
 
     def has_add_permission(self, request, obj=None):
         return False
@@ -116,8 +121,8 @@ class TabAdmin(admin.ModelAdmin):
     list_display = ['name', 'uuid', 'is_demo', 'default_currency', 'settlement_currency', 'is_pro', 'is_settled', 'is_archived', 'created_by', 'created_at']
     ordering = ['-uuid']
     list_filter = [DemoTabFilter, 'is_pro', 'is_settled', 'is_archived', 'created_at']
-    search_fields = ['name', 'description', 'uuid', 'created_by__uuid']
-    readonly_fields = ['uuid', 'created_at', 'updated_at']
+    search_fields = ['name', 'description', 'uuid', 'created_by__uuid', 'people__user__id', 'people__user__uuid']
+    readonly_fields = ['uuid', 'created_at', 'updated_at', 'settlement_preview_link']
     raw_id_fields = ['created_by']
     show_full_result_count = False
     inlines = [TabPersonInline, BillInline, SettlementInline]
@@ -133,7 +138,7 @@ class TabAdmin(admin.ModelAdmin):
             'fields': ('uuid', 'name', 'description', 'default_currency', 'settlement_currency', 'created_by')
         }),
         ('Status', {
-            'fields': ('is_pro', 'is_settled', 'is_archived')
+            'fields': ('is_pro', 'is_settled', 'is_archived', 'settlement_preview_link')
         }),
         ('Timestamps', {
             'fields': ('created_at', 'updated_at'),
@@ -143,6 +148,60 @@ class TabAdmin(admin.ModelAdmin):
 
     def get_queryset(self, request):
         return super().get_queryset(request).select_related('created_by')
+
+    def get_urls(self):
+        custom = [
+            path(
+                '<int:tab_id>/preview-settlement/',
+                self.admin_site.admin_view(self.preview_settlement_view),
+                name='tabs_tab_preview_settlement',
+            ),
+        ]
+        return custom + super().get_urls()
+
+    def settlement_preview_link(self, obj):
+        if not obj.pk:
+            return '-'
+        url = reverse('admin:tabs_tab_preview_settlement', args=[obj.pk])
+        return format_html('<a href="{}" target="_blank">Preview settlement (not saved)</a>', url)
+    settlement_preview_link.short_description = 'Settlement Preview'
+
+    def preview_settlement_view(self, request, tab_id):
+        tab = get_object_or_404(
+            Tab.objects.prefetch_related('people__user', 'bills__line_items__person_claims__person'),
+            pk=tab_id,
+        )
+
+        try:
+            clear_rate_cache()
+            transactions = simp_tab(tab, settlement_currency=tab.settlement_currency)
+        except ExchangeRateNotFoundError as e:
+            return HttpResponse(format_html('<p style="color:#900">Currency conversion failed: {}</p>', str(e)))
+
+        people_by_id = {p.id: p for p in tab.people.all()}
+        rows = [
+            (
+                people_by_id[txn.payer_id].name,
+                people_by_id[txn.payee_id].name,
+                f"{minor_to_decimal(txn.amount, tab.settlement_currency)} {tab.settlement_currency}",
+            )
+            for txn in transactions
+        ]
+
+        if not rows:
+            body = format_html('<p>{}</p>', "No settlements needed — tab is already balanced.")
+        else:
+            body = format_html(
+                '<table border="1" cellpadding="6" style="border-collapse:collapse">'
+                '<tr><th>From</th><th>To</th><th>Amount</th></tr>{}</table>',
+                format_html_join('', '<tr><td>{}</td><td>{}</td><td>{}</td></tr>', rows),
+            )
+
+        return HttpResponse(format_html(
+            '<h2>Settlement preview for {} (not saved)</h2>{}',
+            tab.name or str(tab.uuid),
+            body,
+        ))
 
 
 @admin.register(TabPerson)
@@ -208,7 +267,7 @@ class BillAdmin(MoneyAdminMixin, admin.ModelAdmin):
     list_display = ['description', 'uuid', 'tab_link', 'tab_is_demo', 'currency', 'display_total_amount', 'display_is_itemised', 'status', 'date', 'has_receipt']
     ordering = ['-uuid']
     list_filter = [BillDemoTabFilter, 'status', 'date', 'created_at']
-    search_fields = ['description', 'uuid', 'tab__name', 'tab__uuid']
+    search_fields = ['description', 'uuid', 'tab__name', 'tab__uuid', 'tab__people__user__id', 'tab__people__user__uuid']
     readonly_fields = ['uuid', 'tab_is_demo', 'display_total_amount', 'receipt_image_link', 'created_at', 'updated_at']
     raw_id_fields = ['tab', 'creator', 'paid_by']
     date_hierarchy = 'date'
@@ -420,9 +479,9 @@ class PersonLineItemClaimAdmin(MoneyAdminMixin, admin.ModelAdmin):
 
 @admin.register(Settlement)
 class SettlementAdmin(MoneyAdminMixin, admin.ModelAdmin):
-    list_display = ['uuid', 'tab', 'from_person', 'to_person', 'display_amount', 'currency', 'created_at']
+    list_display = ['uuid', 'tab', 'from_person', 'to_person', 'display_amount', 'currency', 'paid', 'created_at']
     ordering = ['-uuid']
-    list_filter = ['created_at']
+    list_filter = ['paid', 'created_at']
     search_fields = ['uuid', 'tab__name', 'tab__uuid', 'from_person__name', 'to_person__name']
     readonly_fields = ['uuid', 'created_at', 'updated_at']
     show_full_result_count = False
@@ -430,7 +489,7 @@ class SettlementAdmin(MoneyAdminMixin, admin.ModelAdmin):
 
     fieldsets = (
         ('Settlement Information', {
-            'fields': ('uuid', 'tab', 'from_person', 'to_person', 'amount', 'currency')
+            'fields': ('uuid', 'tab', 'from_person', 'to_person', 'amount', 'currency', 'paid')
         }),
         ('Timestamps', {
             'fields': ('created_at', 'updated_at'),
