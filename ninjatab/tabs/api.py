@@ -1039,6 +1039,16 @@ def submit_bill_splits(request, bill_id: str, payload: BillSplitSubmitSchema):
     Do this in the same cutover as making `version` required (see
     BillUpdateSchema.version); both are blocked on the same force-upgrade, and
     doing them together costs one forced update instead of two.
+
+    Check first whether per-claim sync is still planned — it would obsolete this.
+    That design writes each claim as it changes instead of batch-submitting them,
+    which shrinks or retires this endpoint, so merging into it would be wasted
+    work. It also collides with the delete-and-recreate below (a batch save wipes
+    individually-synced rows; `_create_person_claims` would need to upsert on the
+    (person, line_item) unique constraint), and it wants claim writes bumping
+    LineItem.version rather than Bill.version — otherwise one person claiming an
+    item conflicts with another editing the bill's currency. If per-claim sync is
+    going ahead, spend the forced update on `version` alone and skip the merge.
     """
     bill = get_object_or_404(
         Bill.objects.prefetch_related('line_items', 'tab__people'),
