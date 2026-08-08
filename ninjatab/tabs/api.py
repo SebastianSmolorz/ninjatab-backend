@@ -60,6 +60,25 @@ def _annotate_tab_list(qs):
     )
 
 
+def _check_version(obj, sent: int | None):
+    """Optimistic-concurrency guard: reject a write made against stale data.
+
+    `sent is None` means a client that predates conflict detection, which is
+    allowed through unchanged (last write wins, as before).
+
+    The message is worded to read sensibly both on its own and behind the older
+    app's snackbar prefix ("Failed to save splits: ..."), since shipped builds
+    surface `detail` verbatim and can't be changed.
+    """
+    # ponytail: bill-level version only, and check-then-save without
+    # select_for_update — so two *simultaneous* writes can both pass. It catches
+    # the real case (two devices, seconds apart), not a true race. Row-lock the
+    # read if that ever matters. Per-line-item granularity needs
+    # LineItem.version checks.
+    if sent is not None and sent != obj.version:
+        raise HttpError(409, "someone else changed this expense — reopen it to get the latest")
+
+
 def _apply_tab_cursor(qs, cursor: str | None):
     """Cursor pagination for tabs, ordered by (-created_at, -id)."""
     if cursor:
@@ -1009,7 +1028,18 @@ def _create_person_claims(line_item: LineItem, person_splits: List[PersonSplitCr
 @bill_router.post("/{bill_id}/submit-splits", response=BillSchema)
 @transaction.atomic
 def submit_bill_splits(request, bill_id: str, payload: BillSplitSubmitSchema):
-    """Submit or update splits for a bill from the UI"""
+    """Submit or update splits for a bill from the UI
+
+    TODO (needs a forced update to minimum_app_version >= 1.3.0): fold
+    BillUpdateSchema's fields into this endpoint so one save is one atomic
+    request. Today the app's save is PATCH-then-submit-splits, so a third-party
+    write landing between them applies the metadata and rejects the splits —
+    the version guard catches it but can't undo the first half.
+
+    Do this in the same cutover as making `version` required (see
+    BillUpdateSchema.version); both are blocked on the same force-upgrade, and
+    doing them together costs one forced update instead of two.
+    """
     bill = get_object_or_404(
         Bill.objects.prefetch_related('line_items', 'tab__people'),
         uuid=bill_id,
@@ -1018,6 +1048,8 @@ def submit_bill_splits(request, bill_id: str, payload: BillSplitSubmitSchema):
 
     if bill.tab.is_settled:
         raise HttpError(400, "Cannot edit a bill from a settled tab")
+
+    _check_version(bill, payload.version)
 
     if str(bill.uuid) != payload.bill_id:
         return {"error": "Bill ID mismatch"}, 400
@@ -1113,6 +1145,22 @@ def retrieve_bill(request, bill_id: str):
     return bill
 
 
+@bill_router.get("/{bill_id}/version")
+def get_bill_version(request, bill_id: str):
+    """Just the version counter, for the app's conflict heartbeat.
+
+    Deliberately not retrieve_bill: this is polled every few seconds per open
+    expense, so it must not ship a full bill payload (line items, claims, FX
+    conversions) each time.
+    """
+    bill = get_object_or_404(
+        Bill.objects.only('version'),
+        uuid=bill_id,
+        tab__in=Tab.objects.accessible_by(request.auth)
+    )
+    return {"version": bill.version}
+
+
 @bill_router.patch("/{bill_id}", response=BillSchema)
 @transaction.atomic
 def update_bill(request, bill_id: str, payload: BillUpdateSchema):
@@ -1129,6 +1177,8 @@ def update_bill(request, bill_id: str, payload: BillUpdateSchema):
 
     if bill.tab.is_settled:
         raise HttpError(400, "Cannot edit a bill from a settled tab")
+
+    _check_version(bill, payload.version)
 
     # Update fields if provided
     if payload.description is not None:
@@ -1190,7 +1240,7 @@ def update_bill(request, bill_id: str, payload: BillUpdateSchema):
 
 
 @bill_router.delete("/{bill_id}")
-def delete_bill(request, bill_id: str):
+def delete_bill(request, bill_id: str, version: int | None = None):
     """Delete a bill"""
     bill = get_object_or_404(
         Bill.objects.select_related('tab'),
@@ -1199,6 +1249,8 @@ def delete_bill(request, bill_id: str):
     )
     if bill.tab.is_settled:
         raise HttpError(400, "Cannot delete a bill from a closed tab")
+
+    _check_version(bill, version)
 
     tab_uuid = str(bill.tab.uuid)
     bill_uuid = str(bill.uuid)

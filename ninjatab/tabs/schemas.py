@@ -363,6 +363,14 @@ class BillUpdateSchema(BaseModel):
     currency: Optional[CurrencyEnum] = None
     paid_by_id: Optional[str] = None
     date: Optional[Date] = None
+    # TODO: make required once every client is on 1.3.0+ (the release that
+    # started sending it). Gate the cutover on raising `minimum_app_version` to
+    # 1.3.0 (app main.dart `_isVersionBelow`) — don't just drop this default: a
+    # missing required field yields a 422 whose `detail` is a list, which older
+    # builds render as "Failed to update bill (422)" instead of the readable
+    # 409 message. Same forced update also unblocks merging update_bill into
+    # submit_bill_splits; do both at once.
+    version: Optional[int] = None
 
 
 class BillSplitSubmitSchema(BaseModel):
@@ -370,6 +378,8 @@ class BillSplitSubmitSchema(BaseModel):
     bill_id: str
     split_mode: SplitModeEnum
     line_item_splits: List['LineItemSplitSubmitSchema']
+    # TODO: make required — see BillUpdateSchema.version.
+    version: Optional[int] = None
 
 
 class LineItemSplitSubmitSchema(BaseModel):
