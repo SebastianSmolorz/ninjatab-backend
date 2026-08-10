@@ -35,6 +35,7 @@ METRIC_KEYS = [
     "p3_grand_total_correct",
     "p3_receipt_total_correct",
     "p4_adjustments_f1",
+    "p4_discount_links_f1",
     "s_item_name",
     "s_establishment",
     "s_translated_name",

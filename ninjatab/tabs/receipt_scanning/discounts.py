@@ -140,6 +140,96 @@ def vote_discounts(markdowns: list[str], quorum: int | None = None) -> list[dict
     return [seen[key] for key, count in counts.items() if count >= quorum]
 
 
+# `MONEY` needs a £$€ sign, which makes the parser blind to a receipt that
+# prints bare figures — LIDL's "Price Cut -0.30" — or uses a symbol outside
+# those three. The locator scans with the sign optional. `MONEY` itself is left
+# alone so `parse_line_discounts` keeps the behaviour it was measured with.
+NUMBER = re.compile(r"(-)?\s*[^\w\s.,+-]?\s*(-)?(\d+(?:[.,]\d{1,2})?)(?![\d.,])")
+
+
+def _numbers(line: str) -> list[tuple[float, bool]]:
+    """[(value, was_negative)] for every figure on the line, symbol or not."""
+    return [
+        (float(m.group(3).replace(",", ".")), bool(m.group(1) or m.group(2)))
+        for m in NUMBER.finditer(line)
+    ]
+
+
+def _strip_money(line: str) -> str:
+    """The line without its money tokens — a promotion's name in any language."""
+    return re.sub(r"\s{2,}", " ", NUMBER.sub("", line)).strip(" \t|-:") or "Discount"
+
+
+def locate_discounts(
+    markdowns: list[str], amounts: list[float], quorum: int | None = None
+) -> list[dict]:
+    """For each known reduction, the item line it is printed under.
+
+    The wording-free counterpart to `vote_discounts`. The caller already knows
+    what the reductions are — they are rows in the annotation — so a line is
+    nominated because it carries one of those figures, not because it names a
+    loyalty scheme in English. `PROMO` cannot see a LIDL "Price Cut", an Aldi
+    "Preisvorteil" or a Migros "indirim"; an amount is an amount everywhere.
+
+    An explicitly negative token wins over an unsigned one, so an item that
+    happens to cost the same as a saving elsewhere on the receipt does not
+    capture it. The caller's `_similar` check is the backstop for what survives.
+
+    Returns the `vote_discounts` shape: [{"item_text", "name", "amount"}], kept
+    only where a quorum of the run's calls agree on (item, amount).
+    """
+    if not markdowns or not amounts:
+        return []
+    wanted = {round(abs(a), 2) for a in amounts if a}
+    if not wanted:
+        return []
+
+    quorum = quorum if quorum is not None else len(markdowns) // 2 + 1
+    counts: Counter = Counter()
+    seen: dict = {}
+
+    for markdown in markdowns:
+        for prefer_negative in (True, False):
+            found = _locate_in(markdown, wanted, prefer_negative)
+            if found:
+                break
+        for discount in found:
+            key = (frozenset(_tokens(discount["item_text"])), round(discount["amount"], 2))
+            counts[key] += 1
+            seen.setdefault(key, discount)
+
+    return [seen[key] for key, count in counts.items() if count >= quorum]
+
+
+def _locate_in(markdown: str, wanted: set, prefer_negative: bool) -> list[dict]:
+    """One pass of `locate_discounts` over a single markdown."""
+    found: list[dict] = []
+    current: str | None = None
+    for raw in markdown.splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        if TOTALS.search(line) and _amounts(line):
+            break
+        hit = next(
+            (value for value, was_negative in _numbers(line)
+             if round(value, 2) in wanted and (was_negative or not prefer_negative)),
+            None,
+        )
+        # A line naming a reduction is not also the item it reduces, so it must
+        # not become the parent candidate for the line after it.
+        if hit is not None and current:
+            found.append({
+                "item_text": current,
+                "name": _strip_money(line),
+                "amount": -abs(hit),
+            })
+            continue
+        if _numbers(line):
+            current = line  # a priced line is an item; unpriced ones continue it
+    return found
+
+
 def apply_to_ledger(annotation: dict, markdowns: list[str]) -> bool:
     """Rewrite a reconciled annotation's discount rows as one row per item.
 
@@ -211,6 +301,22 @@ def link_orphan_discounts(annotation: dict, markdowns: list[str]) -> int:
 
     Rows are matched on amount alone, so an amount appearing twice under
     different items (two identical multibuys) is linked in receipt order.
+
+    A saving the receipt states twice - once against its item and once in a
+    footer - must only be attached once, or the item it names is reduced by the
+    same money twice over. Tesco prints exactly that:
+
+        2 Heinz Beanz In Tomato Sauce 415g   £3.20
+        Cc Any 2 For £2.20                  -£1.00   <- the saving
+        Subtotal:                           £29.65
+        Savings:                            -£1.00   <- the same £1.00 restated
+
+    The parent is what separates the two cases, not the count: 4bf96933 prints
+    two identical "PRYMAT 3 FOR £1.20" savings under *different* items and both
+    are real, while a footer restates a saving already sitting under the *same*
+    item. So one saving of a given size may attach to a given item once, and a
+    second is dropped. Unlike widening `TOTALS` to know the word "Subtotal",
+    this reads no words at all.
     """
     rows = annotation.get("items") or []
     orphans = [
@@ -222,7 +328,15 @@ def link_orphan_discounts(annotation: dict, markdowns: list[str]) -> int:
     if not orphans:
         return 0
 
-    available = vote_discounts(markdowns)
+    bound = {
+        (r.get("parent_uid"), round(_to_float(r.get("total")) or 0.0, 2))
+        for r in rows
+        if r.get("parent_uid") and str(r.get("total") or "").startswith("-")
+    }
+
+    available = locate_discounts(
+        markdowns, [_to_float(r.get("total")) or 0.0 for r in orphans]
+    )
     next_uid = max((r.get("uid") or 0 for r in rows), default=0)
     linked = 0
     for row in orphans:
@@ -242,10 +356,13 @@ def link_orphan_discounts(annotation: dict, markdowns: list[str]) -> int:
         name = f"{parent.get('name') or ''} {parent.get('receipt_line_text') or ''}"
         if _similar(match["item_text"], name) <= MATCH_RATIO:
             continue
-        available.remove(match)
         if not parent.get("uid"):
             next_uid += 1
             parent["uid"] = next_uid
+        if (parent["uid"], amount) in bound:
+            continue  # the same saving, restated; it is already on this item
+        bound.add((parent["uid"], amount))
+        available.remove(match)
         row["parent_name"] = parent.get("name")
         row["parent_uid"] = parent["uid"]
         linked += 1
@@ -279,6 +396,21 @@ Nectar Price Saving £1.00
 PROMOTIONS -£5.50"""
 
 
+LIDL = """AberdeenAngusQuarterPounders 4.59 A
+Price Cut -0.30
+Spaghetti Cuts in TS 0.35 A
+12 FR Large Eggs 2.89 A
+Price Cut -0.30
+TOTAL 47.34"""
+
+# German and Turkish, to show the locator never reads a word.
+AUSLAND = """Bio Vollmilch 1,29
+Preisvorteil -0,40
+Ekmek 12,50
+indirim -2,50
+SUMME 10,89"""
+
+
 def demo():
     tesco = parse_line_discounts(TESCO)
     assert [d["amount"] for d in tesco] == [-1.15, -2.40], tesco
@@ -309,6 +441,95 @@ def demo():
     assert rows[1] == ("Nectar Price Saving", "-4.00", "CUSHEL Q/TOILT RX12"), rows
     assert rows[4] == ("Nectar Price Saving", "-1.00", "JS BLUEBERRY MUFINX4"), rows
     assert annotation["items_total"] == 12.35, annotation["items_total"]
+
+    # -- locate_discounts: no wording, any language -------------------------
+    # PROMO cannot see any of these lines; the known amount finds them anyway.
+    assert not PROMO.search("Price Cut -0.30")
+    assert not PROMO.search("Preisvorteil -0,40")
+
+    # Two savings of the same size under different items stay distinct — the
+    # vote is keyed on (item, amount), and it is the item that separates them.
+    lidl = locate_discounts([LIDL] * 3, [-0.30, -0.30])
+    assert [d["amount"] for d in lidl] == [-0.30, -0.30], lidl
+    assert "Aberdeen" in lidl[0]["item_text"], lidl[0]
+    assert "Eggs" in lidl[1]["item_text"], lidl[1]
+    assert {d["name"] for d in lidl} == {"Price Cut"}, lidl
+
+    foreign = locate_discounts([AUSLAND] * 3, [-0.40, -2.50])
+    assert sorted(d["amount"] for d in foreign) == [-2.50, -0.40], foreign
+    assert {d["name"] for d in foreign} == {"Preisvorteil", "indirim"}, foreign
+
+    # Only the amounts the caller asked about are nominated.
+    assert locate_discounts([LIDL] * 3, [-9.99]) == [], "not on the receipt"
+
+    # A saving under the totals block belongs to no item.
+    assert locate_discounts([TESCO] * 3, [-3.55]) == [], "past BALANCE DUE"
+
+    # An explicit minus beats an unsigned figure of the same size elsewhere.
+    collide = """Widget 4.00
+Rabatt -4.00
+TOTAL 0.00"""
+    hit = locate_discounts([collide] * 3, [-4.00])
+    assert len(hit) == 1 and "Widget" in hit[0]["item_text"], hit
+
+    # -- link_orphan_discounts: a saving stated twice attaches once ---------
+    # Tesco prints the Clubcard saving against its item and again as a footer.
+    # "Subtotal" does not trip TOTALS, so both reach the parser as -1.00.
+    tesco_md = """2 Heinz Beanz In Tomato Sauce 415g £3.20
+Cc Any 2 For £2.20 -£1.00
+Subtotal: £29.65
+Savings: -£1.00
+TOTAL: £28.65"""
+    restated = {
+        "items": [
+            {"name": "2 Heinz Beanz In Tomato Sauce 415g", "total": "3.20",
+             "category": "item", "uid": 1},
+            {"name": "Cc Any 2 For £2.20", "total": "-1.00", "category": "discount",
+             "parent_name": "2 Heinz Beanz In Tomato Sauce 415g", "parent_uid": 1},
+            {"name": "Savings", "total": "-1.00", "category": "discount"},
+        ],
+    }
+    assert link_orphan_discounts(restated, [tesco_md] * 3) == 0, restated["items"]
+    assert restated["items"][2].get("parent_uid") is None, "the footer stays loose"
+
+    # Neither row pre-attached: exactly one -1.00 binds, not both.
+    both_loose = {
+        "items": [
+            {"name": "2 Heinz Beanz In Tomato Sauce 415g", "total": "3.20",
+             "category": "item"},
+            {"name": "Cc Any 2 For £2.20", "total": "-1.00", "category": "discount"},
+            {"name": "Savings", "total": "-1.00", "category": "discount"},
+        ],
+    }
+    assert link_orphan_discounts(both_loose, [tesco_md] * 3) == 1, both_loose["items"]
+
+    # But two equal savings under *different* items are both real (4bf96933).
+    twins_md = """PAPRYKA SLODKA PRYM 1.09
+PRYMAT 3 FOR 1.20 -0.27
+PIEPRZ CZARNY PRYM 1.09
+PRYMAT 3 FOR 1.20 -0.27
+SUMA 1.64"""
+    twins = {
+        "items": [
+            {"name": "PAPRYKA SLODKA PRYM", "total": "1.09", "category": "item"},
+            {"name": "PIEPRZ CZARNY PRYM", "total": "1.09", "category": "item"},
+            {"name": "PRYMAT 3 FOR 1.20", "total": "-0.27", "category": "discount"},
+            {"name": "PRYMAT 3 FOR 1.20", "total": "-0.27", "category": "discount"},
+        ],
+    }
+    assert link_orphan_discounts(twins, [twins_md] * 3) == 2, twins["items"]
+    assert twins["items"][2]["parent_uid"] != twins["items"][3]["parent_uid"], twins["items"]
+
+    # The same receipt without the already-attached row: now it is the saving.
+    loose = {
+        "items": [
+            {"name": "2 Heinz Beanz In Tomato Sauce 415g", "total": "3.20",
+             "category": "item"},
+            {"name": "Savings", "total": "-1.00", "category": "discount"},
+        ],
+    }
+    assert link_orphan_discounts(loose, [tesco_md] * 3) == 1, loose["items"]
+    assert loose["items"][1]["parent_uid"] == loose["items"][0]["uid"], loose["items"]
 
     # Each discount binds to its item by id, not by position or name. Two
     # identically-named savings under different items must not collide.
