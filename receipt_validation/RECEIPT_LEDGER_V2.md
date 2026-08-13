@@ -172,6 +172,13 @@ taxonomy the design keeps changing relative to; treat it as unreliable until
 
 ### 2.5 Discount capture — measured, dataset insufficient
 
+> **Superseded by 7.9 (2026-08-09).** The conclusion below — that the labelling
+> convention nets discounts into item totals, so the dataset cannot measure
+> discount extraction — was true at 66 cases and is no longer. Labels now record
+> the item **gross** with its discount nested in `adjustments`, attached by hand
+> in the labeller UI, across 8 cases and ~35 discounts. That is ground truth for
+> *attachment*, and 7.9 scores against it.
+
 | | |
 |---|---|
 | labelled item-level adjustments | **3, across 2 of 66 receipts** (0 `is_new_price`) |
@@ -1533,3 +1540,559 @@ for p in ['v1:verified_consensus', 'strategy:verified_consensus']:
 - The `discounts:` replay pipelines were removed once the behaviour shipped, so
   `strategy:verified_consensus` measures the shipped code rather than a variant.
 - 117 tests pass.
+
+## 7. Production was running the unmeasured strategy (2026-08-09)
+
+### 7.1 The finding
+
+A production scan log for tab `019f78bb-bac4-7002-bce6-ee6a04b6c220` reads
+`via concurrent_consensus`. Everything in sections 2-6 above was measured on
+`verified_consensus` — `evaluate_captures.DEFAULT_PIPELINE` is
+`strategy:verified_consensus`, and the no-arg fallback is the same. It could not
+have been otherwise: `rollup`, `self_reconciled`, `adjustments` and
+`charge_type_accuracy` only exist on the ledger path, and
+`ConcurrentConsensusStrategy.post_process` never calls `reconcile_ledger`.
+
+The registry default is `baseline_mistral_ocr` (`utilities/registry.py`), so the
+live `scan_strategy` Option was hand-set to `concurrent_consensus` at some point
+and never moved. **Every number in this document describes a pipeline production
+was not running.**
+
+### 7.2 Three-way measurement
+
+198 labelled cases, 5 runs x 3 calls = 990 observations, zero failures. Paired
+over identical cached OCR (`labeler/ocr_captures/`, blob deskew), so the two
+differ only in post-processing. No API calls.
+
+```
+python manage.py evaluate_captures --compare strategy:concurrent_consensus \
+    strategy:verified_consensus v1:verified_consensus
+```
+
+| metric | w | concurrent (prod) | verified | delta |
+|---|---|---|---|---|
+| **rollup** | | **0.8600** | **0.9180** | **+0.0580** |
+| p3_self_reconciled | 5.5 | 0.8184 | 0.9092 | +0.0908 |
+| p1_item_totals_f1 | 5.0 | 0.9247 | 0.9415 | +0.0168 |
+| p2_charges_f1 | 3.0 | 0.6624 | 0.8085 | +0.1461 |
+| p3_grand_total_correct | 3.0 | 0.8172 | 0.9091 | +0.0919 |
+| p3_receipt_total_correct | 1.0 | 0.9724 | 0.9724 | 0.0000 |
+| p4_adjustments_f1 | 0.75 | 0.3329 | 0.4073 | +0.0744 |
+| p1_item_count_exact | | 0.8899 | 0.9051 | +0.0152 |
+| p2_tax_f1 | | 0.6111 | 0.6889 | +0.0778 |
+| **p2_tip_f1** | | **0.1875** | **0.9062** | **+0.7188** |
+| **charge_type_accuracy** | | **0.2244** | **0.8026** | **+0.5782** |
+| s_item_name | 0.5 | 0.8921 | 0.8913 | -0.0008 |
+| s_establishment | 0.3 | 0.9138 | 0.9138 | 0.0000 |
+| s_translated_name | 0.2 | 0.8451 | 0.8464 | +0.0013 |
+| s_date_match | 0.2 | 0.9407 | 0.9407 | 0.0000 |
+| s_currency_match | | 0.9606 | 0.9606 | 0.0000 |
+| identical across 5 runs | | 143/198 | 157/198 | +14 |
+| mean rollup stdev | | 0.0362 | 0.0240 | -34% |
+
+Every weighted metric improves or is flat. The one regression is `s_item_name`
+at -0.0008, which is noise.
+
+### 7.3 What production has been losing
+
+**Tips, almost entirely.** `p2_tip_f1` 0.1875. Without the ledger,
+`standard_post_process` forces charges into the item list to make `sum(items)`
+come out right, instead of surfacing them as typed charges — so a tip mostly
+lands as an unlabelled item row. `charge_type_accuracy` 0.2244 is the same cause.
+
+**Every discount mechanism.** `expand_discount_rows`,
+`drop_restated_discount_summary` and `link_orphan_discounts` are all reached only
+via `reconcile_ledger` / `VerifiedConsensusStrategy`. The savings-footer repair
+landed alongside 2.25-2.29 has therefore **never executed on a real user scan**.
+
+Item extraction improves too (+0.0168 p1) even though this is a post-processing
+change: `verify_and_repair` runs per candidate *before* selection, so
+`select_best_line_items` chooses among parses that already reconcile.
+
+It is also more deterministic — 14 more cases identical across all 5 runs, and
+run-to-run rollup variance down a third. No accuracy/stability trade.
+
+### 7.4 The v1 presenter still costs nothing — kept
+
+| | verified (v2) | v1:verified | delta |
+|---|---|---|---|
+| rollup | 0.9180 | 0.9176 | -0.0004 |
+| p4_adjustments_f1 | 0.4073 | 0.4073 | **0.0000** |
+| charge_type_accuracy | 0.8026 | 0.7833 | -0.0193 |
+| s_item_name | 0.8913 | 0.8896 | -0.0017 |
+
+Adjustment linkage survives flattening **exactly**. The only real cost is
+`charge_type_accuracy`, which is precisely `flatten_for_v1` rewriting
+`category: "discount"` -> `"service"` ("the old client has never heard of
+discount"). The app recovers the type for free from sign + absence of
+`parent_uid`, so **the mobile client should stay on v1**. Moving it to v2 would
+buy a discriminator it can already compute, in exchange for a second annotation
+shape to parse and multi-tax rows its single tax editor cannot represent.
+
+### 7.5 A live case the ledger would have caught
+
+Spice Store, `019f78bb-bac4-7002-bce6-ee6a04b6c220`:
+
+```
+items: [{name: 'White & Grey Sneaker', total: '2550.00', quantity: 1,
+         price_per_quantity: '2550.00',
+         adjustments: [{name: 'Discounts (10%)', amount: '-255.00',
+                        is_new_price: False}],
+         receipt_line_text: 'White & Grey Sneaker 1 2550.00 2550.00'}]
+receipt_total: '2295.00'   items_total: 2550.0   totals_reconciled: False
+```
+
+No top-level `adjustments` key, so `flatten_for_v1` returned early and did
+nothing. The discount stayed nested where the client never looks, and the user
+saw one 2550 item against a 2295 receipt.
+
+It also breaks `expand_discount_rows` **in the opposite direction from 2.14**.
+There the model grossed items up and the pipeline had to reverse it; here `total`
+is already the pre-discount price (2550 - 255 = 2295 = `receipt_total`), so the
+gross-up would emit 2805 + (-255) = 2550 and still miss by 255. The function's
+"the model reports `total` as the price actually paid" assumption is a coin flip,
+not a rule.
+
+### 7.6 Where receipt-level discounts actually arrive
+
+Confirmed by running `reconcile_ledger` + `flatten_for_v1` over the ground truth
+for `IMG-20260521-WA0027.jpg`:
+
+```
+charge_selection: best_effort_closest   reconciled: False   gap: -0.20
+v2 adjustments:  Service Charge  3.98  type=tip  split=proportional
+v1 items:  Churrasco 24.50 (item) | FULL Costillar 21.00 (item)
+           Discount (The fork) -13.85 (service, parent_uid=None)
+           Service Charge 3.98 (tip)
+```
+
+Two model channels — `other_charges` with a negative amount (what the labels
+use) and `items[].kind: "discount"` — converge on the same wire shape: a negative
+row that **stays in `items`**, because `_ADJUSTMENT_TYPES` is `("tax", "tip")`
+only. Discounts never become v2 adjustments, item-level or receipt-level.
+
+So the client discriminator needs no backend change and no v2:
+
+| shape | meaning | client treatment |
+|---|---|---|
+| negative row, `parent_uid` set | item discount | indented red row under its parent, nets into it |
+| negative row, no `parent_uid` | receipt-level discount | its own charge line beside TAX/TIP, proportional |
+
+The `tax: 5.31` on that case is dropped as non-additive (read as VAT-inclusive),
+and the -0.20 gap is the `receipt_total` OCR misread already noted at
+`select_additive_charges`.
+
+### 7.7 Path forward for discounts
+
+**Ordered. Step 1 is a prerequisite, not an option — nothing below it runs
+without the ledger.**
+
+1. **Flip `scan_strategy` to `verified_consensus`.** One Option value, no extra
+   Mistral calls, +0.0580 rollup, and it is the only way any discount code
+   reaches production. Measured in 7.2.
+
+2. **Label 10-15 more discount receipts.** `p4_adjustments_f1` at 0.4073 is the
+   worst metric on the board even after the switch, off a corpus of 7
+   `has-item-discount` and 2 `has-receipt-discount` cases — one of which
+   (`17393.jpg`) is still unannotated. Section 2.5 found the labelling
+   convention nets discounts into item totals; that must change too, or the
+   metric keeps measuring the convention rather than the extraction. **Do this
+   before step 3** — otherwise the fix is being judged on one Spice Store scan.
+
+3. **Make `expand_discount_rows` decide gross-vs-paid arithmetically.** Try
+   `total` as the paid price and as the pre-discount price; keep whichever lands
+   the bill on `receipt_total`; fall back to today's assumption when neither
+   closes or there is no total. Same philosophy as `select_additive_charges` —
+   let the arithmetic decide rather than encoding a rule about how receipts
+   print. This is the 2.14 / 7.5 defect.
+
+4. **App: a `DISCOUNT` charge row.** A parentless negative row becomes a third
+   `ReceiptChargeRow` beside TAX and TIP — right place on the paper, already
+   `proportional` in `_SPLIT_BY_TYPE`, and the widget exists. Render it **only
+   when one was scanned**; most receipts have none and it should not cost a
+   permanent line. Manual entry of a bill-level discount is YAGNI — a negative
+   line item covers it.
+
+**Deliberate no-ops, both load-bearing:**
+
+- **No client-side savings-footer heuristic.** `drop_restated_discount_summary`
+  identifies the footer arithmetically *and* reverses the per-item gross-ups in
+  the same move; dropping the footer alone broke closure on all 17 scans where it
+  was detected. The client cannot do that half. Two systems disagreeing about
+  which negative row is real is worse than either alone. Residual gap, accepted:
+  the >=2-discounts guard means one item discount plus a "YOUR SAVINGS" footer is
+  undetectable, because a single real discount reported twice is arithmetically
+  identical to it.
+
+- **Do not relax `_plausible_charges` for tips.** It caps additive charges at the
+  item subtotal, which loses a generous handwritten tip
+  (`diner-pays-tip-...jpg`: tip 100.00 on a 32.43 bill, `charge_selection:
+  unreconciled_none_added`, tip dropped). Keep it anyway: the costs are
+  asymmetric — a dropped tip is a two-second correction in the app's TIP field, a
+  phantom tip invents money the payer is asked to split — and the guard is what
+  stops a degenerate parse that files the whole bill as one fee from reconciling
+  against an empty item list and *winning* consensus selection. A modest
+  handwritten tip that closes the gap is already handled (`subset_reconciled`).
+
+  Note that case's ground truth is internally inconsistent (`tip: 100.00`,
+  `receipt_total: 10032.43`, items 32.43 — the viral photo is a $10,000 tip). It
+  can never reconcile as labelled and is a poor baseline until re-checked.
+
+### 7.8 Orphan linking driven by amount, not wording — kept
+
+`PROMO` (`discounts.py:30`) gated `parse_line_discounts` on English loyalty
+wording — `nectar`, `clubcard`, `special offer`, `saving`. Two live scans showed
+what that costs: LIDL's `Price Cut` and a US store's `less promo` match none of
+it, so their discounts reached the client unparented. Adding those two phrases
+would have moved the cliff, not removed it.
+
+**`link_orphan_discounts` never needed to discover anything.** By the time it
+runs, the reduction is already a row in the annotation — the amount is known.
+So `locate_discounts(markdowns, amounts)` inverts the search: nominate the line
+carrying a *known* figure and take the preceding priced line as its parent. An
+amount is an amount in every language and script; `_similar` already binds
+text to row without reading words.
+
+The Sainsbury's problem `PROMO` existed for — "Nectar Price Saving £0.60"
+printed unsigned for -0.60 — disappears rather than needing solving: searching
+for a known 0.60 finds the line whether or not the OCR kept the minus. An
+explicitly negative token is still preferred over an unsigned one, so an item
+priced the same as a saving elsewhere cannot capture it.
+
+`MONEY` was a second, unnoticed locale trap: it requires a `£$€` sign, so a
+receipt printing bare figures (LIDL) or any other symbol was invisible to the
+whole module. The locator scans with `NUMBER`, sign optional. **`MONEY`,
+`PROMO`, `parse_line_discounts` and `vote_discounts` are untouched** — the
+lumped-summary rewrite in `apply_to_ledger` genuinely does need discovery (it
+splits one -5.00 into per-item amounts it does not know), so it keeps the
+behaviour it was measured with.
+
+An orphan may only take a saving its item does not already carry. A first
+measurement of the locator alone looked like a clean win on linkage and was
+**wrong**: counting attachments says nothing about whether they are right, and
+the bare change was quietly reducing two items twice by the same money. Tesco
+prints the cause —
+
+    2 Heinz Beanz In Tomato Sauce 415g   £3.20
+    Cc Any 2 For £2.20                  -£1.00      <- the saving
+    Subtotal:                           £29.65      <- `\btotal\b` does not match "Subtotal"
+    Savings:                            -£1.00      <- the same £1.00 again
+
+— and the annotation carries that £1.00 twice too: once expanded from the
+nested adjustment and correctly attached, once as a bare row. So a saving of a
+given size may attach to a given item once. The *parent* is what separates this
+from two genuine identical multibuys (4bf96933 prints two "PRYMAT 3 FOR £1.20"
+savings under *different* items, and both are real). Widening `TOTALS` to know
+the word "Subtotal" would have been the wording trap again.
+
+Three-arm paired replay, 990 scans, same cached OCR:
+
+| | linked to a parent | same saving twice on one item |
+|---|---|---|
+| `PROMO` wording gate | 124/207 (59.9%) | 1 row / 1 scan |
+| amount-driven, no guard | 153/207 (73.9%) | **3 rows / 2 scans** |
+| amount-driven + guard | **151/207 (72.9%)** | 1 row / 1 scan |
+
+27 more attachments, and the double-charge count returns to the pre-existing
+baseline. That remaining one predates this work and appears in every arm.
+
+Every metric scored at the time was bit-identical — rollup 0.9180,
+`p4_adjustments_f1` 0.4073, stability 157/198 — because `p4_adjustments_f1`
+compares discount amounts as a *multiset* (`scorer.py:350`) and cannot tell a
+saving on the right item from the same saving on the wrong one. The negative-row
+count is unchanged at 207 throughout, so nothing was invented or dropped.
+
+Counting attachments was the wrong measurement and it took a wrong turn to see
+it: row names are no guide either, because the same orphan is named
+"Cc Any 2 For £2.20" in one run of a scan and "Savings" in another, which made
+an eyeball pass over the new binds actively misleading. **7.9 scores this
+properly against the labels.**
+
+Not all 56 remaining orphans are failures: a genuine bill-level discount has no
+parent and must not acquire one.
+
+`discounts.py`'s `demo()` gained the wording-free cases: LIDL `Price Cut` bound
+to the right two items, German `Preisvorteil` and Turkish `indirim`, a saving
+past the totals block staying unbound, and a signed saving winning over an
+unsigned figure of the same size. Run it directly:
+`python ninjatab/tabs/receipt_scanning/discounts.py`. 127 tests pass.
+
+### 7.9 Scoring attachment, not just amounts — `p4_discount_links_f1`
+
+2.5 concluded the corpus could not measure discount extraction. That is no
+longer true: the labeller UI attaches a discount to its item, and the labels
+record the item **gross** with the saving nested in `adjustments` — 8 cases,
+~35 discounts, including Czech LIDL (`SLEVA 25%`, `Lidl Plus sleva`) and the
+Tesco restatement whose truth is one -1.00 on Heinz Beanz with `Savings -1.00`
+and `Promotions -1.00` sitting in `other_charges` as footers.
+
+`p4_adjustments_f1` cannot see any of that: it compares amounts as a multiset,
+so all three arms of 7.8 score identically on it. The new
+`p4_discount_links_f1` pairs each amount with the item it is attached to —
+`_label_links` / `_result_links` / `_links_f1` in `labeler/evaluation/scorer.py`
+— matching item names by token overlap so OCR wording drift does not break it.
+It reads a linked row (`parent_uid`) and a still-nested adjustment alike, so v1
+and v2 shapes score the same. `None` when a label records no discounts, so an
+ordinary receipt neither rewards nor punishes.
+
+**Weight 0 in `PRIORITY_WEIGHTS`**, following the `charge_type_accuracy`
+convention: every figure recorded above was measured without it, and `rollup`
+must stay comparable. Verified — rollup is still 0.8600 / 0.9180.
+
+It is `None` where the label records no links, following the
+not-scored-when-absent convention used for tax and tip — and not only because a
+discount-free receipt should not be rewarded. Five corpus cases *have*
+discounts the labeller did not attach (2.5 names `f52eb086` and `f71c4328`;
+`PXL_20260806` carries a "GORALKI- 3 FOR 1.30" saving with no labelled
+adjustment; also `6984a385` and `IMG-20260516-WA0002`). Scored strictly they
+contributed **25 of 44 false positives** — measuring the labelling, not the
+pipeline. The cost is a blind spot: a discount invented on a receipt that has
+none goes unpunished. Closing it means labelling those five, not changing the
+metric.
+
+Through `evaluate_captures`, per-case average:
+
+| | `p4_adjustments_f1` | `p4_discount_links_f1` |
+|---|---|---|
+| `concurrent_consensus` | 0.3329 | **0.2255** |
+| `verified_consensus` | 0.4073 | **0.6024** |
+
+So production was not merely mislaying discounts, it was attaching almost none
+of them — another cost of 7.1 that no existing metric reported.
+
+Pooled over every labelled discount (micro-averaged, so it weighs a 14-discount
+Sainsbury's receipt above a 1-discount one), the three arms of 7.8:
+
+| arm | TP | FP | FN | precision | recall | F1 |
+|---|---|---|---|---|---|---|
+| `PROMO` wording gate | 90 | 19 | 130 | 0.826 | 0.409 | 0.547 |
+| amount-driven, no guard | 107 | 21 | 113 | 0.836 | 0.486 | 0.615 |
+| amount-driven + guard | 107 | **19** | 113 | **0.849** | **0.486** | **0.618** |
+
+**+17 correct attachments; F1 0.547 -> 0.618, and precision rises too**
+(0.826 -> 0.849). A first pass that scored the under-labelled cases as errors
+showed precision *falling* 0.726 -> 0.709; those 12 "extra wrong binds" were
+mostly correct links against truth the labels do not record. The guard removes
+2 false positives and loses no true ones — exactly the 2 double-charged savings
+7.8 counted structurally.
+
+Recall at 0.486 is the honest headline: **more than half of the discounts the
+labeller attached by hand are still not attached by the pipeline.** That is the
+number to move next, and it is now visible in the standard report rather than
+in a one-off script.
+
+### 7.10 What five production scans show
+
+All `verified_consensus`, captured before 7.8. They are worth adding to the
+corpus: between them they cover three discount dialects the 8 labelled cases do
+not.
+
+**Tymbark (Polish supermarket, GBP)** — `GORALKI- 3 FOR 1.30`, -0.47,
+`kind: "discount"`, **no `parent_uid`**. `PROMO` matches nothing in that string,
+which is the 7.8 failure exactly; the amount-driven locator binds it to
+`GORALKI`. The same receipt is in the corpus as `PXL_20260806_131708939.jpg`
+with **no labelled adjustment**, which is why that correct link scored as a
+false positive until 7.9 stopped scoring unlabelled cases. Two other defects on
+that scan, both unrelated to discounts: only two `GORALKI` rows were extracted
+where the 3-for-1.30 implies three, and `totals_reconciled` is False on a 1p gap
+(grand_total 25.40 vs receipt_total 25.39).
+
+**Adult Tee (US apparel)** — a *third* gross-up dialect. The printed figure is
+the price **after** the discount (`Adult Tee x 1 $8.09`, pipeline emits 8.99
+with a -0.90 beneath it), where Sainsbury's prints the price **before** it. So
+`drop_restated_discount_summary` finds its summary (`Savings -2.00` equals the
+two discounts) and then correctly **refuses**: un-grossing to 8.09 while keeping
+-0.90 would give 15.98 against a receipt_total of 19.73. The closure guard
+earns its place here. But the gross-up survives, so the user is shown 8.99 for
+an item the receipt prices at 8.09 — 2.14 and 7.5 again, from the other
+direction.
+
+**Tesco meal deal, twice, same receipt** — one run emits the three `Meal Deal`
+rows nested, so `expand_discount_rows` assigns uids and all three link; the
+other emits them flat and **none** link, even though `meal deal` *is* in
+`PROMO`. Identical input, different linkage. The stability figure in every table
+above tracks `rollup`, which is unmoved by this, so linkage instability has been
+invisible; `p4_discount_links_f1` is what would expose it.
+
+**Duplicate footers are the norm, not the exception.** `Savings -2.90` *and*
+`Promotions -2.90`; `Savings -1.00` *and* `Promotions -1.00`; `Discount -4.00`
+*and* `BSK DISCOUNT -10.00`. `drop_restated_discount_summary` matches a single
+charge equal to the sum of the discount rows, so the split-summary shape (7.5)
+and the doubled-footer shape both slip past it.
+
+### 7.11 Corpus 198 -> 212, and the linkage change holds up
+
+14 new labelled cases captured (`capture_labelled_ocr`: 210 API calls, 2 lost to
+a 503 on the Morrisons `.webp` and picked up by a re-run, which only calls for
+what is missing). 1060 observations.
+
+**Figures are not comparable across corpus sizes** — the same caveat as the
+66 -> 111 growth in section 2. Everything above was measured at 198.
+
+The new cases are harder, deliberately so:
+
+| | new 14 | all 212 |
+|---|---|---|
+| p1_item_totals_f1 | 0.8864 | 0.9378 |
+| p1_item_count_exact | **0.6000** | 0.8849 |
+| p2_charges_f1 | 0.5000 | 0.7959 |
+| p3_self_reconciled | 0.8429 | 0.9048 |
+| p4_adjustments_f1 | 0.5278 | 0.4428 |
+| p4_discount_links_f1 | 0.5780 | 0.5948 |
+| rollup | 0.8581 | 0.9140 |
+| identical across runs | 10/14 | 167/212 |
+
+Item *counting* is where they hurt (0.60): these are long, crumpled,
+screenshot and app-render receipts. Discount handling on them is no worse than
+the corpus average, which is the first evidence that the discount work
+generalises past the Tesco/Sainsbury's dialects it was built on.
+
+**They close the 7.7 step 2 gap, and for the right kind of discount.** 13 of 14
+carry a discount, and **12 carry a bill-level one** where the corpus previously
+had a single usable example (`IMG-20260521-WA0027`). Item-level discounts are up
+too — 5 more cases, one of them 5 discounts on 4 items.
+
+Whole corpus at 212 cases:
+
+| metric | concurrent | verified | delta |
+|---|---|---|---|
+| rollup | 0.8368 | **0.9140** | +0.0772 |
+| p3_self_reconciled | 0.7790 | 0.9048 | +0.1257 |
+| p1_item_totals_f1 | 0.9190 | 0.9378 | +0.0188 |
+| p2_charges_f1 | 0.6356 | 0.7959 | +0.1603 |
+| p2_tip_f1 | 0.1875 | 0.9062 | +0.7188 |
+| charge_type_accuracy | 0.1620 | 0.7796 | +0.6176 |
+| p4_discount_links_f1 | 0.1550 | 0.5948 | +0.4398 |
+| identical across runs | 154/212 | 167/212 | +13 |
+
+The strategy gap **widened** with the harder cases, 0.0580 -> 0.0772: the
+receipts that defeat `concurrent_consensus` are exactly the ones the ledger
+repairs. `v1:verified_consensus` still costs -0.0003 of rollup.
+
+Three-arm linkage (7.8, 7.9) re-measured at 212, scored only where the labeller
+attached links — now 280 of them, up from 220:
+
+| arm | TP | FP | FN | precision | recall | F1 |
+|---|---|---|---|---|---|---|
+| `PROMO` wording gate | 102 | 29 | 178 | 0.779 | 0.364 | 0.496 |
+| amount-driven, no guard | 135 | 36 | 145 | 0.789 | 0.482 | 0.599 |
+| amount-driven + guard | 135 | **34** | 145 | **0.799** | **0.482** | **0.601** |
+
+**+33 correct attachments, F1 0.496 -> 0.601** — a larger gain than the +0.071
+measured at 198, with precision rising again (0.779 -> 0.799). The guard removes
+the same 2 false positives and loses no true ones. The wording gate degrades on
+the new cases (recall 0.409 -> 0.364) exactly as predicted: more receipts, more
+dialects it has never heard of.
+
+Recall 0.482 remains the number to move.
+
+### 7.12 How discounts are labelled — the convention `p4_discount_links_f1` reads
+
+Recorded explicitly because 2.5 drew a conclusion from an older convention and
+this document carried it for months: "the labelling convention nets discounts
+into item totals, so the dataset structurally cannot measure discount
+extraction". That has not been true since the labeller UI gained per-item
+attachment. Anyone reasoning about discount metrics should read this section and
+not 2.5.
+
+**An item-level discount is nested on the item it reduces, and the item is
+recorded GROSS.**
+
+```json
+{"name": "2 Heinz Beanz In Tomato Sauce 415g", "total": "3.20",
+ "adjustments": [{"name": "£1.60 each Cc Any 2 For £2.20",
+                  "translated_name": "...", "amount": "-1.00",
+                  "is_new_price": false}]}
+```
+
+The receipt charged £2.20 for that row. The label stores the **pre-discount**
+3.20 with the -1.00 delta beside it; `labels.net_item_total` is what nets them.
+So a label's item total is not what the shopper paid for that line, and any
+comparison against `item["total"]` alone will be wrong by the discount.
+
+`amount` is a **negative delta**. `is_new_price: true` inverts that — the line
+replaced the price outright ("was 5.00, now 3.00"), so `amount` is the new price
+rather than a reduction. **No label in the corpus uses it** (0 of 56), so that
+branch is untested against real data.
+
+**A bill-level discount is a negative `other_charges` entry**, with no link to
+any item — that absence *is* the signal that it applies to the whole receipt:
+
+```json
+"other_charges": [{"name": "Celková sleva", "translated_name": "Total discount",
+                   "amount": "-5.87"}]
+```
+
+**Footer restatements land there too, and are frequently doubled.**
+`IMG-20260328-WA0027` records `Savings -5.87` *and* `Promotions -5.87` — one sum
+of money, printed twice, labelled twice, and both are legitimate transcriptions
+of what the receipt shows. A reader of these labels cannot assume a negative
+`other_charge` is money off the bill; it may restate savings already nested on
+the items. 7.10 shows the same doubling in production.
+
+Coverage at 212 labelled cases:
+
+| | cases | rows |
+|---|---|---|
+| item-level (nested `adjustments`) | 16 | 56 |
+| bill-level (negative `other_charges`) | 26 | 32 |
+| `is_new_price` | 0 | 0 |
+
+**Known gaps.** Five cases carry discounts that were never attached in the UI
+(`f52eb086`, `f71c4328`, `PXL_20260806` Tymbark, `6984a385`,
+`IMG-20260516-WA0002`). `p4_discount_links_f1` returns `None` where a label
+records no links, precisely so those score as "unknown" rather than as pipeline
+errors — scoring them strictly moved precision 0.849 -> 0.709 and was measuring
+the labelling. The cost is that a discount invented on a genuinely
+discount-free receipt is not punished. Labelling those five closes it; changing
+the metric does not.
+
+### 7.13 Two ways to raise linkage — both REJECTED, both measured
+
+Recall sat at 0.482 with 280 labelled links. Decomposing the misses first, which
+is what made both of these answerable:
+
+| | rows | share |
+|---|---|---|
+| attached correctly | 135 | 48.2% |
+| missed, **the amount is in the output** | 61 | 21.8% |
+| missed, amount absent entirely | 84 | 30.0% |
+
+So any attachment fix has a ceiling of +21.8pp (recall ~0.70). The other 30% is
+money the model never emitted — no routing, prompt or schema change reaches it,
+and with `p1_item_count_exact` at 0.60 on the new cases whole rows are being
+dropped. Caveat: that bucket conflates "not read" with "folded into the item
+price", which the Adult Tee shape in 7.10 does; nothing here separates them.
+
+**Selection tiebreak — REJECTED.** `apply_to_ledger` has always noted that "a
+candidate carrying per-item discounts loses to one that lumped them into a
+summary", and `select_best_line_items` ranks on reconciliation, transcribed
+fraction and modal item count, none of which sees attachment. Added
+`attached_fraction` as rank 4 (share of a candidate's savings naming their item,
+a fraction so emitting more savings is never rewarded, 1.0 when there are none).
+
+Candidates disagree on attachment in **69 of 1060 scans (6.5%)**, but the higher
+ranks already decide all but **4 (0.4%)** — and those 4 net-lost: linkage TP
+135 -> 134, `p4_discount_links_f1` 0.5948 -> 0.5906, `p4_adjustments_f1` 0.4428
+-> 0.4369, `p1_item_totals_f1` 0.9378 -> 0.9374, rollup 0.9140 -> 0.9138.
+
+The reason is structural and worth keeping: `link_orphan_discounts` runs on the
+**winner, after selection**, so since 7.8 the amount-driven locator already
+recovers the flat candidate. Preferring the nested one buys almost nothing and
+costs whenever it is marginally worse at item totals. The docstring's complaint
+was true when it was written and has been fixed elsewhere.
+
+**Positional default — REJECTED.** "Attach every unparented saving to the item
+above unless we know it is receipt-level" (knowing = it came from
+`other_charges`), inverting the current evidence-to-attach rule:
+
+| | TP | FP | FN | precision | recall | F1 |
+|---|---|---|---|---|---|---|
+| evidence to attach (current) | 135 | **34** | 145 | **0.799** | 0.482 | **0.601** |
+| positional default | 141 | 56 | 139 | 0.716 | 0.504 | 0.591 |
+
+**6 more right for 22 more wrong.** The F1 loss understates it, because the two
+errors do not cost the same: a wrong attachment nets a saving onto an item one
+person claims, so that person pockets it and everyone else pays more, while an
+unattached saving stays proportional and is mildly wrong for everyone. Silence
+is the cheaper failure, so attachment should keep requiring evidence.
