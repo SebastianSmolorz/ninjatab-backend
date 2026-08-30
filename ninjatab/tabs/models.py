@@ -2,6 +2,7 @@
 import uuid
 from django.db import models
 from django.db.models import Q
+from django.utils.text import slugify
 from django.conf import settings
 from enum import Enum
 from datetime import date
@@ -208,6 +209,14 @@ class Tab(VersionedModel, BaseModel):
     )
     is_pro = models.BooleanField(default=False)
     is_demo = models.BooleanField(default=False)
+    is_public = models.BooleanField(
+        default=False,
+        help_text="Opt this tab into the unauthenticated read-only web view at /t/<public_slug>"
+    )
+    public_slug = models.SlugField(
+        max_length=64, unique=True, null=True, blank=True,
+        help_text="Friendly URL for the public view. Auto-filled from the name when is_public is set."
+    )
     receipt_scan_count = models.PositiveIntegerField(default=0)
     invite_code = models.UUIDField(default=uuid.uuid4, unique=True, null=True, blank=True)
 
@@ -233,6 +242,26 @@ class Tab(VersionedModel, BaseModel):
     def rotate_invite_code(self):
         self.invite_code = uuid.uuid4()
         self.save(update_fields=["invite_code"])
+
+    def _build_public_slug(self):
+        base = slugify(self.name)[:48] or f"tab-{str(self.uuid)[:8]}"
+        candidate = base
+        # ponytail: read-then-write, so two simultaneous publishes of same-named
+        # tabs can collide and raise IntegrityError. Publishing is a rare admin
+        # toggle; add a retry loop if it ever becomes a user-facing action.
+        n = 2
+        while Tab.objects.filter(public_slug=candidate).exclude(pk=self.pk).exists():
+            candidate = f"{base}-{n}"
+            n += 1
+        return candidate
+
+    def save(self, *args, **kwargs):
+        if self.is_public and not self.public_slug:
+            self.public_slug = self._build_public_slug()
+            update_fields = kwargs.get("update_fields")
+            if update_fields is not None:
+                kwargs["update_fields"] = {*update_fields, "public_slug"}
+        super().save(*args, **kwargs)
 
 
 class TabPerson(BaseModel):

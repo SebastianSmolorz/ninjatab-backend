@@ -118,10 +118,10 @@ class BillDemoTabFilter(DemoTabFilter):
 
 @admin.register(Tab)
 class TabAdmin(admin.ModelAdmin):
-    list_display = ['name', 'uuid', 'is_demo', 'default_currency', 'settlement_currency', 'is_pro', 'is_settled', 'is_archived', 'created_by', 'created_at']
+    list_display = ['name', 'uuid', 'is_demo', 'default_currency', 'settlement_currency', 'is_pro', 'is_public', 'public_slug', 'is_settled', 'is_archived', 'created_by', 'created_at']
     ordering = ['-uuid']
-    list_filter = [DemoTabFilter, 'is_pro', 'is_settled', 'is_archived', 'created_at']
-    search_fields = ['name', 'description', 'uuid', 'created_by__uuid', 'people__user__id', 'people__user__uuid']
+    list_filter = [DemoTabFilter, 'is_pro', 'is_public', 'is_settled', 'is_archived', 'created_at']
+    search_fields = ['name', 'description', 'uuid', 'public_slug', 'created_by__uuid', 'people__user__id', 'people__user__uuid']
     readonly_fields = ['uuid', 'created_at', 'updated_at', 'settlement_preview_link']
     raw_id_fields = ['created_by']
     show_full_result_count = False
@@ -138,7 +138,7 @@ class TabAdmin(admin.ModelAdmin):
             'fields': ('uuid', 'name', 'description', 'default_currency', 'settlement_currency', 'created_by')
         }),
         ('Status', {
-            'fields': ('is_pro', 'is_settled', 'is_archived', 'settlement_preview_link')
+            'fields': ('is_pro', 'is_public', 'public_slug', 'is_settled', 'is_archived', 'settlement_preview_link')
         }),
         ('Timestamps', {
             'fields': ('created_at', 'updated_at'),

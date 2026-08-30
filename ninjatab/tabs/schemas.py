@@ -824,3 +824,61 @@ class GroupInviteInfoSchema(BaseModel):
 class ClaimGroupInviteSchema(BaseModel):
     member_id: str
     email: EmailStr
+
+
+# --- Public (unauthenticated) read-only tab view -----------------------------
+# Deliberately hand-built flat schemas rather than reusing TabSchema/BillSchema:
+# those carry emails, user ids, invite codes and settlements. Everything below
+# is populated explicitly in _public_tab_payload(), so nothing can leak by
+# accident when an internal schema gains a field.
+
+class PublicClaimSchema(BaseModel):
+    person_id: str
+    person_name: str
+    split_value: Optional[int] = None
+    amount: Optional[int] = None
+
+
+class PublicLineItemSchema(BaseModel):
+    id: str
+    description: str
+    value: int
+    split_type: SplitTypeEnum
+    claims: List[PublicClaimSchema]
+
+
+class PublicPersonTotalSchema(BaseModel):
+    person_id: str
+    person_name: str
+    amount: int
+
+
+class PublicBillSchema(BaseModel):
+    id: str
+    description: str
+    currency: CurrencyEnum
+    date: Date
+    total_amount: int
+    created_by: str
+    paid_by: Optional[str] = None
+    receipt_image_url: str = ''
+    person_totals: List[PublicPersonTotalSchema]
+    line_items: List[PublicLineItemSchema]
+
+
+class PublicPersonSchema(BaseModel):
+    id: str
+    name: str
+    spend: int
+
+
+class PublicTabSchema(BaseModel):
+    id: str
+    name: str
+    description: str
+    settlement_currency: CurrencyEnum
+    is_settled: bool
+    is_pro: bool
+    group_spend: Optional[int] = None
+    people: List[PublicPersonSchema]
+    bills: List[PublicBillSchema]

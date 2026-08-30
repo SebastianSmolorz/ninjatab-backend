@@ -19,6 +19,7 @@ from django.utils import timezone
 
 from ninjatab.tabs.models import *
 from ninjatab.tabs.schemas import *
+from ninjatab.tabs.schemas import _receipt_image_url
 from ninjatab.currencies.currency_utils import minor_to_decimal
 from ninjatab.tabs.simp import simp_tab
 from ninjatab.currencies.exchange import convert_amount, ExchangeRateNotFoundError, clear_rate_cache
@@ -615,6 +616,123 @@ def get_tab_person_totals(request, tab_id: str):
         }
         for row in totals
     ]
+
+
+def _public_tab_payload(tab):
+    """Build the whitelisted payload for the public read-only tab view.
+
+    Only fields listed here ever reach an unauthenticated caller — no emails,
+    user ids, invite codes or settlements.
+    """
+    bills = [b for b in tab.bills.all() if b.status != BillStatus.ARCHIVED]
+    settlement_currency = tab.settlement_currency
+
+    group_spend = 0
+    conversion_ok = True
+    person_spend = {}
+
+    bill_payloads = []
+    for bill in bills:
+        bill_total = 0
+        person_totals = {}
+        line_items = []
+        for li in bill.line_items.all():
+            bill_total += li.value or 0
+            claims = []
+            for claim in li.person_claims.all():
+                claims.append({
+                    'person_id': str(claim.person.uuid),
+                    'person_name': claim.person.name,
+                    'split_value': claim.split_value,
+                    'amount': claim.calculated_amount,
+                })
+                person_totals[claim.person.uuid] = (
+                    person_totals.get(claim.person.uuid, 0) + (claim.calculated_amount or 0)
+                )
+                person_spend[claim.person.uuid] = (
+                    person_spend.get(claim.person.uuid, 0) + (claim.settlement_amount or 0)
+                )
+            line_items.append({
+                'id': str(li.uuid),
+                'description': li.description,
+                'value': li.value,
+                'split_type': li.split_type,
+                'claims': claims,
+            })
+
+        if conversion_ok:
+            try:
+                converted = bill_total
+                if bill.currency != settlement_currency:
+                    converted = convert_amount(bill_total, bill.currency, settlement_currency)
+                group_spend += converted
+            except ExchangeRateNotFoundError:
+                conversion_ok = False
+
+        bill_payloads.append({
+            'id': str(bill.uuid),
+            'description': bill.description,
+            'currency': bill.currency,
+            'date': bill.date,
+            'total_amount': bill_total,
+            'created_by': bill.creator.name,
+            'paid_by': bill.paid_by.name if bill.paid_by else None,
+            'receipt_image_url': _receipt_image_url(bill),
+            'person_totals': [
+                {'person_id': str(p.uuid), 'person_name': p.name, 'amount': person_totals[p.uuid]}
+                for p in tab.people.all() if p.uuid in person_totals
+            ],
+            'line_items': line_items,
+        })
+
+    return {
+        'id': str(tab.uuid),
+        'name': tab.name,
+        'description': tab.description,
+        'settlement_currency': settlement_currency,
+        'is_settled': tab.is_settled,
+        'is_pro': tab.is_pro,
+        'group_spend': group_spend if conversion_ok else None,
+        'people': [
+            {
+                'id': str(p.uuid),
+                'name': p.name,
+                'spend': person_spend.get(p.uuid, 0),
+            }
+            for p in tab.people.all()
+        ],
+        'bills': bill_payloads,
+    }
+
+
+@tab_router.get("/public/{slug}", response=PublicTabSchema, auth=None)
+def retrieve_public_tab(request, slug: str):
+    """Read-only tab view for tabs explicitly opted in via Tab.is_public.
+
+    Addressed by the friendly `public_slug`, which only exists once a tab is
+    published — so there is no uuid to guess or leak here at all.
+    """
+    # TEMPORARY — is_archived is deliberately NOT filtered here.
+    #
+    # `is_archived` is the app's soft-delete: hitting delete on a tab in the
+    # app just sets this flag. A public tab is a marketing asset built by
+    # someone in their own app, so if archiving also pulled it from the public
+    # view, any tidy-up in their tab list would silently break a live shared
+    # link. Until public tabs get their own lifecycle (an explicit unpublish,
+    # or a snapshot decoupled from the owner's tab), archived public tabs keep
+    # rendering. A real DB delete still removes it — nothing to serve.
+    #
+    # Revisit when public tabs stop being hand-curated demos.
+    tab = get_object_or_404(
+        Tab.objects.filter(is_public=True).prefetch_related(
+            'people',
+            'bills__creator',
+            'bills__paid_by',
+            'bills__line_items__person_claims__person',
+        ),
+        public_slug=slug,
+    )
+    return _public_tab_payload(tab)
 
 
 @tab_router.get("/invite/{invite_code}", response=InviteTabInfoSchema, auth=None)
