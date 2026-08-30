@@ -702,6 +702,16 @@ def _public_tab_payload(tab):
             for p in tab.people.all()
         ],
         'bills': bill_payloads,
+        'settlements': [
+            {
+                'from_name': st.from_person.name,
+                'to_name': st.to_person.name,
+                'amount': st.amount,
+                'currency': st.currency,
+                'paid': st.paid,
+            }
+            for st in tab.settlements.all()
+        ],
     }
 
 
@@ -729,6 +739,8 @@ def retrieve_public_tab(request, slug: str):
             'bills__creator',
             'bills__paid_by',
             'bills__line_items__person_claims__person',
+            'settlements__from_person',
+            'settlements__to_person',
         ),
         public_slug=slug,
     )

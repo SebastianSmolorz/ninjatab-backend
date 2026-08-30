@@ -872,6 +872,14 @@ class PublicPersonSchema(BaseModel):
     spend: int
 
 
+class PublicSettlementSchema(BaseModel):
+    from_name: str
+    to_name: str
+    amount: int
+    currency: CurrencyEnum
+    paid: bool
+
+
 class PublicTabSchema(BaseModel):
     id: str
     name: str
@@ -882,3 +890,4 @@ class PublicTabSchema(BaseModel):
     group_spend: Optional[int] = None
     people: List[PublicPersonSchema]
     bills: List[PublicBillSchema]
+    settlements: List[PublicSettlementSchema] = []
