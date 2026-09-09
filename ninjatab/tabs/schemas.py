@@ -862,6 +862,7 @@ class PublicBillSchema(BaseModel):
     created_by: str
     paid_by: Optional[str] = None
     receipt_image_url: str = ''
+    has_receipt: bool = False
     person_totals: List[PublicPersonTotalSchema]
     line_items: List[PublicLineItemSchema]
 

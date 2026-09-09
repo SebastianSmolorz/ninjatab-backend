@@ -10,6 +10,7 @@ from datetime import datetime
 from ninja import Router, Schema, UploadedFile, File
 from ninja.errors import HttpError
 from django.conf import settings
+from django.http import HttpResponseRedirect
 from django.shortcuts import get_object_or_404
 from django.db import transaction, IntegrityError
 from django.db.models import Q, Count, Exists, OuterRef, Subquery, Sum, IntegerField
@@ -618,7 +619,7 @@ def get_tab_person_totals(request, tab_id: str):
     ]
 
 
-def _public_tab_payload(tab):
+def _public_tab_payload(tab, presign=True):
     """Build the whitelisted payload for the public read-only tab view.
 
     Only fields listed here ever reach an unauthenticated caller — no emails,
@@ -677,7 +678,10 @@ def _public_tab_payload(tab):
             'total_amount': bill_total,
             'created_by': bill.creator.name,
             'paid_by': bill.paid_by.name if bill.paid_by else None,
-            'receipt_image_url': _receipt_image_url(bill),
+            # Presigning is skipped for the static export: the signature would
+            # expire long before the file is regenerated.
+            'receipt_image_url': _receipt_image_url(bill) if presign else '',
+            'has_receipt': bool(getattr(bill, 'receipt_image_key', '') or getattr(bill, 'receipt_image_url', '')),
             'person_totals': [
                 {'person_id': str(p.uuid), 'person_name': p.name, 'amount': person_totals[p.uuid]}
                 for p in tab.people.all() if p.uuid in person_totals
@@ -745,6 +749,22 @@ def retrieve_public_tab(request, slug: str):
         public_slug=slug,
     )
     return _public_tab_payload(tab)
+
+
+@tab_router.get("/public/{slug}/receipt/{bill_id}", auth=None)
+def public_bill_receipt(request, slug: str, bill_id: str):
+    """Redirect to a freshly signed receipt image for a bill on a public tab.
+
+    The public tab pages are exported to static files, and a presigned S3 URL
+    expires — so the export stores `has_receipt` and links here instead. One
+    hop, and the signature is always minutes old.
+    """
+    tab = get_object_or_404(Tab.objects.filter(is_public=True), public_slug=slug)
+    bill = get_object_or_404(Bill.objects.filter(tab=tab).exclude(status=BillStatus.ARCHIVED), uuid=bill_id)
+    url = _receipt_image_url(bill)
+    if not url:
+        raise HttpError(404, "No receipt for this bill")
+    return HttpResponseRedirect(url)
 
 
 @tab_router.get("/invite/{invite_code}", response=InviteTabInfoSchema, auth=None)
