@@ -19,6 +19,7 @@ from django.core.management.base import BaseCommand, CommandError
 
 from ninjatab.tabs.receipt_scanning.base import mistral_client, run_single_ocr
 from ninjatab.tabs.receipt_scanning.deskew import deskew_bytes
+from ninjatab.tabs.receipt_scanning.paddleocr_vl import run_paddle_ocr
 from ninjatab.tabs.receipt_scanning.prompt import DOCUMENT_ANNOTATION_PROMPT
 from ninjatab.tabs.receipt_scanning.sources import data_url_ref
 from ninjatab.tabs.receipt_scanning.base import ScanContext
@@ -43,6 +44,12 @@ class Command(BaseCommand):
         )
         parser.add_argument("--concurrency", type=int, default=8)
         parser.add_argument("--model", default=None, help="Defaults to the strategy model")
+        parser.add_argument(
+            "--engine", default="mistral", choices=["mistral", "paddleocr_vl"],
+            help="Which OCR backend to capture from. 'paddleocr_vl' hits the local "
+                 "server and skips deskew (the experiment is raw image in, JSON out); "
+                 "pair it with --output to keep its captures out of the Mistral corpus.",
+        )
         parser.add_argument("--limit", type=int, default=None, help="Only the first N cases")
         parser.add_argument(
             "--case", action="append", default=None,
@@ -60,7 +67,9 @@ class Command(BaseCommand):
     def handle(self, *args, **options):
         from ninjatab.tabs.receipt_scanning.strategies import STRATEGIES_BY_NAME
 
-        model = options["model"] or STRATEGIES_BY_NAME["baseline_mistral_ocr"].model
+        paddle = options["engine"] == "paddleocr_vl"
+        default_strategy = "paddleocr_vl" if paddle else "baseline_mistral_ocr"
+        model = options["model"] or STRATEGIES_BY_NAME[default_strategy].model
         cases = load_labelled_cases()
         names = sorted(cases)
         if options["case"]:
@@ -91,7 +100,7 @@ class Command(BaseCommand):
             f"(model {model})"
         )
         self.stdout.write(
-            f"{skipped} already on disk; {len(jobs)} Mistral API calls to make."
+            f"{skipped} already on disk; {len(jobs)} {options['engine']} calls to make."
         )
         if options["dry_run"]:
             self.stdout.write("Dry run; no API calls made.")
@@ -108,8 +117,10 @@ class Command(BaseCommand):
         for name in sorted({name for name, _, _ in jobs}):
             image_path = cases[name]["image_path"]
             content_type = mimetypes.guess_type(str(image_path))[0] or "image/jpeg"
-            image_bytes, angle = deskew_bytes(image_path.read_bytes())
-            if image_bytes is not image_path.read_bytes():
+            original = image_path.read_bytes()
+            # The PaddleOCR-VL experiment gets the image exactly as it is.
+            image_bytes, angle = (original, None) if paddle else deskew_bytes(original)
+            if image_bytes is not original:
                 content_type = "image/jpeg"
             ctx = ScanContext(
                 image_bytes=image_bytes,
@@ -119,7 +130,7 @@ class Command(BaseCommand):
             )
             prepared[name] = (data_url_ref(ctx), angle)
 
-        client = mistral_client()
+        client = None if paddle else mistral_client()
         made = 0
         failures = 0
         started = time.time()
@@ -127,9 +138,12 @@ class Command(BaseCommand):
         def capture(job):
             name, run, call = job
             image_url, angle = prepared[name]
-            result = run_single_ocr(
-                client, image_url, DOCUMENT_ANNOTATION_PROMPT, model, include_blocks=True
-            )
+            if paddle:
+                result = run_paddle_ocr(image_url, DOCUMENT_ANNOTATION_PROMPT, model)
+            else:
+                result = run_single_ocr(
+                    client, image_url, DOCUMENT_ANNOTATION_PROMPT, model, include_blocks=True
+                )
             raw = result.pop("raw_response", None) or {}
             pages = raw.get("pages") or []
             record = {
@@ -141,7 +155,8 @@ class Command(BaseCommand):
                 "annotation": result["annotation"],
                 "parse_error": result["parse_error"],
                 "call_ms": result["call_ms"],
-                "markdown": "\n".join(p.get("markdown") or "" for p in pages),
+                "markdown": result.get("ocr_markdown")
+                or "\n".join(p.get("markdown") or "" for p in pages),
                 "blocks": (pages[0].get("blocks") if pages else None) or [],
                 "dimensions": (pages[0].get("dimensions") if pages else None),
             }

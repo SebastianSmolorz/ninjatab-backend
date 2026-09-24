@@ -238,6 +238,8 @@ PIPELINES: dict[str, Callable[[list[dict]], Optional[dict]]] = {
     # The production classes themselves, exercised end-to-end over the captures.
     "strategy:concurrent_consensus": pipeline_strategy("concurrent_consensus"),
     "strategy:verified_consensus": pipeline_strategy("verified_consensus"),
+    "strategy:paddleocr_vl": pipeline_strategy("paddleocr_vl", n=1),
+    "strategy:paddleocr_vl_layout": pipeline_strategy("paddleocr_vl_layout", n=1),
     # The same scan as seen by each endpoint: v2 gets the ledger, v1 the flat
     # list. Scoring both is how we check the presenter costs nothing.
     "v1:verified_consensus": pipeline_strategy("verified_consensus", flatten=True),

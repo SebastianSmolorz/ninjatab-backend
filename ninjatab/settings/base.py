@@ -1,5 +1,6 @@
 import base64
 import hashlib
+import os
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -141,6 +142,29 @@ S3_BUCKET = "tab-ninja-receipt-scans"
 
 # Mistral AI
 MISTRAL_API_KEY = env.str("MISTRAL_API_KEY", default="")
+
+# PaddleOCR-VL experiment (locally hosted, OpenAI-compatible endpoint)
+PADDLEOCR_VL_BASE_URL = env.str("PADDLEOCR_VL_BASE_URL", default="http://localhost:8111/v1")
+PADDLEOCR_VL_API_KEY = env.str("PADDLEOCR_VL_API_KEY", default="")
+PADDLEOCR_VL_TIMEOUT = env.int("PADDLEOCR_VL_TIMEOUT", default=300)
+# A receipt transcribes in a few hundred tokens; a run past this is the model
+# looping on a hard image, so cap it rather than pay for 8k of repetition.
+PADDLEOCR_VL_MAX_TOKENS = env.int("PADDLEOCR_VL_MAX_TOKENS", default=3000)
+# The layout variant shells into paddle's own venv (paddlepaddle does not
+# co-install with this one) and points it back at the same MLX VLM server.
+PADDLEOCR_VL_PYTHON = env.str(
+    "PADDLEOCR_VL_PYTHON", default=os.path.expanduser("~/.venvs/paddleocr-vl/bin/python")
+)
+PADDLEOCR_VL_SERVER_URL = env.str("PADDLEOCR_VL_SERVER_URL", default="http://localhost:8111/")
+# PaddleOCR-VL only transcribes; a text model turns the transcript into the
+# annotation. Mistral's chat API is OpenAI-compatible, so it needs no separate
+# client — and keeping it there means the experiment swaps only the OCR half.
+PADDLEOCR_VL_STRUCTURE_BASE_URL = env.str(
+    "PADDLEOCR_VL_STRUCTURE_BASE_URL", default="https://api.mistral.ai/v1"
+)
+PADDLEOCR_VL_STRUCTURE_MODEL = env.str(
+    "PADDLEOCR_VL_STRUCTURE_MODEL", default="mistral-medium-latest"
+)
 
 # Receipt scanning strategy (see ninjatab.tabs.receipt_scanning.strategies)
 RECEIPT_SCAN_STRATEGY = env.str("RECEIPT_SCAN_STRATEGY", default="baseline_mistral_ocr")

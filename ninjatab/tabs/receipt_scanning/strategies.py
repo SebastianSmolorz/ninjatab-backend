@@ -28,6 +28,8 @@ from .postprocess import (
     select_best_line_items,
     standard_post_process,
 )
+from .paddleocr_vl import PaddleOcrVlStrategy  # noqa: F401 (registered below)
+from .paddleocr_vl_layout import PaddleOcrVlLayoutStrategy  # noqa: F401
 from .sources import default_ref
 
 logger = logging.getLogger("app")
@@ -510,6 +512,8 @@ STRATEGIES = [
     ConcurrentConsensusStrategy(),
     VerifiedConsensusStrategy(),
     TieredConsensusStrategy(),
+    PaddleOcrVlStrategy(),  # experiment: local PaddleOCR-VL, VLM only
+    PaddleOcrVlLayoutStrategy(),  # same, plus PP-DocLayoutV2
     # EscalatingStrategy(),
 ]
 STRATEGIES_BY_NAME = {s.name: s for s in STRATEGIES}

@@ -4,6 +4,8 @@ Costs no Mistral calls: the OCR is fixed, so two pipelines compared here differ
 only in their post-processing and the comparison is paired.
 """
 
+from pathlib import Path
+
 from django.core.management.base import BaseCommand, CommandError
 
 import receipt_validation  # noqa: F401  (puts the repo root on sys.path)
@@ -40,6 +42,11 @@ class Command(BaseCommand):
                  "on unlabelled cases; scores nothing.",
         )
         parser.add_argument(
+            "--captures", default=None,
+            help="Capture directory to replay (default: the Mistral corpus). Use it "
+                 "to score an experiment captured into its own directory.",
+        )
+        parser.add_argument(
             "--list", action="store_true", help="List the available pipelines and exit",
         )
 
@@ -60,7 +67,9 @@ class Command(BaseCommand):
 
         # Loaded once and shared: reading 555 captures per pipeline is the only
         # slow part of this command.
-        captures, labels = load_captures(), load_labelled_cases()
+        capture_dir = Path(options["captures"]) if options["captures"] else None
+        captures = load_captures(capture_dir) if capture_dir else load_captures()
+        labels = load_labelled_cases()
 
         baseline = None
         if options["compare"]:
