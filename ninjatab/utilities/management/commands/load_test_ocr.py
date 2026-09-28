@@ -15,7 +15,8 @@ def _scan_one(image_path: Path, index: int) -> dict:
     from mistralai.client.models import ImageURLChunk
     from mistralai.extra import response_format_from_pydantic_model
 
-    from ninjatab.tabs.receipt_service import _Document, DOCUMENT_ANNOTATION_PROMPT
+    from ninjatab.tabs.receipt_scanning.prompt import DOCUMENT_ANNOTATION_PROMPT
+    from ninjatab.tabs.receipt_scanning.schema import _Document
 
     mime, _ = mimetypes.guess_type(str(image_path))
     if not mime:

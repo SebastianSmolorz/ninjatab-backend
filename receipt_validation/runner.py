@@ -14,7 +14,7 @@ from pathlib import Path
 from django.conf import settings
 
 from ninjatab.tabs.receipt_scanning.base import ScanContext
-from ninjatab.tabs.receipt_service import _s3_client
+from ninjatab.tabs.receipt_service import s3_client
 
 
 def _s3_configured() -> bool:
@@ -25,7 +25,7 @@ def _upload_validation_image(image_bytes: bytes, content_type: str, ext: str) ->
     """Upload a local image to S3 so multi-request strategies get the same
     anti-dedupe behaviour as production. Returns the object key."""
     key = f"receipts/validation/{uuid.uuid4()}.{ext}"
-    _s3_client().put_object(
+    s3_client().put_object(
         Bucket=settings.S3_BUCKET,
         Key=key,
         Body=image_bytes,

@@ -20,7 +20,7 @@ from pathlib import Path
 import yaml
 from django.core.management.base import BaseCommand, CommandError
 
-from ninjatab.tabs.api import _public_tab_payload
+from ninjatab.tabs.api.tabs import _public_tab_payload
 from ninjatab.tabs.models import Tab
 
 # backend/ninjatab/tabs/management/commands/ -> repo root

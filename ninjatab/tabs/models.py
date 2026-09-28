@@ -485,8 +485,6 @@ class Settlement(BaseModel):
         return f"{self.from_person.name} pays {self.to_person.name} {amount} {self.currency}"
 
 
-
-
 class ReceiptScanStatus(models.TextChoices):
     PENDING = 'pending', 'Pending'
     DONE = 'done', 'Done'
@@ -496,7 +494,7 @@ class ReceiptScanStatus(models.TextChoices):
 class ReceiptScan(BaseModel):
     """An uploaded receipt whose OCR/LLM pass runs after the upload returns.
 
-    The phone uploads, gets a 202, and polls by `client_id` (its offline-queue
+    The phone uploads, gets a 200, and polls by `client_id` (its offline-queue
     localId) until `result` lands — so the scan survives the app being
     backgrounded. `result` is the same payload `/upload-receipt` returns.
     """

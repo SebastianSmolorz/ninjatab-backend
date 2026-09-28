@@ -5,7 +5,7 @@ from ninja.errors import HttpError
 
 from ninjatab.auth.cookies import ACCESS_COOKIE
 from ninjatab.auth.jwt_utils import create_access_token
-from ninjatab.tabs.api import _check_version
+from ninjatab.tabs.api.bills import _check_version
 from ninjatab.tabs.models import Bill, Tab
 from .factories import TabFactory, TabPersonFactory
 

@@ -4,7 +4,7 @@ from django.conf import settings
 from django.core.management.base import BaseCommand
 
 from ninjatab.tabs.models import Bill
-from ninjatab.tabs.receipt_service import _s3_client
+from ninjatab.tabs.receipt_service import s3_client
 
 
 class Command(BaseCommand):
@@ -26,7 +26,7 @@ class Command(BaseCommand):
             .exclude(tab__is_demo=True)
             .only("id", "uuid", "receipt_image_key")
         )
-        client = _s3_client()
+        client = s3_client()
 
         downloaded = 0
         for bill in bills:

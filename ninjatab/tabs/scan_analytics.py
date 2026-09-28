@@ -35,3 +35,29 @@ def fire_scan_outcome(user_uuid, scan_session_id, outcome, tab_id=None, bill_id=
         safe_capture(user_uuid, "receipt_scan_outcome", properties=properties)
     except Exception:
         logger.exception("fire_scan_outcome failed session=%s outcome=%s", scan_session_id, outcome)
+
+
+def fire_scan_exception(user_uuid, tab, exc: Exception) -> None:
+    safe_capture(user_uuid, "receipt_scan_failed", properties={
+        "tab_id": str(tab.uuid),
+        "reason": "exception",
+        "exception_type": type(exc).__name__,
+    })
+
+
+def fire_scan_result(user_uuid, tab, result: dict, metrics: dict) -> None:
+    """The analytics for a completed scan: whether OCR found anything, plus
+    dedicated events for the two signals worth dashboarding directly."""
+    metrics = metrics or {}
+    if result.get("document_annotation") is None:
+        safe_capture(user_uuid, "receipt_scan_failed", properties={
+            "tab_id": str(tab.uuid),
+            "reason": "ocr_empty",
+            **metrics,
+        })
+        return
+    safe_capture(user_uuid, "receipt_scanned", properties=metrics)
+    if metrics.get("currency_source") in {"fallback_missing", "fallback_unsupported"}:
+        safe_capture(user_uuid, "receipt_currency_fallback", properties=metrics)
+    if metrics.get("items_match_receipt_total") is False:
+        safe_capture(user_uuid, "receipt_totals_mismatch", properties=metrics)
