@@ -1060,7 +1060,8 @@ def _resume_scan(scan) -> dict:
 
 
 def _scan_state(scan) -> dict:
-    return {"status": scan.status, "result": scan.result, "error": scan.error}
+    # `error` stays server-side (admin + Sentry): it's raw provider/S3 detail.
+    return {"status": scan.status, "result": scan.result}
 
 
 @tab_router.post("/{tab_id}/receipt-scans")
