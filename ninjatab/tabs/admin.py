@@ -4,7 +4,7 @@ from django.http import HttpResponse
 from django.shortcuts import get_object_or_404
 from django.urls import path, reverse
 from django.utils.html import format_html, format_html_join
-from .models import Tab, TabPerson, Bill, LineItem, PersonLineItemClaim, Settlement, Contact, SplitType, TabGroup, TabGroupMember
+from .models import Tab, TabPerson, Bill, LineItem, PersonLineItemClaim, Settlement, Contact, SplitType, TabGroup, TabGroupMember, ReceiptScan
 from ninjatab.currencies.currency_utils import minor_to_decimal
 from ninjatab.currencies.exchange import clear_rate_cache, ExchangeRateNotFoundError
 from ninjatab.tabs.simp import simp_tab
@@ -567,3 +567,12 @@ class TabGroupMemberAdmin(admin.ModelAdmin):
 
     def get_queryset(self, request):
         return super().get_queryset(request).select_related('group', 'user')
+
+
+@admin.register(ReceiptScan)
+class ReceiptScanAdmin(admin.ModelAdmin):
+    list_display = ['client_id', 'tab', 'created_by', 'status', 'created_at']
+    list_filter = ['status']
+    search_fields = ['client_id', 'image_key']
+    raw_id_fields = ['tab', 'created_by']
+    readonly_fields = ['uuid', 'created_at', 'updated_at']

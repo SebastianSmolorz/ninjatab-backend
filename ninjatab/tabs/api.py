@@ -4,16 +4,16 @@ import uuid
 import logging
 import sentry_sdk
 
-from datetime import datetime
+from datetime import datetime, timedelta
 
 
-from ninja import Router, Schema, UploadedFile, File
+from ninja import Router, Schema, UploadedFile, File, Form
 from ninja.errors import HttpError
 from django.conf import settings
 from django.http import HttpResponseRedirect
 from django.shortcuts import get_object_or_404
 from django.db import transaction, IntegrityError
-from django.db.models import Q, Count, Exists, OuterRef, Subquery, Sum, IntegerField
+from django.db.models import F, Q, Count, Exists, OuterRef, Subquery, Sum, IntegerField
 from django.db.models.functions import Coalesce
 from django.contrib.auth import get_user_model
 from django.utils import timezone
@@ -899,13 +899,11 @@ def _debug_dump(label: str, result: dict) -> dict:
     return result
 
 
-def _scan_upload(request, tab_id: str, file) -> dict:
-    """Upload a receipt image, run OCR, fire the analytics, and return the
-    scan result. Shared by both endpoint versions — they differ only in how the
-    annotation is presented."""
+def _start_scan(request, tab_id: str, file):
+    """The fast half of a scan: access + limit checks, then store the image.
+    Returns (tab, image_key)."""
     from ninjatab.tabs.receipt_service import (
-        validate_upload, upload_to_spaces, scan_receipt,
-        check_scan_limit, increment_scan_count, ScanLimitExceeded,
+        validate_upload, upload_to_spaces, check_scan_limit, ScanLimitExceeded,
     )
 
     tab = get_object_or_404(Tab.objects.accessible_by(request.auth), uuid=tab_id)
@@ -924,12 +922,18 @@ def _scan_upload(request, tab_id: str, file) -> dict:
     except ValueError as e:
         raise HttpError(400, str(e))
 
-    image_key = upload_to_spaces(file, tab_id)
+    return tab, upload_to_spaces(file, tab_id)
+
+
+def _finish_scan(user_uuid, tab, image_key: str) -> dict:
+    """The slow half: run OCR, fire the analytics, and return the scan result
+    (reconciled ledger annotation, as `/upload-receipt-v2` returns it)."""
+    from ninjatab.tabs.receipt_service import scan_receipt, increment_scan_count
 
     try:
         result = scan_receipt(image_key, tab)
     except Exception as e:
-        safe_capture(request.auth.uuid, "receipt_scan_failed", properties={
+        safe_capture(user_uuid, "receipt_scan_failed", properties={
             "tab_id": str(tab.uuid),
             "reason": "exception",
             "exception_type": type(e).__name__,
@@ -941,33 +945,163 @@ def _scan_upload(request, tab_id: str, file) -> dict:
     scan_metrics = result.pop("_scan_metrics", {}) or {}
 
     if result.get("document_annotation") is None:
-        safe_capture(request.auth.uuid, "receipt_scan_failed", properties={
+        safe_capture(user_uuid, "receipt_scan_failed", properties={
             "tab_id": str(tab.uuid),
             "reason": "ocr_empty",
             **scan_metrics,
         })
     else:
         safe_capture(
-            request.auth.uuid,
+            user_uuid,
             "receipt_scanned",
             properties=scan_metrics,
         )
         # Dedicated events for the two signals worth dashboarding directly.
         if scan_metrics.get("currency_source") in {"fallback_missing", "fallback_unsupported"}:
             safe_capture(
-                request.auth.uuid,
+                user_uuid,
                 "receipt_currency_fallback",
                 properties=scan_metrics,
             )
         if scan_metrics.get("items_match_receipt_total") is False:
             safe_capture(
-                request.auth.uuid,
+                user_uuid,
                 "receipt_totals_mismatch",
                 properties=scan_metrics,
             )
 
     result["scan_session_id"] = image_key
     return result
+
+
+def _scan_upload(request, tab_id: str, file) -> dict:
+    """Upload a receipt and scan it within the request. Shared by both
+    synchronous endpoint versions — they differ only in how the annotation is
+    presented."""
+    tab, image_key = _start_scan(request, tab_id, file)
+    return _finish_scan(request.auth.uuid, tab, image_key)
+
+
+def _run_scan(scan_id: int) -> None:
+    """Scan a stored ReceiptScan and write the v1-shaped result onto its row."""
+    from ninjatab.tabs.receipt_scanning.ledger import flatten_for_v1
+
+    # Any other error here escapes the thread: Sentry's default threading
+    # integration reports it, and the stale-pending reclaim re-runs the scan.
+    scan = ReceiptScan.objects.select_related("tab", "created_by").filter(pk=scan_id).first()
+    if scan is None:
+        return  # deleted with its tab while queued
+    try:
+        result = _finish_scan(scan.created_by.uuid, scan.tab, scan.image_key)
+        result["document_annotation"] = flatten_for_v1(result["document_annotation"])
+    except Exception as e:
+        logger.exception("Receipt scan %s failed", scan.client_id)
+        sentry_sdk.capture_exception(e)
+        scan.status = ReceiptScanStatus.FAILED
+        scan.error = f"{type(e).__name__}: {e}"
+        scan.save(update_fields=["status", "error", "updated_at"])
+        return
+    scan.status = ReceiptScanStatus.DONE
+    scan.result = json.loads(json.dumps(result, default=str))
+    scan.error = ""
+    scan.save(update_fields=["status", "result", "error", "updated_at"])
+
+
+def _spawn_scan(scan_id: int) -> None:
+    """Run the scan off the request thread, once the row it reads is committed
+    (immediately under autocommit; after the block inside `transaction.atomic`).
+
+    ponytail: an in-process daemon thread, lost if gunicorn restarts mid-scan;
+    `_claim_scan` re-runs stale ones on the next poll. Move to a real queue if
+    deploys or scan volume start losing scans.
+    """
+    import threading
+    from django.db import connection
+
+    def target():
+        try:
+            _run_scan(scan_id)
+        finally:
+            connection.close()
+
+    transaction.on_commit(threading.Thread(target=target, daemon=True).start)
+
+
+# A pending scan untouched for this long has lost its thread (worker restart).
+_STALE_SCAN_AFTER = timedelta(minutes=3)
+MAX_SCAN_ATTEMPTS = 3
+
+
+def _claim_scan(scan) -> None:
+    """(Re)start a failed or stale-pending scan. The update is conditional on
+    the row's current `updated_at`, so concurrent polls start it only once.
+    Refreshes `scan` either way, so a lost race reports the winner's state."""
+    claimed = ReceiptScan.objects.filter(
+        pk=scan.pk, updated_at=scan.updated_at,
+    ).update(status=ReceiptScanStatus.PENDING, error="",
+             attempts=F("attempts") + 1, updated_at=timezone.now())
+    scan.refresh_from_db()
+    if claimed:
+        _spawn_scan(scan.pk)
+
+
+def _resume_scan(scan) -> dict:
+    """Return a scan's state, first re-running it if it failed or lost its
+    thread. Past MAX_SCAN_ATTEMPTS runs it answers 422 instead, which the app
+    treats as permanent — a receipt that always fails must not re-run the paid
+    OCR on every retry."""
+    stale = (scan.status == ReceiptScanStatus.PENDING
+             and timezone.now() - scan.updated_at > _STALE_SCAN_AFTER)
+    if scan.status == ReceiptScanStatus.FAILED or stale:
+        if scan.attempts >= MAX_SCAN_ATTEMPTS:
+            raise HttpError(422, "This receipt couldn't be scanned")
+        _claim_scan(scan)
+    return _scan_state(scan)
+
+
+def _scan_state(scan) -> dict:
+    return {"status": scan.status, "result": scan.result, "error": scan.error}
+
+
+@tab_router.post("/{tab_id}/receipt-scans")
+def create_receipt_scan(request, tab_id: str, client_id: str = Form(..., max_length=64),
+                        file: UploadedFile = File(...)):
+    """Upload a receipt and scan it in the background; poll
+    `GET /{tab_id}/receipt-scans/{client_id}` for the result.
+
+    Idempotent on `client_id` (the app's offline-queue localId): a retry
+    returns the existing scan instead of uploading and scanning again, and
+    re-runs it if it had failed.
+    """
+    existing = ReceiptScan.objects.filter(
+        created_by=request.auth, client_id=client_id, tab__uuid=tab_id,
+    ).first()
+    if existing:
+        return _resume_scan(existing)
+
+    tab, image_key = _start_scan(request, tab_id, file)
+    try:
+        scan = ReceiptScan.objects.create(
+            tab=tab, created_by=request.auth, client_id=client_id,
+            image_key=image_key, attempts=1,
+        )
+    except IntegrityError:
+        # A concurrent retry with the same client_id won the race.
+        scan = ReceiptScan.objects.get(created_by=request.auth, client_id=client_id)
+        return _scan_state(scan)
+    _spawn_scan(scan.pk)
+    return _scan_state(scan)
+
+
+@tab_router.get("/{tab_id}/receipt-scans/{client_id}")
+def retrieve_receipt_scan(request, tab_id: str, client_id: str):
+    """The state of a background receipt scan. `result` matches the
+    `/upload-receipt` response once `status` is `done`. Re-runs a failed scan,
+    so the app's retry can poll here instead of re-uploading the image."""
+    scan = get_object_or_404(
+        ReceiptScan, created_by=request.auth, client_id=client_id, tab__uuid=tab_id,
+    )
+    return _resume_scan(scan)
 
 
 @tab_router.post("/scan-outcome")

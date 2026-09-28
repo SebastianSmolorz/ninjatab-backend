@@ -485,3 +485,42 @@ class Settlement(BaseModel):
         return f"{self.from_person.name} pays {self.to_person.name} {amount} {self.currency}"
 
 
+
+
+class ReceiptScanStatus(models.TextChoices):
+    PENDING = 'pending', 'Pending'
+    DONE = 'done', 'Done'
+    FAILED = 'failed', 'Failed'
+
+
+class ReceiptScan(BaseModel):
+    """An uploaded receipt whose OCR/LLM pass runs after the upload returns.
+
+    The phone uploads, gets a 202, and polls by `client_id` (its offline-queue
+    localId) until `result` lands — so the scan survives the app being
+    backgrounded. `result` is the same payload `/upload-receipt` returns.
+    """
+    tab = models.ForeignKey(Tab, on_delete=models.CASCADE, related_name='receipt_scans')
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='receipt_scans'
+    )
+    client_id = models.CharField(max_length=64)
+    image_key = models.CharField(max_length=500)
+    status = models.CharField(
+        max_length=20, choices=ReceiptScanStatus.choices, default=ReceiptScanStatus.PENDING
+    )
+    result = models.JSONField(null=True, blank=True)
+    error = models.TextField(blank=True, default='')
+    # Scan runs started, capped so a receipt that always fails stops costing OCR.
+    attempts = models.PositiveSmallIntegerField(default=0)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=['created_by', 'client_id'],
+                name='uniq_receipt_scan_user_client_id',
+            ),
+        ]
+
+    def __str__(self):
+        return f"Scan {self.client_id} ({self.status})"
