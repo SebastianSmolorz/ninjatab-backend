@@ -49,3 +49,10 @@ def health(request):
     ok = db_status == "ok" and migrations_status == "ok"
     payload = HealthSchema(status="ok" if ok else "degraded", db=db_status, migrations=migrations_status)
     return (200 if ok else 503), payload
+
+
+# Liveness only, for the app's reachability probe: no DB, so it stays cheap at
+# one call per device every few seconds. /health above is the deep check.
+@health_router.get("/ping")
+def ping(request):
+    return {"status": "ok"}
