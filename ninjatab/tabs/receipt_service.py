@@ -162,10 +162,10 @@ def finish_scan(user_uuid, tab, image_key: str) -> dict:
     try:
         result, metrics = scan_receipt(image_key, tab)
     except Exception as e:
-        fire_scan_exception(user_uuid, tab, e)
+        fire_scan_exception(user_uuid, tab, e, scan_session_id=image_key)
         raise
     increment_scan_count(tab)
-    fire_scan_result(user_uuid, tab, result, metrics)
+    fire_scan_result(user_uuid, tab, result, metrics, scan_session_id=image_key)
     result["scan_session_id"] = image_key
     return result
 

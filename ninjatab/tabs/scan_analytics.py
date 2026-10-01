@@ -37,18 +37,21 @@ def fire_scan_outcome(user_uuid, scan_session_id, outcome, tab_id=None, bill_id=
         logger.exception("fire_scan_outcome failed session=%s outcome=%s", scan_session_id, outcome)
 
 
-def fire_scan_exception(user_uuid, tab, exc: Exception) -> None:
+def fire_scan_exception(user_uuid, tab, exc: Exception, scan_session_id=None) -> None:
     safe_capture(user_uuid, "receipt_scan_failed", properties={
+        "scan_session_id": scan_session_id,
         "tab_id": str(tab.uuid),
         "reason": "exception",
         "exception_type": type(exc).__name__,
     })
 
 
-def fire_scan_result(user_uuid, tab, result: dict, metrics: dict) -> None:
+def fire_scan_result(user_uuid, tab, result: dict, metrics: dict, scan_session_id=None) -> None:
     """The analytics for a completed scan: whether OCR found anything, plus
-    dedicated events for the two signals worth dashboarding directly."""
-    metrics = metrics or {}
+    dedicated events for the two signals worth dashboarding directly.
+
+    `scan_session_id` (the image key) joins these to `receipt_scan_outcome`."""
+    metrics = {**(metrics or {}), "scan_session_id": scan_session_id}
     if result.get("document_annotation") is None:
         safe_capture(user_uuid, "receipt_scan_failed", properties={
             "tab_id": str(tab.uuid),
