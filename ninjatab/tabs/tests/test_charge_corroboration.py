@@ -59,3 +59,12 @@ class DropUncorroboratedChargesTests(SimpleTestCase):
     def test_missing_annotations_are_tolerated(self):
         annotations = [None, _ann(tax="12.00"), None]
         self.assertEqual(_drop_uncorroborated_charges(annotations), 0)
+
+    def test_tax_line_seen_by_one_call_only_is_dropped(self):
+        seen = [{"name": "State", "amount": "1.90"}]
+        annotations = [
+            _ann(taxes=seen + [{"name": "City", "amount": "0.37"}]),
+            _ann(taxes=list(seen)),
+        ]
+        _drop_uncorroborated_charges(annotations)
+        self.assertEqual(annotations[0]["taxes"], seen)

@@ -9,6 +9,7 @@ from django.core.management.base import BaseCommand, CommandError
 import receipt_validation  # noqa: F401  (puts the repo root on sys.path)
 from labeler.evaluation.labels import load_cached_responses, load_labelled_cases
 from receipt_validation.replay import (
+    capture_provenance,
     PIPELINES,
     evaluate,
     format_report,
@@ -42,6 +43,11 @@ class Command(BaseCommand):
         parser.add_argument(
             "--list", action="store_true", help="List the available pipelines and exit",
         )
+        parser.add_argument(
+            "--prompt-version", default=None,
+            help="Only score cases whose captures were all made under this prompt "
+                 "version. The corpus mixes versions; scores across them are not comparable.",
+        )
 
     def handle(self, *args, **options):
         if options["list"]:
@@ -61,6 +67,11 @@ class Command(BaseCommand):
         # Loaded once and shared: reading 555 captures per pipeline is the only
         # slow part of this command.
         captures, labels = load_captures(), load_labelled_cases()
+        if options["prompt_version"]:
+            captures = {
+                case: runs for case, runs in captures.items()
+                if all(capture_provenance(r)[1] == options["prompt_version"] for r in runs.values())
+            }
 
         baseline = None
         if options["compare"]:

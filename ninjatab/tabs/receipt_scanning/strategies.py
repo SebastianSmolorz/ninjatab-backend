@@ -5,6 +5,7 @@ import logging
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 
+import sentry_sdk
 from django.utils import timezone
 
 from .base import (
@@ -14,6 +15,7 @@ from .base import (
     mistral_client,
     parse_receipt_date,
     run_single_ocr,
+    snapshot_readings,
 )
 from .postprocess import (
     _annotation_decimals,
@@ -170,7 +172,10 @@ class ConcurrentConsensusStrategy(ReceiptScanStrategy):
 
 def _charge_amounts(annotation: dict) -> list[float]:
     amounts = [_to_float(annotation.get(k)) for k in ("tax", "tip", "service_charge")]
-    amounts += [_to_float(c.get("amount")) for c in annotation.get("other_charges") or []]
+    amounts += [
+        _to_float(c.get("amount"))
+        for c in (annotation.get("other_charges") or []) + (annotation.get("taxes") or [])
+    ]
     return [a for a in amounts if a is not None]
 
 
@@ -201,15 +206,16 @@ def _drop_uncorroborated_charges(annotations: list) -> int:
             if amount is not None and seen[round(amount, 6)] < 2:
                 annotation[key] = None
                 dropped += 1
-        others = annotation.get("other_charges")
-        if others:
-            kept = [
-                c for c in others
-                if (_to_float(c.get("amount")) is None
-                    or seen[round(_to_float(c["amount"]), 6)] >= 2)
-            ]
-            dropped += len(others) - len(kept)
-            annotation["other_charges"] = kept
+        for list_key in ("other_charges", "taxes"):
+            others = annotation.get(list_key)
+            if others:
+                kept = [
+                    c for c in others
+                    if (_to_float(c.get("amount")) is None
+                        or seen[round(_to_float(c["amount"]), 6)] >= 2)
+                ]
+                dropped += len(others) - len(kept)
+                annotation[list_key] = kept
     return dropped
 
 
@@ -419,6 +425,7 @@ class TieredConsensusStrategy(ReceiptScanStrategy):
         b1_t = timezone.now()
         batch = _fire_concurrent(ref, self.initial, self.prompt, self.model)
         batch1_ms = int((timezone.now() - b1_t).total_seconds() * 1000)
+        readings = snapshot_readings(batch, self.model)
         candidates, candidate_metrics = _postprocess_candidates(batch, ctx)
 
         accept, reason = _candidates_agree(candidates)
@@ -428,6 +435,7 @@ class TieredConsensusStrategy(ReceiptScanStrategy):
             b2_t = timezone.now()
             extra = _fire_concurrent(ref, self.escalate_extra, self.prompt, self.model)
             batch2_ms = int((timezone.now() - b2_t).total_seconds() * 1000)
+            readings += snapshot_readings(extra, self.model)
             extra_cands, extra_metrics = _postprocess_candidates(extra, ctx)
             batch += extra
             candidates += extra_cands
@@ -455,6 +463,7 @@ class TieredConsensusStrategy(ReceiptScanStrategy):
         }
         result.metrics["scan_total_ms"] = total_ms
         result.metrics["mistral_call_ms"] = mistral_ms
+        result.readings = [{**r, "call": i} for i, r in enumerate(readings)]
         return result
 
 
@@ -486,6 +495,9 @@ class EscalatingStrategy(ReceiptScanStrategy):
 
         reason = "no_annotation" if first.document_annotation is None else "totals_unreconciled"
         second = self.escalate_to.run(ctx)
+        second.readings = [
+            {**r, "call": i} for i, r in enumerate(first.readings + second.readings)
+        ]
         second.metrics["strategy"] = self.name
         second.metrics["strategy_version"] = self.version
         second.metrics["escalated"] = True
@@ -528,13 +540,27 @@ def resolve_strategy(option_or_name=None) -> ReceiptScanStrategy:
     from django.conf import settings
 
     fallback_name = getattr(settings, "RECEIPT_SCAN_STRATEGY", DEFAULT_STRATEGY)
-    fallback = STRATEGIES_BY_NAME.get(fallback_name) or STRATEGIES_BY_NAME[DEFAULT_STRATEGY]
+    fallback = STRATEGIES_BY_NAME.get(fallback_name)
+    if fallback is None:
+        fallback = _warn_fallback(fallback_name, STRATEGIES_BY_NAME[DEFAULT_STRATEGY])
 
     if option_or_name is None:
         return fallback
     if isinstance(option_or_name, str):
-        return STRATEGIES_BY_NAME.get(option_or_name) or fallback
+        return STRATEGIES_BY_NAME.get(option_or_name) or _warn_fallback(option_or_name, fallback)
     option = option_or_name
     if not option.active:
-        return fallback
-    return STRATEGIES_BY_NAME.get(option.value) or fallback
+        return fallback  # switched off on purpose, not a misconfiguration
+    return STRATEGIES_BY_NAME.get(option.value) or _warn_fallback(option.value, fallback)
+
+
+def _warn_fallback(requested: str, fallback: ReceiptScanStrategy) -> ReceiptScanStrategy:
+    """Report a strategy name that does not resolve, and return the fallback.
+
+    A silent fallback hid a scan_strategy option naming a strategy from an
+    unmerged branch: every scan quietly ran the single-call baseline instead.
+    """
+    message = f"Unknown receipt scan strategy {requested!r}; falling back to {fallback.name!r}"
+    logger.warning(message)
+    sentry_sdk.capture_message(message, level="warning")
+    return fallback

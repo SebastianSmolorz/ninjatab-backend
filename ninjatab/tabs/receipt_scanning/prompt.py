@@ -1,3 +1,10 @@
+# Version of the prompt *and* schema.py together: both shape what Mistral
+# returns, so captures made under different versions are not comparable. Bump on
+# any change to either. Recorded on every capture and scan.
+#   1: single scalar `tax`
+#   2: `taxes` list, one entry per printed tax line
+PROMPT_VERSION = "2"
+
 DOCUMENT_ANNOTATION_PROMPT = """
 Extract structured data from this receipt.
 Detect and extract the receipt language into receipt_language.
@@ -32,7 +39,7 @@ adjustments: discounts, offers or repricings printed against THIS item - a multi
 Do not include subtotal, tax, VAT, tip, gratuity, service charge, payment method, change, balance, or any other receipt-level fee as items - even if they affect the grand total. These are captured separately below. Item-level discounts are the exception: they belong in that item's adjustments, not in other_charges.
 
 Extract receipt-level charges that affect the grand total into their dedicated fields:
-- tax: total tax/VAT amount on the receipt, if shown
+- taxes: one entry per tax/VAT line printed on the receipt, each with name (as printed) and amount. If the receipt prints several tax lines (e.g. state, county and city tax), return each one separately - never add tax lines together
 - tip: tip or gratuity amount, if shown
 - service_charge: service charge amount, if shown
 - other_charges: a list of any other receipt-level fees or discounts that affect the total but do not fit tax/tip/service_charge (for example: delivery fee, booking fee, cover charge, loyalty discount, voucher). Use a negative amount for discounts. Each entry should include name (as shown on the receipt), translated_name (English translation, or same value if already English), and amount.
@@ -55,7 +62,7 @@ Extract datetime_of_receipt from the receipt date/time.
 - If the receipt provides only a partial date or ambiguous date/time that cannot be confidently converted to ISO 8601, return null
 - If no receipt date/time is present, return null
 
-All monetary amounts (total, price_per_quantity, adjustments.amount, receipt_total, items_total, tax, tip, service_charge, other_charges.amount) must be returned as decimal strings normalized to US locale formatting:
+All monetary amounts (total, price_per_quantity, adjustments.amount, receipt_total, items_total, taxes.amount, tip, service_charge, other_charges.amount) must be returned as decimal strings normalized to US locale formatting:
 - Use a dot (".") as the decimal separator
 - Do not include any thousands separators (no commas, no spaces, no dots between groups of digits)
 - Use the number of decimal places appropriate for the receipt's currency: 0 for currencies with no minor unit (e.g. JPY), 2 for most currencies (e.g. USD, EUR, GBP), 3 for currencies that use three decimals (e.g. JOD, KWD, BHD, OMR, TND). Match the precision shown on the receipt itself - never truncate "1.234" (a JOD amount) to "1.23"

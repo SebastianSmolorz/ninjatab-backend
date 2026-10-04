@@ -176,6 +176,20 @@ def _normalize_amount_str(value, currency_decimals: int = 2):
     return f"{integer}.{frac}"
 
 
+def tax_lines(annotation: dict) -> list[dict]:
+    """Each printed tax line as {name, amount}.
+
+    Reads `taxes`, falling back to the pre-list scalar `tax` so stored
+    annotations and captured replays still load.
+    """
+    # ponytail: drop the scalar fallback once no capture predates `taxes`.
+    if annotation.get("taxes") is not None:
+        return annotation["taxes"]
+    if annotation.get("tax") is not None:
+        return [{"name": "Tax", "amount": annotation["tax"]}]
+    return []
+
+
 def _normalize_amounts_in_annotation(annotation: dict) -> None:
     """In-place: rewrite all amount strings on the annotation to use '.' as
     decimal separator so the mobile client parses them correctly."""
@@ -187,7 +201,7 @@ def _normalize_amounts_in_annotation(annotation: dict) -> None:
         for key in ("total", "price_per_quantity"):
             if key in item:
                 item[key] = _normalize_amount_str(item[key], dp)
-    for charge in annotation.get("other_charges") or []:
+    for charge in (annotation.get("other_charges") or []) + (annotation.get("taxes") or []):
         if "amount" in charge:
             charge["amount"] = _normalize_amount_str(charge["amount"], dp)
 
@@ -305,7 +319,12 @@ def _candidate_additions(annotation: dict) -> list[dict]:
     precision, matching the type the model-returned items use."""
     dp = _annotation_decimals(annotation)
     out: list[dict] = []
-    for key, label in (("tax", "Tax"), ("tip", "Tip"), ("service_charge", "Service charge")):
+    for line in tax_lines(annotation):
+        amount = _to_float(line.get("amount"))
+        if amount is not None:
+            name = line.get("name") or "Tax"
+            out.append({"name": name, "translated_name": name, "total": f"{amount:.{dp}f}"})
+    for key, label in (("tip", "Tip"), ("service_charge", "Service charge")):
         amount = _to_float(annotation.get(key))
         if amount is not None:
             out.append({"name": label, "translated_name": label, "total": f"{amount:.{dp}f}"})
@@ -413,7 +432,8 @@ def standard_post_process(annotation: dict, default_currency: str) -> dict:
         metrics["ai_vs_server_total_divergence"] = (
             abs(items_total_f - ai_items_total_f) > tolerance
         )
-    metrics["has_tax"] = annotation.get("tax") is not None
+    metrics["has_tax"] = bool(tax_lines(annotation))
+    metrics["tax_lines_count"] = len(tax_lines(annotation))
     metrics["has_tip"] = annotation.get("tip") is not None
     metrics["has_service_charge"] = annotation.get("service_charge") is not None
     metrics["other_charges_count"] = len(annotation.get("other_charges") or [])

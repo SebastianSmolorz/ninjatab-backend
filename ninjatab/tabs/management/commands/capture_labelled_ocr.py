@@ -19,7 +19,7 @@ from django.core.management.base import BaseCommand, CommandError
 
 from ninjatab.tabs.receipt_scanning.base import mistral_client, run_single_ocr
 from ninjatab.tabs.receipt_scanning.deskew import deskew_bytes
-from ninjatab.tabs.receipt_scanning.prompt import DOCUMENT_ANNOTATION_PROMPT
+from ninjatab.tabs.receipt_scanning.prompt import DOCUMENT_ANNOTATION_PROMPT, PROMPT_VERSION
 from ninjatab.tabs.receipt_scanning.sources import data_url_ref
 from ninjatab.tabs.receipt_scanning.base import ScanContext
 import receipt_validation  # noqa: F401  (puts the repo root on sys.path)
@@ -88,7 +88,7 @@ class Command(BaseCommand):
         skipped = planned - len(jobs)
         self.stdout.write(
             f"{len(names)} cases x {runs} runs x {calls} calls = {planned} captures "
-            f"(model {model})"
+            f"(model {model}, prompt v{PROMPT_VERSION})"
         )
         self.stdout.write(
             f"{skipped} already on disk; {len(jobs)} Mistral API calls to make."
@@ -137,6 +137,7 @@ class Command(BaseCommand):
                 "run": run,
                 "call": call,
                 "model": model,
+                "prompt_version": PROMPT_VERSION,
                 "deskew_angle": angle,
                 "annotation": result["annotation"],
                 "parse_error": result["parse_error"],

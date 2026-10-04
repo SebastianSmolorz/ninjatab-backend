@@ -44,13 +44,18 @@ def upload_receipt(request, tab_id: str, file: UploadedFile = File(...)):
 
 @receipt_router.post("/{tab_id}/upload-receipt-v2")
 def upload_receipt_v2(request, tab_id: str, file: UploadedFile = File(...)):
-    """The same scan as `/upload-receipt`, returning the reconciled ledger:
-    `items` holds only what someone ordered, and `adjustments` holds every
-    receipt-level charge, each with a `type` (tax | tip | service | fee |
-    discount) and the `split` mode it defaults to (proportional | even).
+    """The same scan as `/upload-receipt`, returning the reconciled ledger
+    instead of one flat list.
+
+    `adjustments` holds only tax and tip - one entry per printed line, so a
+    receipt with three taxes has three - each with a `type` and its default
+    `split` (proportional). Everything else stays in `items`: what was ordered,
+    fees (even split), and discounts as negative `category: "discount"` rows,
+    linked to the item they reduce by `parent_uid`.
 
     `items_total + adjustments_total == grand_total`, which is what
-    `receipt_total` is checked against.
+    `receipt_total` is checked against. Not used by the app, which polls
+    `/receipt-scans` and gets the v1 shape.
     """
     return _debug_dump("upload-receipt-v2", _scan_upload(request, tab_id, file))
 
@@ -94,7 +99,10 @@ def _scan_upload(request, tab_id: str, file) -> dict:
     synchronous endpoint versions — they differ only in how the annotation is
     presented."""
     tab, image_key = _start_scan(request, tab_id, file)
-    return finish_scan(request.auth.uuid, tab, image_key)
+    # ponytail: synchronous scans have no row to keep readings on. Background
+    # scans (what the app uses) store them; add a table if these need it too.
+    result, _readings = finish_scan(request.auth.uuid, tab, image_key)
+    return result
 
 
 def _scan_state(scan) -> dict:

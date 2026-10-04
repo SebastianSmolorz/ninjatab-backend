@@ -100,7 +100,7 @@ def _read_s3_bytes(key: str) -> tuple[bytes, str]:
     return obj["Body"].read(), obj.get("ContentType") or "image/jpeg"
 
 
-def scan_receipt(image_key: str, tab, *, strategy=None) -> tuple[dict, dict]:
+def scan_receipt(image_key: str, tab, *, strategy=None) -> tuple[dict, dict, list[dict]]:
     """
     Run a receipt scanning strategy on the uploaded image and return the parsed
     annotation + date + presigned URL.
@@ -110,9 +110,11 @@ def scan_receipt(image_key: str, tab, *, strategy=None) -> tuple[dict, dict]:
     registry), falling back to the baseline strategy when that option is
     inactive or holds an unresolvable value.
 
-    Returns (result, metrics). `result` is {"document_annotation": dict | None,
-    "date": str, "image_url": str, "image_key": str}; `metrics` holds the
-    per-scan analytics properties (including `strategy` and `scan_total_ms`).
+    Returns (result, metrics, readings). `result` is {"document_annotation":
+    dict | None, "date": str, "image_url": str, "image_key": str}; `metrics`
+    holds the per-scan analytics properties (including `strategy` and
+    `scan_total_ms`); `readings` is every OCR call's raw output, kept apart so it
+    can never reach a client.
 
     The annotation is the reconciled ledger (`items` plus typed `adjustments`).
     The v1 endpoint and background scans run `ledger.flatten_for_v1` over it;
@@ -152,22 +154,23 @@ def scan_receipt(image_key: str, tab, *, strategy=None) -> tuple[dict, dict]:
         "date": result.date,
         "image_url": generate_presigned_url(image_key),
         "image_key": image_key,
-    }, result.metrics
+    }, result.metrics, result.readings
 
 
-def finish_scan(user_uuid, tab, image_key: str) -> dict:
-    """Run OCR on a stored image, fire the analytics, and return the scan
-    result (the reconciled ledger annotation, as `/upload-receipt-v2` returns
-    it)."""
+def finish_scan(user_uuid, tab, image_key: str) -> tuple[dict, list[dict]]:
+    """Run OCR on a stored image, fire the analytics, and return (result,
+    readings): the scan result (the reconciled ledger annotation, as
+    `/upload-receipt-v2` returns it) and the raw per-call readings, which are
+    for storage only."""
     try:
-        result, metrics = scan_receipt(image_key, tab)
+        result, metrics, readings = scan_receipt(image_key, tab)
     except Exception as e:
         fire_scan_exception(user_uuid, tab, e, scan_session_id=image_key)
         raise
     increment_scan_count(tab)
     fire_scan_result(user_uuid, tab, result, metrics, scan_session_id=image_key)
     result["scan_session_id"] = image_key
-    return result
+    return result, readings
 
 
 # Background scans: the phone uploads, then polls a ReceiptScan row by its
@@ -246,7 +249,7 @@ def _run_scan(scan_id: int) -> None:
     if scan is None:
         return  # deleted with its tab while queued
     try:
-        result = finish_scan(scan.created_by.uuid, scan.tab, scan.image_key)
+        result, readings = finish_scan(scan.created_by.uuid, scan.tab, scan.image_key)
         result["document_annotation"] = flatten_for_v1(result["document_annotation"])
     except Exception as e:
         logger.exception("Receipt scan %s failed", scan.client_id)
@@ -259,5 +262,6 @@ def _run_scan(scan_id: int) -> None:
     # Round-trip through JSON so non-JSON values (dates, Decimals) are stored
     # as strings rather than failing the JSONField save.
     scan.result = json.loads(json.dumps(result, default=str))
+    scan.readings = json.loads(json.dumps(readings, default=str))
     scan.error = ""
-    scan.save(update_fields=["status", "result", "error", "updated_at"])
+    scan.save(update_fields=["status", "result", "readings", "error", "updated_at"])

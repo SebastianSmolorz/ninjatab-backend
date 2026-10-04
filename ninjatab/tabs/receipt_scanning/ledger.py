@@ -42,6 +42,7 @@ from .postprocess import (
     _synthesize_total_only_item,
     _to_float,
     drops_rows,
+    tax_lines,
     SUPPORTED_CURRENCY_CODES,
 )
 
@@ -50,8 +51,8 @@ logger = logging.getLogger("app")
 # Where a charge came from in the model's own output, and the category the
 # client uses to decide the split mode. "fee" has no client category of its own;
 # it redistributes like a service charge.
+# Tax is not here: it is a list of printed lines, see `collect_charges`.
 CHARGE_SOURCES = (
-    ("tax", "tax"),
     ("tip", "tip"),
     # Gratuity, tip and service charge are the same thing to a diner: money for
     # the staff, on top of what was ordered. Treating them as one keeps the
@@ -185,8 +186,10 @@ def demote_duplicate_charges(rows: list[dict]) -> int:
     """Leave at most one row per singleton category, keeping the largest.
 
     Keeping the largest means the figure the user sees is one actually printed
-    on the receipt; the remainder stays in the bill as an ordinary line rather
-    than being silently dropped. Returns how many rows were demoted.
+    on the receipt. The rest become "service" rows: still in the bill, and
+    split proportionally like the tax or tip they were, but not claimable as
+    an item and invisible to the client's single-row tax/tip editor. Returns
+    how many rows were demoted.
     """
     demoted = 0
     for category in _SINGLETON_CATEGORIES:
@@ -196,7 +199,7 @@ def demote_duplicate_charges(rows: list[dict]) -> int:
         keep = max(matches, key=lambda i: _to_float(rows[i].get("total")) or 0.0)
         for i in matches:
             if i != keep:
-                rows[i]["category"] = "item"
+                rows[i]["category"] = "service"
                 demoted += 1
     return demoted
 
@@ -471,6 +474,14 @@ def collect_charges(annotation: dict) -> list[dict]:
     classified the amount as, not what a regex later guesses from its name.
     """
     charges: list[dict] = []
+    # One charge per printed tax line: a receipt can stack state, county and
+    # city tax, and each is its own adjustment.
+    for line in tax_lines(annotation):
+        amount = _to_float(line.get("amount"))
+        if amount is None:
+            continue
+        name = line.get("name") or "Tax"
+        charges.append(_charge(name, name, amount, "tax", "tax"))
     for key, category in CHARGE_SOURCES:
         amount = _to_float(annotation.get(key))
         if amount is None:
@@ -579,6 +590,38 @@ def select_additive_charges(
     return [], "unreconciled_none_added"
 
 
+def prefer_charge_over_tax_twin(
+    additive: list[dict], charges: list[dict], tolerance: float
+) -> int:
+    """Where the bill took a tax line but not a non-tax charge of the same
+    amount, take the charge instead, in place. Returns how many were swapped.
+
+    Prompt v2 asks for every printed tax line, and on a VAT-inclusive receipt
+    the model sometimes invents one by copying another charge: 1251 Restaurant
+    prints only "Service Charge (12.50%) 13.75", yet 15/15 calls also returned
+    "VAT 13.75". Both reconcile the bill alone, tax is searched first, so the
+    service charge was being split as tax.
+
+    Amount-neutral, so it cannot change whether or how the bill reconciles. When
+    the bill needs *both* - genuinely equal amounts - both are additive already
+    and nothing is touched.
+    """
+    swapped = 0
+    for i, chosen in enumerate(additive):
+        if chosen["type"] != "tax":
+            continue
+        twin = next(
+            (c for c in charges
+             if c["type"] != "tax" and c not in additive
+             and abs(c["amount"] - chosen["amount"]) < tolerance),
+            None,
+        )
+        if twin is not None:
+            additive[i] = twin
+            swapped += 1
+    return swapped
+
+
 def reconcile_ledger(annotation: dict, default_currency: str) -> dict:
     """Post-process one parsed annotation into a reconciled ledger, in place.
 
@@ -633,7 +676,8 @@ def reconcile_ledger(annotation: dict, default_currency: str) -> dict:
     annotation["ai_items_total"] = annotation.pop("items_total", None)
     metrics["synthesized_total_only_item"] = _synthesize_total_only_item(annotation)
 
-    metrics["has_tax"] = annotation.get("tax") is not None
+    metrics["has_tax"] = bool(tax_lines(annotation))
+    metrics["tax_lines_count"] = len(tax_lines(annotation))
     metrics["has_tip"] = annotation.get("tip") is not None
     metrics["has_service_charge"] = annotation.get("service_charge") is not None
     metrics["other_charges_count"] = len(annotation.get("other_charges") or [])
@@ -664,6 +708,7 @@ def reconcile_ledger(annotation: dict, default_currency: str) -> dict:
     additive, how = select_additive_charges(
         items, charges, receipt_total, decimals, tolerance
     )
+    metrics["tax_twins_swapped"] = prefer_charge_over_tax_twin(additive, charges, tolerance)
     metrics["charge_selection"] = how
     metrics["charges_additive_count"] = len(additive)
 
@@ -790,7 +835,12 @@ def flatten_for_v1(annotation: Optional[dict]) -> Optional[dict]:
 
     Applied only on the v1 endpoint. A v2 client gets the ledger untouched.
     """
-    if not annotation or "adjustments" not in annotation:
+    if not annotation:
+        return annotation
+    if "adjustments" not in annotation:
+        # Not a ledger (the baseline strategy's flat list), but it can still
+        # carry one tax row per printed tax line, which the client cannot take.
+        demote_duplicate_charges(annotation.get("items") or [])
         return annotation
 
     rows = [dict(i) for i in annotation.get("items") or []]

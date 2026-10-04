@@ -279,6 +279,7 @@ def evaluate(
             metrics = score_against_label(result, annotation)
             metrics["case"] = case
             metrics["run"] = run
+            metrics["model"], metrics["prompt_version"] = capture_provenance(runs[run])
             metrics["rollup"] = rollup(metrics)
             per_run.append(metrics)
             per_case[case].append(metrics)
@@ -313,7 +314,7 @@ def _signature(result: Optional[dict]) -> str:
             "items": items,
             "adjustments": adjustments,
             "receipt_total": str(result.get("receipt_total")),
-            "tax": str(result.get("tax")),
+            "taxes": sorted(str(t.get("amount")) for t in result.get("taxes") or []),
             "tip": str(result.get("tip")),
             "service_charge": str(result.get("service_charge")),
         },
@@ -363,9 +364,30 @@ def _stability(per_case: dict, signatures: dict) -> dict:
     }
 
 
+def capture_provenance(records: list[dict]) -> tuple[str, str]:
+    """(model, prompt version) a run's captures were made with.
+
+    Captures predating the version stamp were all made under prompt v1 (scalar
+    `tax`). A run mixing either is reported as such rather than picking one.
+    """
+    models = {r.get("model") or "unknown" for r in records}
+    versions = {str(r.get("prompt_version") or "1") for r in records}
+    return "+".join(sorted(models)), "+".join(sorted(versions))
+
+
+def _provenance_line(per_run: list[dict]) -> str:
+    counts: dict[tuple, int] = defaultdict(int)
+    for m in per_run:
+        counts[(m.get("model"), m.get("prompt_version"))] += 1
+    parts = [f"{model} / prompt v{version} ({n} runs)" for (model, version), n in sorted(counts.items())]
+    flag = "  !! MIXED - not comparable" if len(counts) > 1 else ""
+    return "captures: " + ", ".join(parts) + flag
+
+
 def format_report(report: dict, baseline: Optional[dict] = None) -> str:
     agg = report["aggregate"]
     lines = [f"=== {report['pipeline']} ===",
+             _provenance_line(report["per_run"]),
              f"observations: {agg['n_observations']}  failures: {agg['failures']}"]
     for key in METRIC_KEYS + ["rollup"]:
         value = agg[key]

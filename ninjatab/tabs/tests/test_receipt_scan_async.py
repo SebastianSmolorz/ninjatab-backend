@@ -26,8 +26,9 @@ def env(db, monkeypatch):
 
     def fake_scan(image_key, tab, **_):
         calls.scans += 1
-        return {"document_annotation": {"items": []}, "date": "2026-09-24",
-                "image_key": image_key}, {}
+        return ({"document_annotation": {"items": []}, "date": "2026-09-24",
+                 "image_key": image_key}, {},
+                [{"call": 0, "annotation": {"items": []}, "markdown": "TOTAL 1.00"}])
 
     monkeypatch.setattr(api, "upload_to_spaces", fake_upload)
     monkeypatch.setattr(receipt_service, "scan_receipt", fake_scan)
@@ -58,6 +59,14 @@ def test_upload_scans_and_poll_returns_v1_result(env):
     assert state["result"]["scan_session_id"] == state["result"]["image_key"]
     env.tab.refresh_from_db()
     assert env.tab.receipt_scan_count == 1
+
+
+def test_readings_are_stored_but_never_returned(env):
+    _post(env)
+    scan = ReceiptScan.objects.get(client_id="c1")
+    assert scan.readings == [{"call": 0, "annotation": {"items": []}, "markdown": "TOTAL 1.00"}]
+    state = api.retrieve_receipt_scan(env.request, str(env.tab.uuid), "c1")
+    assert "readings" not in state["result"]
 
 
 def test_retry_with_same_client_id_does_not_rescan(env):

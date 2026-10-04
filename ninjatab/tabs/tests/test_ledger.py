@@ -350,7 +350,7 @@ class ReconcileLedgerV1Tests(SimpleTestCase):
         self.assertEqual(metrics["duplicate_charges_demoted"], 1)
         self.assertEqual(
             [(i["total"], i["category"]) for i in annotation["items"]],
-            [("20.00", "item"), ("4.00", "tax"), ("1.00", "item")],
+            [("20.00", "item"), ("4.00", "tax"), ("1.00", "service")],
         )
         self.assertTrue(metrics["items_match_receipt_total"])
 
@@ -388,7 +388,7 @@ class ReconcileLedgerV1Tests(SimpleTestCase):
         self.assertEqual(metrics["duplicate_charges_demoted"], 1)
         self.assertEqual(
             sorted((i["total"], i["category"]) for i in annotation["items"]),
-            [("20.00", "item"), ("3.00", "item"), ("4.00", "tip")],
+            [("20.00", "item"), ("3.00", "service"), ("4.00", "tip")],
         )
         self.assertTrue(metrics["items_match_receipt_total"])
 
@@ -406,7 +406,7 @@ class ReconcileLedgerV1Tests(SimpleTestCase):
         )
         flatten_for_v1(annotation)
         self.assertEqual(
-            [i["category"] for i in annotation["items"]], ["item", "tax", "item"]
+            [i["category"] for i in annotation["items"]], ["item", "tax", "service"]
         )
 
     def test_client_contract_is_preserved(self):
@@ -560,4 +560,111 @@ class TipAndServiceChargeTests(SimpleTestCase):
         )
         self.assertEqual(
             sum(1 for i in annotation["items"] if i["category"] == "tip"), 1
+        )
+
+
+class MultipleTaxLinesTests(SimpleTestCase):
+    """Receipts can stack several tax lines (Village Market, Skokie: 2.50%,
+    10.50% and 2% city tax). Each is its own charge; none may be summed by
+    the model or dropped by the ledger."""
+
+    def _village_market(self):
+        return _annotation(
+            [_item("Groceries", "80.12"), _item("Miller Lite", "14.99")], "98.95",
+            taxes=[{"name": "2.50% TAX", "amount": "1.90"},
+                   {"name": "10.50% TAX", "amount": "1.57"},
+                   {"name": "2% CITY TAX", "amount": "0.37"}],
+        )
+
+    def test_every_tax_line_becomes_an_adjustment(self):
+        annotation = self._village_market()
+        metrics = reconcile_ledger(annotation, "USD")
+        self.assertEqual(
+            [(a["name"], a["amount"], a["type"]) for a in annotation["adjustments"]],
+            [("2.50% TAX", "1.90", "tax"), ("10.50% TAX", "1.57", "tax"),
+             ("2% CITY TAX", "0.37", "tax")],
+        )
+        self.assertTrue(annotation["totals_reconciled"])
+        self.assertEqual(metrics["tax_lines_count"], 3)
+
+    def test_v1_keeps_one_tax_row_and_the_money(self):
+        annotation = self._village_market()
+        _reconcile_v1(annotation)
+        taxes = [r for r in annotation["items"] if r["category"] == "tax"]
+        self.assertEqual([r["total"] for r in taxes], ["1.90"])
+        self.assertEqual(annotation["items_total"], 98.95)
+
+    def test_legacy_scalar_tax_still_reads(self):
+        annotation = _annotation([_item("Pasta", "20.00")], "23.00", tax="3.00")
+        reconcile_ledger(annotation, "USD")
+        self.assertEqual(
+            [(a["amount"], a["type"]) for a in annotation["adjustments"]], [("3.00", "tax")]
+        )
+
+
+class TaxTwinTests(SimpleTestCase):
+    """A tax line with the same amount as another charge is either a copy the
+    model invented or a real coincidence. The bill's arithmetic decides."""
+
+    def test_copied_tax_gives_way_to_the_service_charge(self):
+        # 1251 Restaurant: prints only service 13.75; the model also claims VAT 13.75.
+        annotation = _annotation(
+            [_item("Taster Menu", "98.00"), _item("Spiced Paloma", "12.00")], "123.75",
+            taxes=[{"name": "VAT", "amount": "13.75"}], service_charge="13.75",
+        )
+        metrics = reconcile_ledger(annotation, "GBP")
+        self.assertEqual(
+            [(a["type"], a["amount"]) for a in annotation["adjustments"]], [("tip", "13.75")]
+        )
+        self.assertTrue(annotation["totals_reconciled"])
+        self.assertEqual(metrics["tax_twins_swapped"], 1)
+
+    def test_equal_tax_and_service_both_kept_when_the_bill_needs_both(self):
+        annotation = _annotation(
+            [_item("Dinner", "100.00")], "120.00",
+            taxes=[{"name": "Tax", "amount": "10.00"}], service_charge="10.00",
+        )
+        metrics = reconcile_ledger(annotation, "USD")
+        self.assertEqual(
+            sorted((a["type"], a["amount"]) for a in annotation["adjustments"]),
+            [("tax", "10.00"), ("tip", "10.00")],
+        )
+        self.assertEqual(metrics["tax_twins_swapped"], 0)
+
+
+class ExtraTaxLinesInV1Tests(SimpleTestCase):
+    """v1 shows one tax; the other printed tax lines must still split
+    proportionally (category "service"), never as a claimable item."""
+
+    def test_village_market_extra_taxes_split_proportionally(self):
+        annotation = _annotation(
+            [_item("Groceries", "80.12"), _item("Miller Lite", "14.99")], "98.95",
+            taxes=[{"name": "2.50% TAX", "amount": "1.90"},
+                   {"name": "10.50% TAX", "amount": "1.57"},
+                   {"name": "2% CITY TAX", "amount": "0.37"}],
+        )
+        _reconcile_v1(annotation)
+        self.assertEqual(
+            [(r["name"], r["category"]) for r in annotation["items"][2:]],
+            [("2.50% TAX", "tax"), ("10.50% TAX", "service"), ("2% CITY TAX", "service")],
+        )
+
+
+class BaselineFlatListV1Tests(SimpleTestCase):
+    """The baseline strategy skips the ledger, so its flat list reaches
+    flatten_for_v1 with no adjustments - and still one row per tax line."""
+
+    def test_extra_tax_rows_are_demoted_without_a_ledger(self):
+        from ninjatab.tabs.receipt_scanning.postprocess import standard_post_process
+        annotation = _annotation(
+            [_item("Groceries", "95.11")], "98.95",
+            taxes=[{"name": "2.50% TAX", "amount": "1.90"},
+                   {"name": "10.50% TAX", "amount": "1.57"},
+                   {"name": "2% CITY TAX", "amount": "0.37"}],
+        )
+        standard_post_process(annotation, "USD")
+        flatten_for_v1(annotation)
+        self.assertEqual(
+            [(r["total"], r["category"]) for r in annotation["items"]],
+            [("95.11", "item"), ("1.90", "tax"), ("1.57", "service"), ("0.37", "service")],
         )

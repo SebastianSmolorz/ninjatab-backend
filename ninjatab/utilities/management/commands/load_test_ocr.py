@@ -17,6 +17,7 @@ def _scan_one(image_path: Path, index: int) -> dict:
 
     from ninjatab.tabs.receipt_scanning.prompt import DOCUMENT_ANNOTATION_PROMPT
     from ninjatab.tabs.receipt_scanning.schema import _Document
+    from ninjatab.tabs.receipt_scanning.base import ReceiptScanStrategy
 
     mime, _ = mimetypes.guess_type(str(image_path))
     if not mime:
@@ -31,7 +32,7 @@ def _scan_one(image_path: Path, index: int) -> dict:
     t0 = time.perf_counter()
     try:
         response = client.ocr.process(
-            model="mistral-ocr-latest",
+            model=ReceiptScanStrategy.model,
             document=ImageURLChunk(image_url=data_url),
             document_annotation_format=response_format_from_pydantic_model(_Document),
             document_annotation_prompt=DOCUMENT_ANNOTATION_PROMPT,

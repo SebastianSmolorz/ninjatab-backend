@@ -49,6 +49,13 @@ class _OtherCharge(BaseModel):
     # ponytail: retry only if the item-extraction cost can be shown to be gone.
 
 
+class _Tax(BaseModel):
+    """One printed tax line. A list because receipts can stack several (state,
+    county, city) and summing them is arithmetic the model must not do."""
+    name: str
+    amount: str
+
+
 class _Document(BaseModel):
     receipt_language: str
     receipt_language_code: Optional[str] = None
@@ -58,7 +65,7 @@ class _Document(BaseModel):
     receipt_establishment_name: Optional[str] = None
     currency_code: Optional[str] = None
     datetime_of_receipt: Optional[str] = None
-    tax: Optional[str] = None
+    taxes: Optional[list[_Tax]] = None
     tip: Optional[str] = None
     service_charge: Optional[str] = None
     other_charges: Optional[list[_OtherCharge]] = None

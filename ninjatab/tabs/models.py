@@ -508,6 +508,9 @@ class ReceiptScan(BaseModel):
         max_length=20, choices=ReceiptScanStatus.choices, default=ReceiptScanStatus.PENDING
     )
     result = models.JSONField(null=True, blank=True)
+    # Each OCR call's raw output (annotation + transcribed text), in the
+    # labeller's capture-record shape. Only one reading reaches `result`.
+    readings = models.JSONField(null=True, blank=True)
     error = models.TextField(blank=True, default='')
     # Scan runs started, capped so a receipt that always fails stops costing OCR.
     attempts = models.PositiveSmallIntegerField(default=0)

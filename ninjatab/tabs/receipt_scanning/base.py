@@ -5,6 +5,7 @@ call, and post-processing — and records per-stage timing. Subclasses override
 the stage methods, not `run()`.
 """
 
+import copy
 import json
 import logging
 from dataclasses import dataclass, field
@@ -20,7 +21,7 @@ from mistralai.client.models import ImageURLChunk
 from mistralai.extra import response_format_from_pydantic_model
 
 from .postprocess import standard_post_process
-from .prompt import DOCUMENT_ANNOTATION_PROMPT
+from .prompt import DOCUMENT_ANNOTATION_PROMPT, PROMPT_VERSION
 from .schema import _Document
 
 logger = logging.getLogger("app")
@@ -46,6 +47,28 @@ class ScanResult:
     metrics: dict = field(default_factory=dict)
     timings: dict = field(default_factory=dict)
     raw_responses: list[dict] = field(default_factory=list)
+    # Every OCR call's own output, before post-processing rewrites it. Only the
+    # chosen reading survives into document_annotation, so without these a bad
+    # scan cannot be diagnosed or replayed.
+    readings: list[dict] = field(default_factory=list)
+
+
+def snapshot_readings(ocr_results: list[dict], model: str) -> list[dict]:
+    """The raw readings in the labeller's capture-record shape, so a stored scan
+    can be replayed through the same pipelines. Taken before post-processing,
+    which mutates the annotations in place."""
+    return [
+        {
+            "call": i,
+            "model": model,
+            "prompt_version": PROMPT_VERSION,
+            "annotation": copy.deepcopy(r["annotation"]),
+            "parse_error": r["parse_error"],
+            "call_ms": r["call_ms"],
+            "markdown": r.get("ocr_markdown", ""),
+        }
+        for i, r in enumerate(ocr_results)
+    ]
 
 
 def mistral_client() -> Mistral:
@@ -129,10 +152,13 @@ class ReceiptScanStrategy:
 
     name: str = "base"
     prompt: str = DOCUMENT_ANNOTATION_PROMPT
-    model: str = "mistral-ocr-latest"
+    # Pinned, not "mistral-ocr-latest": an alias that moves under us makes
+    # captures from different dates silently incomparable.
+    model: str = "mistral-ocr-4-1"
     version: str = "1"
     include_blocks: bool = False
-    deskew: bool = True  # straighten the receipt text before OCR; skip via deskew=False
+    # TEMP 2026-10-04: off to see the Android scanner output unaltered. Revert to True.
+    deskew: bool = False  # straighten the receipt text before OCR; skip via deskew=False
 
     def __init__(
         self, *, name=None, model=None, prompt=None, version=None,
@@ -179,6 +205,7 @@ class ReceiptScanStrategy:
             "strategy": self.name,
             "strategy_version": self.version,
             "model": self.model,
+            "prompt_version": PROMPT_VERSION,
             "tab_id": ctx.tab_id,
             "tab_default_currency": ctx.default_currency,
             "annotation_present": False,
@@ -204,12 +231,14 @@ class ReceiptScanStrategy:
         timings["mistral_ms"] = int((timezone.now() - mistral_t).total_seconds() * 1000)
         timings["per_call_ms"] = [r["call_ms"] for r in ocr_results]
 
+        readings = snapshot_readings(ocr_results, self.model)
         post_t = timezone.now()
         result = self.post_process(ocr_results, ctx)
         timings["post_ms"] = int((timezone.now() - post_t).total_seconds() * 1000)
 
         timings["total_ms"] = int((timezone.now() - t0).total_seconds() * 1000)
         result.timings = timings
+        result.readings = readings
         # ponytail: only strategies driving this run() collect raw responses.
         # TieredConsensusStrategy overrides run() and won't; the labeller (the
         # only consumer) uses baseline, so leave it.
