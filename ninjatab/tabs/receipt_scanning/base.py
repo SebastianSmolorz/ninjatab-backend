@@ -38,6 +38,7 @@ class ScanContext:
     s3_base_key: Optional[str] = None  # already-uploaded key; copy source for extra requests
     deskew_applied: bool = False  # guards against double-deskewing a reused ctx
     deskew_angle: Optional[float] = None  # detected skew angle, once deskew has run
+    preprocess_metrics: dict = field(default_factory=dict)  # set by pre_process, merged into metrics
 
 
 @dataclass
@@ -216,6 +217,7 @@ class ReceiptScanStrategy:
             "date_parsed": False,
             "deskew_applied": ctx.deskew_applied,
             "deskew_angle": ctx.deskew_angle,
+            **ctx.preprocess_metrics,
         }
 
     def run(self, ctx: ScanContext) -> ScanResult:
@@ -244,7 +246,9 @@ class ReceiptScanStrategy:
         # only consumer) uses baseline, so leave it.
         result.raw_responses = [r["raw_response"] for r in ocr_results if r.get("raw_response")]
         result.metrics["scan_total_ms"] = timings["total_ms"]
+        result.metrics["pre_ms"] = timings["pre_ms"]
         result.metrics["mistral_call_ms"] = timings["mistral_ms"]
+        result.metrics["post_ms"] = timings["post_ms"]
         return result
 
     # -- stages -----------------------------------------------------------

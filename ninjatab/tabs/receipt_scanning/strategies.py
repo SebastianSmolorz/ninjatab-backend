@@ -30,7 +30,7 @@ from .postprocess import (
     select_best_line_items,
     standard_post_process,
 )
-from .sources import default_ref
+from .sources import MIX_SLOTS, default_ref, mix_refs
 
 logger = logging.getLogger("app")
 
@@ -329,6 +329,63 @@ class VerifiedConsensusStrategy(ConcurrentConsensusStrategy):
         return result
 
 
+
+class VerifiedMixStrategy(VerifiedConsensusStrategy):
+    """verified_consensus with one call each on the original, the UVDoc-unwarped
+    image and the `flat` image instead of the original three times. Rows right
+    0.913 -> 0.949, 9 up / 0 down over 146 labelled receipts
+    (specs/receipt-preprocessing-rnd.md). Same post-processing: the original
+    call wins whenever a processed image goes wrong.
+
+    A processed call that fails - long receipts can pass the 55 s timeout once
+    unwarped - drops out of the vote rather than failing the scan. The original
+    call still fails it, as before.
+
+    Metrics, on top of the base ones (pre_ms, mistral_call_ms, post_ms):
+    preprocess_arms and mix_<slot>_ms from mix_refs; mix_<slot>_call_ms, each
+    call's Mistral time; mix_failed_calls; and mix_chosen_arm, the image whose
+    reading supplied the line items.
+    """
+
+    name = "verified_consensus_mix"
+
+    def pre_process(self, ctx: ScanContext) -> list[str]:
+        self._maybe_deskew(ctx)
+        refs, ctx.preprocess_metrics = mix_refs(ctx)
+        ctx.preprocess_metrics["mix_failed_calls"] = []
+        return refs
+
+    def call_mistral(self, prepared: list[str], ctx: ScanContext) -> list[dict]:
+        client = mistral_client()
+
+        def one(i: int) -> dict:
+            started = timezone.now()
+            try:
+                return run_single_ocr(client, prepared[i], self.prompt, self.model,
+                                      include_blocks=self.include_blocks)
+            except Exception as e:
+                if i == 0:
+                    raise
+                sentry_sdk.capture_exception(e)
+                logger.warning("Preprocessed OCR call %d (%s) failed: %s", i, MIX_SLOTS[i], e)
+                ctx.preprocess_metrics["mix_failed_calls"].append(MIX_SLOTS[i])
+                return {"annotation": None, "parse_error": False, "ocr_markdown": "",
+                        "ocr_pages": 0, "ocr_markdown_chars": 0,
+                        "call_ms": int((timezone.now() - started).total_seconds() * 1000)}
+
+        with ThreadPoolExecutor(max_workers=len(prepared)) as pool:
+            return list(pool.map(one, range(len(prepared))))
+
+    def run(self, ctx: ScanContext) -> ScanResult:
+        result = super().run(ctx)
+        for slot, ms in zip(MIX_SLOTS, result.timings["per_call_ms"]):
+            result.metrics[f"mix_{slot}_call_ms"] = ms
+        idx = result.metrics.get("consensus_selected_index")
+        arms = ctx.preprocess_metrics["preprocess_arms"]
+        result.metrics["mix_chosen_arm"] = arms[idx] if idx is not None else None
+        return result
+
+
 def _reattach_discounts(annotation: dict, ocr_results: list[dict]) -> bool:
     """Rewrite the winner's discount rows as one row per discounted item, using
     the order the OCR read them in. Returns whether it changed anything.
@@ -521,6 +578,7 @@ STRATEGIES = [
     BaselineStrategy(),
     ConcurrentConsensusStrategy(),
     VerifiedConsensusStrategy(),
+    VerifiedMixStrategy(),
     TieredConsensusStrategy(),
     # EscalatingStrategy(),
 ]
