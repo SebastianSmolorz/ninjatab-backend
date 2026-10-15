@@ -1251,6 +1251,72 @@ reads. 2.28 left this open — `4bf96933` prints two identical
 because a name is not an identity. No metric moved (no metric scores linkage),
 and none was expected to; the check is the assertion in `discounts.demo()`.
 
+### 2.31 The gross-up bug without a footer — LANDED (2026-10-12)
+
+2.23 repairs 2.14 only when the receipt prints a savings footer, because the
+footer is what gives the double count away. Receipts with no footer still
+inflate. Found on a production IKEA scan (not in the corpus):
+
+```
+receipt                          model     pipeline
+Entkeule Kartoffel K   12,95     12.95     15.54   <- 12.95 + 2.59
+  JUBI-Woche 20%       -2,59     -2.59     -2.59
+Fleischbä Pommes fri    8,65      8.65     10.38   <- 8.65 + 1.73
+  JUBI-Woche 20%       -1,73     -1.73     -1.73
+Summe                  19,23               items 23.55, reconciled: False
+```
+
+The model gave the printed gross, and `expand_discount_rows` grossed it up
+again, so each discount cancels itself. Both good calls agreed, so consensus
+couldn't save it. **Root cause is the prompt contradicting itself:** `total` is
+*"the final price paid ... so quantity * price_per_quantity"*, and on a
+discounted row those are two different numbers. The model follows either half
+depending on the receipt.
+
+**Attempt 1 — item arithmetic: REJECTED.** Treat a total as gross when it equals
+`quantity x price_per_quantity`. Fixed the IKEA shape and broke Tesco's, where
+the model gives the *Clubcard* price as the unit price (`£6.40 / Cc £5.25` →
+ppq 5.25, total 5.25), so the total equals its own arithmetic while being net.
+The item's own fields cannot tell the two readings apart.
+
+**Attempt 2 — the receipt total decides: LANDED.** Per receipt, not per item.
+Treat totals as already gross only when taking the discounts off the totals as
+given closes the bill **and** the totals as given do not. Carrier rows (a
+discount line that lists itself as its own adjustment, e.g. IKEA's
+`SO IF FamKaffeeGratis -1,95`) are left out of the sum because they are the
+discount itself; the first draft counted them twice and still failed on IKEA.
+
+| 245 cases x 5 runs (post-processing only, paired) | baseline | qty x ppq | **receipt total** |
+|---|---|---|---|
+| p1_item_totals_f1 | 0.9294 | 0.9224 | **0.9309** |
+| p3_self_reconciled | 0.8829 | 0.8745 | **0.8896** |
+| p3_grand_total_correct | 0.8822 | 0.8739 | **0.8889** |
+| p4_discount_links_f1 | 0.6022 | 0.6187 | 0.6050 |
+| rollup | 0.9039 | 0.8980 | **0.9076** |
+| identical across runs | 199/245 | 199/245 | **201/245** |
+| cases better / worse | | 8 / 10 | **4 / 1** |
+
+The wins are this bug exactly: `463eb9bd` 0.21 → 0.99, `3f2c289c` 0.31 → 0.91,
+`fbb4f952` 0.42 → 0.99. The one loss, `1f194328-a373` −0.01, is not a wrong
+number. 3 of 15 readings attach its −255 to the item rather than as a whole-bill
+discount. Those now close the bill and can win consensus, while the label files
+it whole-bill.
+
+**Ceiling:** it needs the items alone to close the bill. A gross-total receipt
+that also carries tax or a service charge still gets grossed up. Extending the
+check into `select_additive_charges`' subset search would cover that. Not done.
+
+**The prompt fix is the obvious next step, and it has been rejected three
+times.** Redefining `total` as the printed / pre-discount figure is 2.18–2.20:
+three phrasings, 1,578 calls, every one raised computed totals and cost ~0.05
+`s_item_name`. Rewording only the contradictory clause is a fourth attempt at
+the same idea. Do not retry it on these grounds alone. 2.20's conditions still
+stand: a corpus with many more discount receipts, and the `p4_adjustments_f1`
+gain (+0.10–0.12 every attempt) pursued on its own, without touching `total`.
+
+Tests: `test_a_total_already_gross_is_not_grossed_up_again` in
+`ninjatab/tabs/tests/test_ledger.py` (IKEA shape, carrier row included).
+
 ## 3. Decisions
 
 1. **`adjustments` holds tax, tip and receipt-level discounts. Nothing else.**

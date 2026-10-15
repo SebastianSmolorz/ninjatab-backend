@@ -233,6 +233,25 @@ class ReconcileLedgerV1Tests(SimpleTestCase):
             [("Crisps", "3.00", "item"), ("3 for 2", "-1.00", "service")],
         )
 
+    def test_a_total_already_gross_is_not_grossed_up_again(self):
+        """IKEA: the model gave the pre-discount 12.95, and only taking the
+        discount off it closes the bill, so it must not become 15.54. The free
+        coffee is a carrier row, already net, and must not be counted twice."""
+        annotation = _annotation(
+            [_item("Kaffee", "1.95"),
+             _item("FamKaffeeGratis", "-1.95",
+                   adjustments=[{"name": "FamKaffeeGratis", "amount": "-1.95"}]),
+             _item("Entkeule", "12.95", adjustments=[{"name": "JUBI 20%", "amount": "-2.59"}]),
+             _item("Softgetränk", "1.95")],
+            "12.31",
+        )
+        metrics = _reconcile_v1(annotation, "EUR")
+        self.assertTrue(metrics["items_match_receipt_total"])
+        self.assertEqual(
+            [i["total"] for i in annotation["items"]],
+            ["1.95", "-1.95", "12.95", "-2.59", "1.95"],
+        )
+
     def test_discount_carrier_row_does_not_leave_an_empty_item(self):
         """Some parses emit a coupon line that also lists itself as its own
         adjustment; grossing that up would leave a 0.00 item beside it."""
@@ -630,6 +649,69 @@ class TaxTwinTests(SimpleTestCase):
             [("tax", "10.00"), ("tip", "10.00")],
         )
         self.assertEqual(metrics["tax_twins_swapped"], 0)
+
+
+class ItemLinesFiledAsChargesTests(SimpleTestCase):
+    """Darjeela, Cairo (case 1a7206c6): the shisha and its mouthpiece print
+    without a quantity, so the model files them under other_charges. The service
+    charge is 12% of all six rows, so they are items, and the bill must keep its
+    service charge rather than lose it to the charges-vs-items guard."""
+
+    ITEMS = [_item("Ice Cream Vanilla", "120.00"), _item("Carmel Banana", "171.00"),
+             _item("Latte", "116.00"), _item("Lemon Mint", "0.00")]
+
+    def _filed_as_charges(self):
+        return _annotation(
+            self.ITEMS, "883.55", currency="EGP",
+            taxes=[{"name": "VAT(14.0%)", "amount": "108.51"}], service_charge="83.04",
+            other_charges=[{"name": "Mabsam & Lai", "amount": "35.00"},
+                           {"name": "ARJEELA MINI", "amount": "250.00"}],
+        )
+
+    def test_shisha_becomes_an_item_and_the_service_charge_stays(self):
+        annotation = self._filed_as_charges()
+        metrics = reconcile_ledger(annotation, "EGP")
+        self.assertEqual(metrics["charge_selection"], "subset_reconciled_fee_rows")
+        self.assertIn(("ARJEELA MINI", "250.00"), [(i["name"], i["total"]) for i in annotation["items"]])
+        self.assertEqual(
+            [(a["type"], a["amount"]) for a in annotation["adjustments"]],
+            [("tax", "108.51"), ("tip", "83.04")],
+        )
+        self.assertEqual(annotation["grand_total"], 883.55)
+        self.assertTrue(metrics["items_match_receipt_total"])
+
+    def test_a_misfiled_total_is_still_not_added(self):
+        # b5055eb5: "SPOLU" (Slovak "total") filed as a charge. It only brings
+        # the bill closer, never exactly to it, so it must stay out.
+        annotation = _annotation(
+            [_item("Obed", "60.00")], "140.00",
+            taxes=[{"name": "Tax", "amount": "26.18"}],
+            other_charges=[{"name": "SPOLU", "amount": "140.00"}],
+        )
+        metrics = reconcile_ledger(annotation, "EUR")
+        self.assertNotIn("SPOLU", [i["name"] for i in annotation["items"]])
+        self.assertEqual(metrics["charge_selection"], "best_effort_closest")
+
+    def test_consensus_picks_a_reading_that_balances(self):
+        # The production scan: two readings filed the shisha as charges, one
+        # merged Lemon Mint into Mabsam & Lai and dropped the shisha (250 short).
+        # That one won while the other two had lost their service charge.
+        from ninjatab.tabs.receipt_scanning.base import ScanContext
+        from ninjatab.tabs.receipt_scanning.strategies import resolve_strategy
+
+        dropped = _annotation(
+            self.ITEMS[:3] + [_item("Lemon Mint Mabsam & Lai", "35.00")], "883.55",
+            currency="EGP", taxes=[{"name": "VAT(14.0%)", "amount": "108.51"}],
+            service_charge="83.04",
+        )
+        readings = [self._filed_as_charges(), dropped, self._filed_as_charges()]
+        ocr_results = [{"annotation": a, "parse_error": False, "ocr_markdown": "",
+                        "ocr_pages": 1, "ocr_markdown_chars": 0, "call_ms": 1} for a in readings]
+        ctx = ScanContext(image_bytes=b"", content_type="image/jpeg",
+                          default_currency="EGP", tab_id="t")
+        result = resolve_strategy("verified_consensus").post_process(ocr_results, ctx)
+        self.assertEqual(result.document_annotation["grand_total"], 883.55)
+        self.assertIn("ARJEELA MINI", [i["name"] for i in result.document_annotation["items"]])
 
 
 class ExtraTaxLinesInV1Tests(SimpleTestCase):

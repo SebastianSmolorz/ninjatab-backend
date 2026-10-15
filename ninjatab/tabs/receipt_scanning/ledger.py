@@ -331,7 +331,10 @@ def drop_restated_discount_summary(
     return 1
 
 
-def expand_discount_rows(items: list[dict], decimals: int = 2) -> int:
+def expand_discount_rows(
+    items: list[dict], decimals: int = 2,
+    receipt_total: Optional[float] = None, tolerance: Optional[float] = None,
+) -> int:
     """Give each item's discounts their own negative row beneath that item.
 
     A receipt prints "Crisps 3.00 / 3 for 2  -1.00", and the client shows the
@@ -352,6 +355,27 @@ def expand_discount_rows(items: list[dict], decimals: int = 2) -> int:
     expanded = 0
     next_uid = 0
     out: list[dict] = []
+    # Unless the model already gave the gross. The prompt also defines total as
+    # quantity x price_per_quantity, and IKEA's "12,95 / JUBI-Woche 20% -2,59"
+    # came back as 12.95, which grossing up again made 15.54. The item's own
+    # arithmetic cannot tell: on Tesco's "£6.40 / Cc £5.25" price_per_quantity
+    # is the net price too. The receipt total can: when only taking the
+    # discounts off the totals as given closes the bill, they are gross.
+    # A carrier row (see below) is the discount itself, so it is net either way.
+    already_gross = False
+    if receipt_total is not None and tolerance:
+        given = off = 0.0
+        for i in items:
+            paid = _to_float(i.get("total")) or 0.0
+            reduction = sum(_to_float(a["amount"]) or 0.0 for a in _expandable_adjustments(i))
+            given += paid
+            if round(paid - reduction, 6) != 0.0:
+                off += reduction
+        already_gross = (
+            off != 0.0
+            and _reconciles(given + off - receipt_total, tolerance)
+            and not _reconciles(given - receipt_total, tolerance)
+        )
     for item in items:
         deltas = _expandable_adjustments(item)
         if not deltas:
@@ -361,6 +385,8 @@ def expand_discount_rows(items: list[dict], decimals: int = 2) -> int:
         paid = _to_float(item.get("total")) or 0.0
         reduction = sum(_to_float(a["amount"]) or 0.0 for a in deltas)
         gross = round(paid - reduction, 6)
+        if already_gross and gross != 0.0:
+            gross = paid
         # A row that grosses up to nothing was only ever carrying the discount
         # (the model sometimes emits a coupon line that also lists itself as its
         # own adjustment). Emitting it would leave a 0.00 item beside the real
@@ -522,7 +548,9 @@ def _charge(
     }
 
 
-def _plausible_charges(subset: list[dict], items_subtotal: float) -> bool:
+def _plausible_charges(
+    subset: list[dict], items_subtotal: float, fees_join_items: bool = False
+) -> bool:
     """Whether treating `subset` as additive describes a real receipt.
 
     A charge sits *on top of* what was ordered, so it cannot be worth more than
@@ -532,12 +560,27 @@ def _plausible_charges(subset: list[dict], items_subtotal: float) -> bool:
     list — and, because reconciling candidates are preferred during consensus,
     that degenerate reading would win. Reconciliation must not be reachable by
     emptying the receipt.
+
+    `fees_join_items` measures the bill the way reconcile_ledger emits it: a
+    positive charge that is not tax or tip becomes an item row, so it counts
+    towards the base instead of sitting on top of it.
     """
     if not subset:
         return True
     if items_subtotal <= 0:
         return False
+    if fees_join_items:
+        joins = [c for c in subset if c["type"] not in _ADJUSTMENT_TYPES and c["amount"] > 0]
+        subset = [c for c in subset if c not in joins]
+        items_subtotal += sum(c["amount"] for c in joins)
     return sum(c["amount"] for c in subset) <= items_subtotal
+
+
+def _subsets(charges: list[dict]):
+    """Every non-empty subset of `charges`, smallest first."""
+    for size in range(1, len(charges) + 1):
+        for combo in combinations(range(len(charges)), size):
+            yield [charges[i] for i in combo]
 
 
 def select_additive_charges(
@@ -561,17 +604,30 @@ def select_additive_charges(
     considered = charges[:MAX_CHARGES_CONSIDERED]
     best: list[dict] = []
     best_gap = abs(base - receipt_total)
-    for size in range(1, len(considered) + 1):
-        for combo in combinations(range(len(considered)), size):
-            subset = [considered[i] for i in combo]
-            total = round(base + sum(c["amount"] for c in subset), decimals)
-            if not _plausible_charges(subset, base):
-                continue
-            if _reconciles(total - receipt_total, tolerance):
-                return subset, "subset_reconciled"
-            gap = abs(total - receipt_total)
-            if gap < best_gap:
-                best, best_gap = subset, gap
+    for subset in _subsets(considered):
+        total = round(base + sum(c["amount"] for c in subset), decimals)
+        if not _plausible_charges(subset, base):
+            continue
+        if _reconciles(total - receipt_total, tolerance):
+            return subset, "subset_reconciled"
+        gap = abs(total - receipt_total)
+        if gap < best_gap:
+            best, best_gap = subset, gap
+
+    # Item lines filed as charges. A café prints its shisha (ARJEELA MINI 250)
+    # without a quantity, the model files it under other_charges, and the guard
+    # above counts it as on top of the 407 of drinks - so the 476.55 that
+    # balances the bill looks implausible, the 83.04 service charge goes, and a
+    # worse reading wins consensus. Measured as emitted (shisha as an item) the
+    # charges are 191.55 on 692. Exact matches only: the same bucket also holds
+    # totals, payments and tax bases misfiled as charges (SPOLU, BALANCE DUE,
+    # お預かり合計 in the corpus), and those only ever *approach* the total -
+    # the items are already in the sum. 0 of 3606 corpus readings change.
+    for subset in _subsets(considered):
+        total = round(base + sum(c["amount"] for c in subset), decimals)
+        if _plausible_charges(subset, base, fees_join_items=True) and \
+                _reconciles(total - receipt_total, tolerance):
+            return subset, "subset_reconciled_fee_rows"
 
     # Nothing closes the gap exactly. Failing to place *one* charge used to
     # delete them all, which is how cebb2ce9 lost a 19.70 service charge and a
@@ -688,8 +744,11 @@ def reconcile_ledger(annotation: dict, default_currency: str) -> dict:
     metrics["unmultiplied_rows"] = unmultiply_line_totals(items, receipt_total_of(annotation), tolerance, decimals)
     # An item discount becomes its own negative row directly beneath its item,
     # which is where the receipt printed it. Sum-preserving, so it cannot change
-    # which charges the arithmetic below finds to be additive.
-    metrics["discount_rows_expanded"] = expand_discount_rows(items, decimals)
+    # which charges the arithmetic below finds to be additive - except when the
+    # totals arrived already gross, where it takes the discounts off once.
+    metrics["discount_rows_expanded"] = expand_discount_rows(
+        items, decimals, receipt_total_of(annotation), tolerance
+    )
     # After expansion, so a saving the model attached to its item is a row here
     # and can be counted against the footer that restates it.
 
