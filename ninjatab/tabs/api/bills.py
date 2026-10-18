@@ -39,11 +39,10 @@ def _check_version(obj, sent: int | None):
     app's snackbar prefix ("Failed to save splits: ..."), since shipped builds
     surface `detail` verbatim and can't be changed.
     """
-    # ponytail: bill-level version only, and check-then-save without
-    # select_for_update — so two *simultaneous* writes can both pass. It catches
-    # the real case (two devices, seconds apart), not a true race. Row-lock the
-    # read if that ever matters. Per-line-item granularity needs
-    # LineItem.version checks.
+    # ponytail: bill-level version only. submit_bill_splits row-locks the bill
+    # so simultaneous submits serialize; other writers still check-then-save
+    # without select_for_update, so two *simultaneous* ones can both pass.
+    # Per-line-item granularity needs LineItem.version checks.
     if sent is not None and sent != obj.version:
         raise HttpError(409, "someone else changed this expense — reopen it to get the latest")
 
@@ -248,8 +247,12 @@ def submit_bill_splits(request, bill_id: str, payload: BillSplitSubmitSchema):
     item conflicts with another editing the bill's currency. If per-claim sync is
     going ahead, spend the forced update on `version` alone and skip the merge.
     """
+    # Row-lock the bill: two concurrent submits (e.g. a double-tapped save) would
+    # otherwise both delete-then-insert and the second hits the
+    # (person, line_item) unique constraint. Locked, the second one waits and
+    # then fails _check_version with a 409 (or, if it sends no version, simply wins).
     bill = get_object_or_404(
-        Bill.objects.prefetch_related('line_items', 'tab__people'),
+        Bill.objects.select_for_update().prefetch_related('line_items', 'tab__people'),
         uuid=bill_id,
         tab__in=Tab.objects.accessible_by(request.auth)
     )

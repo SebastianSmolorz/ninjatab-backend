@@ -6,6 +6,7 @@ from pathlib import Path
 from django.core.management.base import BaseCommand, CommandError
 
 from ninjatab.tabs.receipt_scanning.deskew import deskew_bytes
+from ninjatab.tabs.receipt_scanning.sources import MIX_SLOTS
 from ninjatab.tabs.receipt_scanning.strategies import (
     DEFAULT_STRATEGY,
     STRATEGIES_BY_NAME,
@@ -109,12 +110,24 @@ class Command(BaseCommand):
         if not result["document_annotation"]:
             self.stderr.write("Scan produced no document annotation.")
 
+        # Stamp each raw response with the image that call got (original /
+        # uvdoc / flat), so the mix's three readings can be told apart later.
+        # A failed processed call leaves no response, so skip its slot.
+        metrics = result.get("metrics") or {}
+        failed = set(metrics.get("mix_failed_calls") or [])
+        arms = [a for s, a in zip(MIX_SLOTS, metrics.get("preprocess_arms") or []) if s not in failed]
+        raw_responses = result.get("raw_responses") or []
+        for i, r in enumerate(raw_responses):
+            r["variant"] = arms[i] if i < len(arms) else "original"
+
         self.stdout.write(
             json.dumps(
                 {
                     "document_annotation": result["document_annotation"],
-                    "raw_responses": result.get("raw_responses") or [],
+                    "raw_responses": raw_responses,
                     "deskew_angle": angle,
-                }
+                    "metrics": metrics,
+                },
+                default=str,
             )
         )

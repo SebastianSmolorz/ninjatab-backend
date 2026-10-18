@@ -42,13 +42,14 @@ SIGMA_X = 0.25     # share of the text width along the row it reaches
 PRIOR = 1.0        # blob-weights pulling a sparse neighbourhood to the median slope
 MAX_SLOPE = 0.58   # tan 30 deg: steeper is sideways text or not a text line
 GATE = 0.5         # line heights of drift across a row below which nothing is done
+MIN_SHORT = 400    # working-copy short side; below it a tall receipt's rows merge (go asia 8836496a)
 
 
 def line_slopes(gray: np.ndarray):
     """Per text-line blob under MAX_SLOPE: (x, y, slope dy/dx, length) in
     deskew's working copy. Plus the median line height, the working copy's
     scale and the count of all line blobs, steep ones included."""
-    rects, scale = deskew.detect_text_rects(gray)
+    rects, scale = deskew.detect_text_rects(gray, MIN_SHORT)
     out = []
     for rect in rects:
         a, b, c, _ = cv2.boxPoints(rect)

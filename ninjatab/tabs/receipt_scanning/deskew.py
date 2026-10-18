@@ -160,10 +160,14 @@ def _paper_box(gray: np.ndarray) -> tuple | None:
     return x * 4, y * 4, w * 4, h * 4
 
 
-def detect_text_rects(gray: np.ndarray) -> tuple[list, float]:
+def detect_text_rects(gray: np.ndarray, min_short: float = 0) -> tuple[list, float]:
     """Find text-line rects in a grayscale image. Returns (rects, scale), where
     the rects are in the coordinates of the internally downscaled copy and
     `scale` is the factor that was applied.
+
+    The copy's long side is capped at 1000px, unless that leaves the short side
+    under `min_short`: a 454x3000 receipt would be 151px wide, too narrow to
+    keep a two-line item's lines apart.
 
     Two fallbacks, both scoped to this function so they do not disturb the
     binarisation the rest of the pipeline was tuned against (see `_binarize`):
@@ -175,7 +179,7 @@ def detect_text_rects(gray: np.ndarray) -> tuple[list, float]:
       background rather than ink from paper and finds no text at all: 58 of the
       221 corpus images, 49 of which the local threshold recovers.
     """
-    scale = min(1.0, 1000.0 / max(gray.shape))
+    scale = min(1.0, max(1000.0 / max(gray.shape), min_short / min(gray.shape)))
     if scale < 1.0:
         gray = cv2.resize(gray, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA)
 

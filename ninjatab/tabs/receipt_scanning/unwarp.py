@@ -21,6 +21,11 @@ import numpy as np
 
 MODEL = Path(__file__).with_name("models") / "uvdoc.onnx"
 NET_H, NET_W = 712, 488
+# Share of the width added to each side before unwarping, in the frame's own
+# edge colour. UVDoc's output crops the page edge, and on a tight scanner crop
+# the right edge is the price column (go asia 8836496a lost every price).
+# Sides only: uvdoc_pad padded all four sides and straightened less.
+SIDE_PAD = 0.10
 
 # ponytail: global lock; the droplet has 1 vCPU and a cv2.dnn Net isn't
 # thread-safe. A Net per thread if scans ever run on more cores.
@@ -65,9 +70,25 @@ def _downscale(image: np.ndarray) -> np.ndarray:
     return (small / 255.0).transpose(2, 0, 1)[None].astype(np.float32)
 
 
+def _pad_sides(image: np.ndarray) -> np.ndarray:
+    """Pad left and right by SIDE_PAD in the colour of the frame's outer ring -
+    paper white for a scanner crop, the table for a photo."""
+    h, w = image.shape[:2]
+    px = int(w * SIDE_PAD)
+    if not px:
+        return image
+    k = max(2, min(h, w) // 50)
+    ring = np.concatenate([image[:k].reshape(-1, 3), image[-k:].reshape(-1, 3),
+                           image[:, :k].reshape(-1, 3), image[:, -k:].reshape(-1, 3)])
+    colour = [int(c) for c in np.median(ring, axis=0)]
+    return cv2.copyMakeBorder(image, 0, 0, px, px, cv2.BORDER_CONSTANT, value=colour)
+
+
 def unwarp_image(image: np.ndarray) -> np.ndarray:
-    """Unwarp a BGR uint8 page. Same size out; pixels mapped from outside the
-    page come out black, as in Paddle."""
+    """Unwarp a BGR uint8 page, side-padded first (SIDE_PAD), so the output is
+    that much wider; pixels mapped from outside the page come out black, as in
+    Paddle."""
+    image = _pad_sides(image)
     h, w = image.shape[:2]
     with _lock:
         net = _net()
@@ -92,7 +113,7 @@ def _demo() -> None:
     for y in range(100, 1100, 50):
         cv2.putText(page, "ITEM 12.50", (80, y), cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 0, 0), 2)
     out = unwarp_image(page)
-    assert out.shape == page.shape and out.dtype == np.uint8, out.shape
+    assert out.shape == _pad_sides(page).shape and out.dtype == np.uint8, out.shape
     assert out.mean() > 200, out.mean()
     assert (out < 128).mean() > 0.01, "text lost"
     # align_corners: corners exact, and a linear ramp stays linear.
