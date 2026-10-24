@@ -30,6 +30,7 @@ class UserPaymentMethod(models.Model):
         PAYPAL = "paypal", "PayPal"
         MONZO = "monzo", "Monzo"
         REVOLUT = "revolut", "Revolut"
+        WISE = "wise", "Wise"
         CASHAPP = "cashapp", "Cash App"
         VENMO = "venmo", "Venmo"
 

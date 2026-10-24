@@ -575,4 +575,14 @@ class ReceiptScanAdmin(admin.ModelAdmin):
     list_filter = ['status']
     search_fields = ['client_id', 'image_key']
     raw_id_fields = ['tab', 'created_by']
-    readonly_fields = ['uuid', 'created_at', 'updated_at']
+    readonly_fields = ['image_link', 'uuid', 'created_at', 'updated_at']
+
+    def image_link(self, obj):
+        if not obj.image_key:
+            return '-'
+        from ninjatab.tabs.receipt_service import generate_presigned_url
+        return format_html(
+            '<a href="{}" target="_blank">View receipt image</a>',
+            generate_presigned_url(obj.image_key),
+        )
+    image_link.short_description = 'Image'
