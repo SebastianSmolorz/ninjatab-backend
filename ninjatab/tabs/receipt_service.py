@@ -185,12 +185,12 @@ class ScanAttemptsExhausted(Exception):
     pass
 
 
-def create_background_scan(tab, user, client_id: str, image_key: str) -> ReceiptScan:
+def create_background_scan(tab, user, client_id: str, image_key: str, ocr=None) -> ReceiptScan:
     """Record an uploaded receipt and start scanning it."""
     try:
         scan = ReceiptScan.objects.create(
             tab=tab, created_by=user, client_id=client_id,
-            image_key=image_key, attempts=1,
+            image_key=image_key, ocr=ocr, attempts=1,
         )
     except IntegrityError:
         # A concurrent retry with the same client_id won the race.

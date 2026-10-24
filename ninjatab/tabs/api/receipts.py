@@ -122,7 +122,7 @@ def _resumed_state(scan) -> dict:
 
 @receipt_router.post("/{tab_id}/receipt-scans")
 def create_receipt_scan(request, tab_id: str, client_id: str = Form(..., max_length=64),
-                        file: UploadedFile = File(...)):
+                        file: UploadedFile = File(...), ocr: str | None = Form(None)):
     """Upload a receipt and scan it in the background; poll
     `GET /{tab_id}/receipt-scans/{client_id}` for the result.
 
@@ -137,7 +137,21 @@ def create_receipt_scan(request, tab_id: str, client_id: str = Form(..., max_len
         return _resumed_state(existing)
 
     tab, image_key = _start_scan(request, tab_id, file)
-    return _scan_state(create_background_scan(tab, request.auth, client_id, image_key))
+    return _scan_state(create_background_scan(tab, request.auth, client_id, image_key, _parse_ocr(ocr)))
+
+
+def _parse_ocr(raw: str | None):
+    """The device's OCR geometry, a JSON string in the optional `ocr` form field.
+    Stored as sent; malformed JSON is dropped rather than failing the upload."""
+    # ponytail: no schema check, just stored for inspection; validate with
+    # OcrGeometrySchema (task/long-receipts) once the server acts on it.
+    if not raw:
+        return None
+    try:
+        return json.loads(raw)
+    except ValueError:
+        logger.warning("Ignoring malformed device OCR geometry")
+        return None
 
 
 @receipt_router.get("/{tab_id}/receipt-scans/{client_id}")

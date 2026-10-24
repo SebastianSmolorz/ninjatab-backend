@@ -511,6 +511,8 @@ class ReceiptScan(BaseModel):
     # Each OCR call's raw output (annotation + transcribed text), in the
     # labeller's capture-record shape. Only one reading reaches `result`.
     readings = models.JSONField(null=True, blank=True)
+    # The device's own OCR pass (text boxes on the uploaded image), as the app sent it.
+    ocr = models.JSONField(null=True, blank=True)
     error = models.TextField(blank=True, default='')
     # Scan runs started, capped so a receipt that always fails stops costing OCR.
     attempts = models.PositiveSmallIntegerField(default=0)
